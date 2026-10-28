@@ -19,9 +19,10 @@ method (instrumented DOSBox-X, milestones, traces); reuse it rather than re-deri
   disks, all volume labels are equal).
 - Keys (`autotype -w 2 -p 0.5`): `enter enter enter enter s enter enter y enter` =
   C:\WING2, Save Time (unpack), VGA, Sound Blaster, speech Yes (IRQ 7), confirm.
-- Unpacking is CPU-bound: at `cycles=max` a 300 s wall-clock limit ends during disk 5
-  (`HITDEMO.V00`) with every 20 s frame still changing, so the limit, not a stall,
-  stopped it. `reference/dosbox-x-install.conf`.
+- Unpacking is CPU-bound: a full install takes about 505 s wall clock at `cycles=max`
+  (`reference/dosbox-x-install.conf`); 300 s ends during disk 5. The installer ends with
+  "Installation completed. Type WC2 to play the game." and returns to DOS, where the
+  batch line after it writes the completion marker.
 - DOSBox-X: `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy`, `-nogui -nomenu -fastlaunch
   -time-limit`, `dx-capture /v` for an AVI; paths relative (the project path has spaces).
   Scripts record and wait on their own pid.

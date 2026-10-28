@@ -4,9 +4,6 @@ The single list of open work. Remove items when done; history is in git.
 
 ## Setup
 
-0. Reproducible install: record `reference/install.sha256` from a complete headless
-   install and confirm a second `make install` reproduces it. Acceptance: `make install`
-   prints `INSTALL_REF_OK` from a clean `tmp/`.
 1. Owner decision D3 ([design.md](design.md)): audio and speech scope. Acceptance: the
    owner's answer in the decision table.
 2. Amiga scaffold (playbook §6): framework subset from AmigaXDev, `amiga/Makefile`,
@@ -15,11 +12,12 @@ The single list of open work. Remove items when done; history is in git.
 
 ## The original
 
-3. Identify the game executable: what the installer makes of `WC2.LZC`, its MZ header,
-   packer, overlays, compiler runtime, CPU level. Acceptance: facts in
-   [source-inventory.md](source-inventory.md) reproduced by a `make inspect` tool; a packed
-   image is unpacked independently and matches a DOSBox-X dump at the unpacker's hand-off
-   (playbook §3).
+3. Map the game executable: `WC2.EXE` is Borland C++ 1991 with 195,280 B after the MZ
+   image ([source-inventory.md](source-inventory.md)). Open: the format of that tail
+   (Borland overlays, INFERRED), the CPU level (286 or 386 instructions), the `WC2.LZC`
+   packing method. Acceptance: a `make inspect` tool reproduces the facts; an independent
+   `WC2.LZC` unpack matches the installed `WC2.EXE`; the runtime image matches a DOSBox-X
+   dump at entry (playbook §3, §4).
 4. Game reference loop (playbook §4): boot `tmp/pc-root` headless under DOSBox-X with
    fixed input to a named milestone (title, then the first space flight), with a capture.
    Acceptance: one command reaches the milestone from guest state, twice, with matching

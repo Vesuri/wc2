@@ -48,3 +48,18 @@ dated 1991-08-19 16:00. No file name appears on two disks, so one flat directory
   both. Speech needs 64 KB EMS plus 4 KB base memory.
 - Without the Speech Accessory Pack, speech exists only in the first intro scene.
 - Playtested under MS-DOS 5.0.
+
+## Installed tree (`ref/`, MEASURED)
+
+`make install` with the fixed answers ([pc-reference-loop.md](pc-reference-loop.md)); two
+independent runs gave identical SHA-256 for all 186 files (`reference/install.sha256`).
+
+| Path | Fact |
+|---|---|
+| `WING2/WC2.EXE` | 363,696 B, SHA-256 `0eb4e54e97a29266b31ec73a149aa5f4a1a32e6b1a1aea74d287f0bfd890393f`; unpacked from `WC2.LZC`, whose header holds the packed size (238,668) at byte 0 and the unpacked size (363,696) at byte 8 (DERIVED) |
+| `WC2.EXE` MZ | declared 168,416 B, header 6,656 B, load image 161,760 B, 1,597 relocations, entry `0000:0000`, stack `2776:0080`, min alloc 0; 195,280 B follow the MZ image (overlays, INFERRED) |
+| `WC2.EXE` compiler | Borland C++ 1991 (string); EMS diagnostics strings ("Not enough EMS for expanded ships.") |
+| `WING2/WC2.CFG` | 12 B, text `v a904 c27`: the installer's answers (VGA, Sound Blaster, speech IRQ 7; encoding INFERRED) |
+| `WING2/README.EXE` | 21,280 B, from `README.LZC` |
+| `WING2/GAMEDAT/` | 181 files: every disk data file, each unpacked (all differ from the disk copies) |
+| `WING2/INSTALL.EXE`, `INSTALL.DAT` | copies from disk 1 |
