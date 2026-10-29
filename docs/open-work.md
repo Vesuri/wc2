@@ -4,8 +4,6 @@ The single list of open work. Remove items when done; history is in git.
 
 ## Setup
 
-1. Owner decision D3 ([design.md](design.md)): audio and speech scope. Acceptance: the
-   owner's answer in the decision table.
 2. Amiga scaffold (playbook §6): framework subset from AmigaXDev, `amiga/Makefile`,
    `run.sh`, `debug.sh`, an empty A1200 takeover that boots and quits under FS-UAE.
    Copy from Secret Weapons of Luftwaffe. Acceptance: `make amiga` and `make smoke` pass.

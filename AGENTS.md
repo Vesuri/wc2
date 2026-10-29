@@ -3,7 +3,8 @@
 Investigate porting Wing Commander II: Vengeance of the Kilrathi (Origin, 1991, DOS,
 7 × 1.44 MB disks) to the Amiga. Default target and approach (owner decisions,
 [docs/design.md](docs/design.md)): PAL A1200, 68020, AGA, by offline translation of the
-x86 code to 68020 assembly as in Secret Weapons of Luftwaffe. The original running
+x86 code to 68020 assembly as in Secret Weapons of Luftwaffe. Scope: VGA, FM music and
+effects on Paula, the digitised intro speech. The original running
 under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/open-work.md).
 
 ## Standing rules
