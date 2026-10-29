@@ -63,3 +63,13 @@ independent runs gave identical SHA-256 for all 186 files (`reference/install.sh
 | `WING2/README.EXE` | 21,280 B, from `README.LZC` |
 | `WING2/GAMEDAT/` | 181 files: every disk data file, each unpacked (all differ from the disk copies) |
 | `WING2/INSTALL.EXE`, `INSTALL.DAT` | copies from disk 1 |
+
+## Sound (from file names and strings)
+
+| Item | Fact |
+|---|---|
+| Installer choices | none, PC speaker (effects only), AdLib, Sound Blaster, Roland MT-32/LAPC-I; speech is a separate question and needs a Sound Blaster and EMS |
+| Music | `MUSIC.A00` (262,797 B, FM) and `MUSIC.R00` (351,037 B, Roland); `WC2.EXE` names only these two, so a Sound Blaster plays the AdLib FM music (DERIVED) |
+| Effects | `FX.000` is 448 B, far too small for samples: effects are synthesised, not digitised (DERIVED); confirm from a run's file opens and port I/O |
+| Speech | `SPEECH.S00` (638,494 B unpacked), digitised, the only sampled audio supplied |
+| Drivers | `TM.DRV`, `SUPERTM.DRV`, `STRAX.DRV` ("Origin Sound System"); which driver serves which card is open |

@@ -31,5 +31,5 @@ Changed only by the owner.
 |---|---|---|
 | D1 | Target: PAL A1200, 68020, AGA; Fast RAM amount set once memory use is measured | default, from the handoff |
 | D2 | Approach: offline x86 → 68020 translator as in Secret Weapons of Luftwaffe | default, from the handoff |
-| D3 | Scope: VGA 320×200×256; which audio (AdLib or Sound Blaster music and effects; intro speech; the Speech Accessory Pack is not supplied) | **open: owner's call** |
+| D3 | Scope: VGA 320×200×256; audio = FM music and effects (AdLib = Sound Blaster, `MUSIC.A00`), with or without the digitised intro speech (Sound Blaster only; the Speech Accessory Pack is not supplied) | **open: owner's call** |
 | D4 | Version: the 7-disk DOS release in `ref-originals/` ([source-inventory.md](source-inventory.md)) | default |
