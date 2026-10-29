@@ -45,7 +45,9 @@ check-ref:
 
 prepare-reference: check-ref
 	@mkdir -p $(REFERENCE_ROOT)
-	rsync -a --delete --chmod=u+w ref/ $(REFERENCE_ROOT)/
+	if [ -d $(REFERENCE_ROOT) ]; then chmod -R u+w $(REFERENCE_ROOT); fi
+	rsync -a --delete ref/ $(REFERENCE_ROOT)/
+	chmod -R u+w $(REFERENCE_ROOT)
 
 reference-staging: prepare-reference
 	dosbox-staging --noprimaryconf --nolocalconf -conf reference/dosbox-staging.conf

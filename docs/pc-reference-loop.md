@@ -11,7 +11,7 @@ method (instrumented DOSBox-X, milestones, traces); reuse it rather than re-deri
 | Extract | `make extract` (`tools/extract_originals.sh`) | `tmp/extract/`, `tmp/disks/diskN/`, `tmp/union/` (185 files), `tmp/wc1/`; every stage hash-checked |
 | Install | `make install` (`tools/pc_install.sh`) | the original `INSTALL.EXE` headless, A: = copy of `tmp/union`, C: = `tmp/pc-install/c`; checked against `reference/install.sha256`, copied read-only to `ref/` |
 | Disposable root | `make prepare-reference` | `tmp/pc-root` (= C:) |
-| Play | `make reference-staging` | DOSBox Staging, `reference/dosbox-staging.conf` |
+| Play | `make reference-staging` | DOSBox Staging, `reference/dosbox-staging.conf`: a period 386DX-33 (6000 cycles, `cputype=386`, normal core), 4 MB with EMS, `vgaonly`, Sound Blaster 2.0 (OPL2) at 220/7/1 |
 
 ## Installer facts (MEASURED)
 
@@ -28,6 +28,10 @@ method (instrumented DOSBox-X, milestones, traces); reuse it rather than re-deri
   Scripts record and wait on their own pid.
 
 ## Game runs
+
+The game writes into `GAMEDAT` (`MEM.$$$`, `TEMPGLOB.000`, saves) and exits after
+`ERR.$$$` when it cannot (MEASURED: macOS openrsync ignores `--chmod`, so
+`prepare-reference` makes the copy writable with `chmod`).
 
 `reference/dosbox-x.conf`: S3 SVGA, 4 MB, 386 normal core, fixed 12000 cycles, EMS and
 XMS on, SB16 at 220/7/1. The game's CPU level and cycle needs are open (open-work 3, 4).
