@@ -1,6 +1,6 @@
 ## Wing Commander II — repository-level targets.
 
-.PHONY: all help extract install hash check-ref prepare-reference reference-staging
+.PHONY: all help extract install hash check-ref prepare-reference reference-staging compare
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -18,6 +18,7 @@ help:
 	@echo "  make check-ref          verify ref/ against $(INSTALL_HASHES)"
 	@echo "  make prepare-reference  copy ref/ to disposable $(REFERENCE_ROOT)"
 	@echo "  make reference-staging  play the disposable copy in DOSBox Staging"
+	@echo "  make compare            PC WC1 vs WC2 code and data comparison -> tmp/compare/"
 
 extract:
 	tools/extract_originals.sh ref-originals tmp
@@ -49,3 +50,11 @@ prepare-reference: check-ref
 reference-staging: prepare-reference
 	dosbox-staging --noprimaryconf --nolocalconf -conf reference/dosbox-staging.conf
 	$(MAKE) check-ref
+
+# docs/wc1-wc2-comparison.md; needs make extract and make install.
+compare:
+	@mkdir -p tmp/compare
+	. amiga/env.sh && python3 tools/bc_exe.py tmp/wc1/disk01/WC.EXE ref/WING2/WC2.EXE
+	. amiga/env.sh && python3 tools/origin_pak.py verify tmp/union ref/WING2/GAMEDAT || true
+	. amiga/env.sh && python3 tools/wc_compare.py tmp/wc1/disk01/WC.EXE ref/WING2/WC2.EXE \
+		--control ref/WING2/INSTALL.EXE --csv tmp/compare/funcs.csv | tee tmp/compare/report.txt

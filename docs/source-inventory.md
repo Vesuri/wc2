@@ -57,11 +57,11 @@ independent runs gave identical SHA-256 for all 186 files (`reference/install.sh
 | Path | Fact |
 |---|---|
 | `WING2/WC2.EXE` | 363,696 B, SHA-256 `0eb4e54e97a29266b31ec73a149aa5f4a1a32e6b1a1aea74d287f0bfd890393f`; unpacked from `WC2.LZC`, whose header holds the packed size (238,668) at byte 0 and the unpacked size (363,696) at byte 8 (DERIVED) |
-| `WC2.EXE` MZ | declared 168,416 B, header 6,656 B, load image 161,760 B, 1,597 relocations, entry `0000:0000`, stack `2776:0080`, min alloc 0; 195,280 B follow the MZ image (overlays, INFERRED) |
-| `WC2.EXE` compiler | Borland C++ 1991 (string); EMS diagnostics strings ("Not enough EMS for expanded ships.") |
+| `WC2.EXE` MZ | declared 168,416 B, header 6,656 B, load image 161,760 B, 1,597 relocations, entry `0000:0000`, stack `2776:0080`, min alloc 0; the 195,280 B after the MZ image are Borland VROOMM overlays (`FBOV`, 124 overlays; `tools/bc_exe.py`) |
+| `WC2.EXE` compiler | Borland C++ 1991 (string), large model, 80186+ instructions, no 386 code found; EMS diagnostics strings ("Not enough EMS for expanded ships.") |
 | `WING2/WC2.CFG` | 12 B, text `v a904 c27`: the installer's answers (VGA, Sound Blaster, speech IRQ 7; encoding INFERRED) |
 | `WING2/README.EXE` | 21,280 B, from `README.LZC` |
-| `WING2/GAMEDAT/` | 181 files: every disk data file, each unpacked (all differ from the disk copies) |
+| `WING2/GAMEDAT/` | 181 files: every disk data file; 133 unpacked, 47 left packed, `SPEECH.S00` decoded by a separate speech codec (`tools/origin_pak.py verify`) |
 | `WING2/INSTALL.EXE`, `INSTALL.DAT` | copies from disk 1 |
 
 ## Sound (from file names and strings)
@@ -73,3 +73,8 @@ independent runs gave identical SHA-256 for all 186 files (`reference/install.sh
 | Effects | `FX.000` is 448 B, far too small for samples: effects are synthesised, not digitised (DERIVED); confirm from a run's file opens and port I/O |
 | Speech | `SPEECH.S00` (638,494 B unpacked), digitised, the only sampled audio supplied |
 | Drivers | `TM.DRV`, `SUPERTM.DRV`, `STRAX.DRV` ("Origin Sound System"); which driver serves which card is open |
+
+## Containers
+
+Data files are Origin resource containers with LZW-packed entries; format and checks in
+`tools/origin_pak.py`. WC1 uses the same format ([wc1-wc2-comparison.md](wc1-wc2-comparison.md)).

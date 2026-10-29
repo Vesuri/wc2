@@ -53,6 +53,7 @@ under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/open-wor
 | [docs/design.md](docs/design.md) | choosing target, scope or approach; owner decisions |
 | [docs/source-inventory.md](docs/source-inventory.md) | facts and hashes of the original files |
 | [docs/pc-reference-loop.md](docs/pc-reference-loop.md) | running the installer or the game under DOSBox |
+| [docs/wc1-wc2-comparison.md](docs/wc1-wc2-comparison.md) | WC1/WC2 code and data sharing; the WC1 reuse plan |
 
 ## Shared environment and knowledge
 
@@ -68,4 +69,5 @@ Luftwaffe is the model for the translator, reference loop and Makefile.
 
 `make extract` (archives → `tmp/union`, hash-checked), `make install` (original installer,
 headless → `ref/`, hash-checked), `make hash` / `make check-ref`, `make prepare-reference`
-(`ref/` → disposable `tmp/pc-root`), `make reference-staging` (play it).
+(`ref/` → disposable `tmp/pc-root`), `make reference-staging` (play it), `make compare`
+(PC WC1 vs WC2).
