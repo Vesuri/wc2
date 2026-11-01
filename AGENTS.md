@@ -1,11 +1,11 @@
 # Wing Commander II — DOS to Amiga port investigation
 
 Investigate porting Wing Commander II: Vengeance of the Kilrathi (Origin, 1991, DOS,
-7 × 1.44 MB disks) to the Amiga. Default target and approach (owner decisions,
-[docs/design.md](docs/design.md)): PAL A1200, 68020, AGA, by offline translation of the
-x86 code to 68020 assembly as in Secret Weapons of Luftwaffe. Scope: VGA, FM music and
-effects on Paula, the digitised intro speech. The original running
-under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/open-work.md).
+7 × 1.44 MB disks) to the Amiga. Target and approach (owner decisions,
+[docs/design.md](docs/design.md)): AGA, 68030 minimum, 68040 or better recommended, by
+offline translation of the x86 code to 68020 assembly as in Secret Weapons of Luftwaffe.
+Scope: VGA, FM music and effects on Paula, the digitised intro speech. The original
+running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/open-work.md).
 
 ## Standing rules
 
@@ -51,6 +51,7 @@ under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/open-wor
 |---|---|
 | [docs/open-work.md](docs/open-work.md) | always first: the work queue |
 | [docs/design.md](docs/design.md) | choosing target, scope or approach; owner decisions |
+| [docs/port-plan.md](docs/port-plan.md) | starting a phase; what to copy from Secret Weapons of Luftwaffe and why |
 | [docs/source-inventory.md](docs/source-inventory.md) | facts and hashes of the original files |
 | [docs/pc-reference-loop.md](docs/pc-reference-loop.md) | running the installer or the game under DOSBox |
 | [docs/wc1-wc2-comparison.md](docs/wc1-wc2-comparison.md) | WC1/WC2 code and data sharing; the WC1 reuse plan |
