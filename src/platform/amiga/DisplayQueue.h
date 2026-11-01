@@ -1,5 +1,5 @@
-#ifndef SWOTL_DISPLAY_QUEUE_H
-#define SWOTL_DISPLAY_QUEUE_H
+#ifndef WC2_DISPLAY_QUEUE_H
+#define WC2_DISPLAY_QUEUE_H
 
 #include <stdint.h>
 

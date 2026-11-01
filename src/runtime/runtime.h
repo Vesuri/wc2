@@ -2,8 +2,8 @@
  * ports as the DOSBox-X reference presents them) and the rt_* entries of the
  * generated-code contract (docs/translator-design.md). Platform services
  * (files, log, exit) come from platform.h. */
-#ifndef SWOTL_RUNTIME_H
-#define SWOTL_RUNTIME_H
+#ifndef WC2_RUNTIME_H
+#define WC2_RUNTIME_H
 
 #include <stdint.h>
 
@@ -219,7 +219,7 @@ extern uint8_t rt_bench;
 void rt_bench_watch(void);
 
 /* input.c: the platform appends keyboard events (PC set 1 scan code, bit 7
- * break, RT_KEY_E0 for E0-prefixed keys), in sync builds (SWOTL_SYNC: host,
+ * break, RT_KEY_E0 for E0-prefixed keys), in sync builds (WC2_SYNC: host,
  * replay, bench) one per 09h interrupt it posts; production posts none and
  * rt_int_c drains them at service entry with IF set (docs/irq-plan.md I8) */
 #define RT_KEY_RING 16

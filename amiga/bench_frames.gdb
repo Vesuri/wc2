@@ -4,7 +4,7 @@
 # stop per frame at the frame loop R_044E2), the guest RAM at frame 12
 # (reversed, as it lies below rt_guest; its hash proves equal work), then a 100-field profile into
 # ../tmp/bench/frames.bin.
-#   AMIGA_CPU unset (68020): SWOTL_ARGS=BENCH ./debug.sh "" bench_frames.gdb
+#   AMIGA_CPU unset (68020): WC2_ARGS=BENCH ./debug.sh "" bench_frames.gdb
 # A PAL line is 908 profiler cycles on this 68020 model; VPOSR/VHPOSR at $dff004 give the line.
 set pagination off
 set confirm off

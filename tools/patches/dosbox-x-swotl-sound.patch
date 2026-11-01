@@ -4,11 +4,11 @@
  std::map<std::tuple<Location, uint32_t, uint8_t>, uint64_t> code_writes;
  std::map<uint16_t, OpenFile> files;
  FILE *events = nullptr;
-+/* OPL log (SWOTL_OPL=1): every AdLib register write (index at 388h, data at
++/* OPL log (WC2_OPL=1): every AdLib register write (index at 388h, data at
 + * 389h) with the emulated time in ms. */
 +FILE *opl = nullptr;
 +uint8_t opl_index = 0;
-+/* Call probes (SWOTL_PROBES=MODULE+HEX:N=name,...): at each entry, the emulated
++/* Call probes (WC2_PROBES=MODULE+HEX:N=name,...): at each entry, the emulated
 + * ms and the N stack words above a far return address (probe.csv). */
 +struct Probe {
 +	std::string module, name;
@@ -36,11 +36,11 @@
  	}
  	events = fopen(Path("events.csv").c_str(), "w");
  	if (events) fputs("icount,kind,module,offset,detail\n", events);
-+	if (const char *v = getenv("SWOTL_OPL"); v && *v && strcmp(v, "0") != 0) {
++	if (const char *v = getenv("WC2_OPL"); v && *v && strcmp(v, "0") != 0) {
 +		opl = fopen(Path("opl.csv").c_str(), "w");
 +		if (opl) fputs("ms,reg,value\n", opl);
 +	}
-+	for (const auto &spec : Split(getenv("SWOTL_PROBES"), ',')) {
++	for (const auto &spec : Split(getenv("WC2_PROBES"), ',')) {
 +		const auto plus = spec.find('+'), colon = spec.find(':'), eq = spec.find('=');
 +		if (plus == std::string::npos || colon == std::string::npos || eq == std::string::npos)
 +			continue;
@@ -76,7 +76,7 @@
  	if (poll_gate && IsPoll(here)) ++poll_hits[here];
  
 @@ -711,6 +758,12 @@
- void SWOTL_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
+ void WC2_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
  	if (!swotl_active) return;
  	++ports[std::make_tuple(write, width, (uint16_t)port, value, CurrentLocation())];
 +	if (opl && write && width == 1) {
@@ -87,4 +87,4 @@
 +	}
  }
  
- void SWOTL_DosOpen(const char *name, const bool ok, const uint16_t handle, const uint8_t mode) {
+ void WC2_DosOpen(const char *name, const bool ok, const uint16_t handle, const uint8_t mode) {

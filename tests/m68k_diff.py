@@ -68,7 +68,7 @@ BATCH = 1500
 REPLAY: Path | None = None   # set by m68k_sabotage
 
 
-ASM_DEFS = ("-DSWOTL_SYNC=1",)   # the sync build: poll checks host runs deliver at (irq-plan I8)
+ASM_DEFS = ("-DWC2_SYNC=1",)   # the sync build: poll checks host runs deliver at (irq-plan I8)
 
 
 def assemble(src: str, out: Path) -> bytes:

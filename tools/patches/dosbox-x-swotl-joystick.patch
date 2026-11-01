@@ -29,7 +29,7 @@
 +        E_Exit("SWOTL: cannot write joystick.csv");
 +    joystick_run.count = 0;
 +}
- /* OPL log (SWOTL_OPL=1): every AdLib register write (index at 388h, data at
+ /* OPL log (WC2_OPL=1): every AdLib register write (index at 388h, data at
   * 389h) with the emulated time in ms. */
  FILE *opl = nullptr;
 @@ -378,6 +396,9 @@
@@ -46,13 +46,13 @@
  		t.name = spec.substr(0, at);
  		snapshots.push_back(t);
  	}
-+    if (const char *v = getenv("SWOTL_JOYSTICK")) {
-+        if (strcmp(v, "1")) E_Exit("SWOTL: SWOTL_JOYSTICK must be 1 when set");
++    if (const char *v = getenv("WC2_JOYSTICK")) {
++        if (strcmp(v, "1")) E_Exit("SWOTL: WC2_JOYSTICK must be 1 when set");
 +        joystick_ports = fopen(Path("joystick.csv").c_str(), "w");
 +        if (!joystick_ports) E_Exit("SWOTL: cannot open joystick.csv");
 +        fputs("service,write,width,value,repeat\n", joystick_ports);
 +    }
- 	for (const auto &spec : Split(getenv("SWOTL_KEYS"), ',')) {
+ 	for (const auto &spec : Split(getenv("WC2_KEYS"), ',')) {
  		Trigger t;
  		const auto eq = spec.rfind('=');
 @@ -487,7 +514,10 @@
@@ -60,13 +60,13 @@
  		t.name = spec.substr(eq + 1);
  		t.key = KeyByName(t.name, t.modifiers);
 -		if (t.key == KBD_NONE && !MouseAction(t.name)) E_Exit("SWOTL: unknown key '%s'", t.name.c_str());
-+        const auto joy = SwotlParseJoystick(t.name);
-+        if (joy.kind && !joystick_ports) E_Exit("SWOTL: joystick input requires SWOTL_JOYSTICK=1");
++        const auto joy = Wc2ParseJoystick(t.name);
++        if (joy.kind && !joystick_ports) E_Exit("SWOTL: joystick input requires WC2_JOYSTICK=1");
 +        if (t.key == KBD_NONE && !MouseAction(t.name) && !joy.kind)
 +            E_Exit("SWOTL: unknown key '%s'", t.name.c_str());
  		keys.push_back(t);
  	}
- 	if (const char *polls = getenv("SWOTL_POLLS")) {
+ 	if (const char *polls = getenv("WC2_POLLS")) {
 @@ -600,6 +630,13 @@
  	dos.date.month = 1;
  	dos.date.day = 1;
@@ -85,7 +85,7 @@
  	if (key_held == KBD_NONE && key_index < keys.size() && Hit(keys[key_index], here)) {
  		auto &t = keys[key_index++];
  		t.done = true;
-+        const auto joy = SwotlParseJoystick(t.name);
++        const auto joy = Wc2ParseJoystick(t.name);
 +        if (joy.kind) {
 +            if (joy.kind == 'x') JOYSTICK_Move_X(0, joy.value / 1000.0f);
 +            if (joy.kind == 'y') JOYSTICK_Move_Y(0, joy.value / 1000.0f);
@@ -98,9 +98,9 @@
 +        }
          if (MouseAction(t.name)) {
              const int amount = atoi(t.name.c_str() + 2);
-             SWOTL_MouseInput(t.name[1] == 'x' ? amount : 0,
+             WC2_MouseInput(t.name[1] == 'x' ? amount : 0,
 @@ -819,6 +867,18 @@
- void SWOTL_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
+ void WC2_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
  	if (!swotl_active) return;
  	++ports[std::make_tuple(write, width, (uint16_t)port, value, CurrentLocation())];
 +    if (joystick_ports && port == 0x201) {
@@ -121,16 +121,16 @@
 --- /dev/null
 +++ b/include/swotl_joystick_input.h
 @@ -0,0 +1,26 @@
-+#ifndef SWOTL_JOYSTICK_INPUT_H
-+#define SWOTL_JOYSTICK_INPUT_H
++#ifndef WC2_JOYSTICK_INPUT_H
++#define WC2_JOYSTICK_INPUT_H
 +#include <string>
 +
 +/* Normalized axes are thousandths in [-1000,1000]; buttons are a two-bit mask. */
-+struct SwotlJoystickInput {
++struct Wc2JoystickInput {
 +    char kind = 0;
 +    int value = 0;
 +};
-+inline SwotlJoystickInput SwotlParseJoystick(const std::string &name)
++inline Wc2JoystickInput Wc2ParseJoystick(const std::string &name)
 +{
 +    if (name.size() == 3 && name[0] == 'j' && name[1] == 'b' &&
 +        name[2] >= '0' && name[2] <= '3')

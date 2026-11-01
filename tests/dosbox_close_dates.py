@@ -108,7 +108,7 @@ def capture(fixed=True, initial_date=(1991, 1, 1), midnight=0):
             p.write_bytes(b'abc')
             stamp = time.mktime((2021, 1, 1, 1, 0, 0, 0, 0, -1))
             os.utime(p, (stamp, stamp))
-        with patch.dict(os.environ, {'SWOTL_FIXED_FILE_CLOCK': '1' if fixed else '0'}):
+        with patch.dict(os.environ, {'WC2_FIXED_FILE_CLOCK': '1' if fixed else '0'}):
             data = run_original(root, program(initial_date, midnight))
         assert data[-4:] == b'DONE' and len(data) == len(CASES)*47+4
         rows = {}

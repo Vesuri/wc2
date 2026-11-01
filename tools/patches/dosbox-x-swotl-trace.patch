@@ -11,14 +11,14 @@ index e7e6974..03e6052 100644
  /* Special inlined memory reading/writing */
  
  static INLINE uint8_t mem_readb_inline(const LinearPt address) {
-+	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) SWOTL_MemoryAccess(false, address, 1);
++	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) WC2_MemoryAccess(false, address, 1);
  	const HostPt tlb_addr=get_tlb_read(address);
  	if (tlb_addr) return host_readb(tlb_addr+address);
  	else return (uint8_t)(get_tlb_readhandler(address))->readb(address);
  }
  
  static INLINE uint16_t mem_readw_inline(const LinearPt address) {
-+	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) SWOTL_MemoryAccess(false, address, 2);
++	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) WC2_MemoryAccess(false, address, 2);
  	if ((address & 0xfff)<0xfff) {
  		const HostPt tlb_addr=get_tlb_read(address);
  		if (tlb_addr) return host_readw(tlb_addr+address);
@@ -26,7 +26,7 @@ index e7e6974..03e6052 100644
  }
  
  static INLINE uint32_t mem_readd_inline(const LinearPt address) {
-+	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) SWOTL_MemoryAccess(false, address, 4);
++	if (swotl_active && address >= 0xa0000u && address < 0xc0000u) WC2_MemoryAccess(false, address, 4);
  	if ((address & 0xfff)<0xffd) {
  		const HostPt tlb_addr=get_tlb_read(address);
  		if (tlb_addr) return host_readd(tlb_addr+address);
@@ -34,14 +34,14 @@ index e7e6974..03e6052 100644
  }
  
  static INLINE void mem_writeb_inline(const LinearPt address,const uint8_t val) {
-+	if (swotl_active && SWOTL_WatchedAddress(address)) SWOTL_MemoryAccess(true, address, 1);
++	if (swotl_active && WC2_WatchedAddress(address)) WC2_MemoryAccess(true, address, 1);
  	const HostPt tlb_addr=get_tlb_write(address);
  	if (tlb_addr) host_writeb(tlb_addr+address,val);
  	else (get_tlb_writehandler(address))->writeb(address,val);
  }
  
  static INLINE void mem_writew_inline(const LinearPt address,const uint16_t val) {
-+	if (swotl_active && SWOTL_WatchedAddress(address)) SWOTL_MemoryAccess(true, address, 2);
++	if (swotl_active && WC2_WatchedAddress(address)) WC2_MemoryAccess(true, address, 2);
  	if ((address & 0xfffu)<0xfffu) {
  		const HostPt tlb_addr=get_tlb_write(address);
  		if (tlb_addr) host_writew(tlb_addr+address,val);
@@ -49,7 +49,7 @@ index e7e6974..03e6052 100644
  }
  
  static INLINE void mem_writed_inline(const LinearPt address,const uint32_t val) {
-+	if (swotl_active && SWOTL_WatchedAddress(address)) SWOTL_MemoryAccess(true, address, 4);
++	if (swotl_active && WC2_WatchedAddress(address)) WC2_MemoryAccess(true, address, 4);
  	if ((address & 0xfffu)<0xffdu) {
  		const HostPt tlb_addr=get_tlb_write(address);
  		if (tlb_addr) host_writed(tlb_addr+address,val);
@@ -60,30 +60,30 @@ index 0000000..78eb64d
 +++ b/include/swotl_trace.h
 @@ -0,0 +1,29 @@
 +/* SWOTL reference instrumentation (Secret Weapons of Luftwaffe port).
-+ * Off unless SWOTL_TRACE is set; armed at the SWOTL.EXE MZ entry. */
-+#ifndef DOSBOX_SWOTL_TRACE_H
-+#define DOSBOX_SWOTL_TRACE_H
++ * Off unless WC2_TRACE is set; armed at the SWOTL.EXE MZ entry. */
++#ifndef DOSBOX_WC2_TRACE_H
++#define DOSBOX_WC2_TRACE_H
 +
 +#include <stdint.h>
 +
 +extern bool swotl_active;
-+/* SWOTL_POLLS: hardware interrupts only through SWOTL_IrqPoint (pic.cpp gate). */
++/* WC2_POLLS: hardware interrupts only through WC2_IrqPoint (pic.cpp gate). */
 +extern bool swotl_irq_gate, swotl_irq_open;
 +/* Before an instruction: true if a hardware interrupt was taken instead. */
-+bool SWOTL_IrqPoint(uint32_t linear);
++bool WC2_IrqPoint(uint32_t linear);
 +
-+void SWOTL_Instruction(uint32_t linear);
-+void SWOTL_MemoryAccess(bool write, uint32_t address, uint8_t width);
-+void SWOTL_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
-+void SWOTL_Port(bool write, uint8_t width, unsigned port, uint32_t value);
-+void SWOTL_DosOpen(const char *name, bool ok, uint16_t handle, uint8_t mode);
-+void SWOTL_DosClose(uint16_t handle);
-+void SWOTL_DosRead(uint16_t handle, uint32_t buffer, uint32_t file_pos,
++void WC2_Instruction(uint32_t linear);
++void WC2_MemoryAccess(bool write, uint32_t address, uint8_t width);
++void WC2_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
++void WC2_Port(bool write, uint8_t width, unsigned port, uint32_t value);
++void WC2_DosOpen(const char *name, bool ok, uint16_t handle, uint8_t mode);
++void WC2_DosClose(uint16_t handle);
++void WC2_DosRead(uint16_t handle, uint32_t buffer, uint32_t file_pos,
 +                   uint16_t requested, uint16_t actual);
-+void SWOTL_DosSeek(uint16_t handle, uint8_t mode, uint32_t result);
-+void SWOTL_DosExecOverlay(const char *name, uint16_t load_seg, uint16_t reloc);
++void WC2_DosSeek(uint16_t handle, uint8_t mode, uint32_t result);
++void WC2_DosExecOverlay(const char *name, uint16_t load_seg, uint16_t reloc);
 +
-+static inline bool SWOTL_WatchedAddress(const uint32_t address) {
++static inline bool WC2_WatchedAddress(const uint32_t address) {
 +	return address < 0xc0000u;
 +}
 +
@@ -104,11 +104,11 @@ index 26d9f49..8e6ad18 100644
  
  	while (CPU_Cycles-->0) {
  		LOADIP;
-+		if (swotl_irq_gate && SWOTL_IrqPoint(core.cseip)) {
++		if (swotl_irq_gate && WC2_IrqPoint(core.cseip)) {
 +			++CPU_Cycles;
 +			return CBRET_NONE;
 +		}
-+		SWOTL_Instruction(core.cseip);
++		WC2_Instruction(core.cseip);
  		last_prefix=MP_NONE;
  		core.opcode_index=cpu.code.big*(Bitu)0x200u;
  		core.prefixes=cpu.code.big;
@@ -128,11 +128,11 @@ index 3dad080..ee5d212 100644
  
  	while (CPU_Cycles-->0) {
  		LOADIP;
-+		if (swotl_irq_gate && SWOTL_IrqPoint(core.cseip)) {
++		if (swotl_irq_gate && WC2_IrqPoint(core.cseip)) {
 +			++CPU_Cycles;
 +			return CBRET_NONE;
 +		}
-+		SWOTL_Instruction(core.cseip);
++		WC2_Instruction(core.cseip);
  		core.prefixes=0;
  		core.opcode_index=0;
  		last_ea86_offset=0;
@@ -152,7 +152,7 @@ index 84b0e9a..2f68092 100644
        return;
      }
  	lastint=(uint8_t)num;
-+	SWOTL_Interrupt((unsigned)num, (unsigned)type, oldeip);
++	WC2_Interrupt((unsigned)num, (unsigned)type, oldeip);
  	FillFlags();
  #if C_DEBUG
  # if C_HEAVY_DEBUG
@@ -172,7 +172,7 @@ index 7b98322..fc87cc7 100644
  			uint8_t oldal=reg_al;
  			force_sfn = true;
              if (DOS_OpenFile(name1,reg_al,&reg_ax)) {
-+                SWOTL_DosOpen(name1, true, reg_ax, oldal);
++                WC2_DosOpen(name1, true, reg_ax, oldal);
  #if defined(USE_TTF)
                  if (ttf.inUse&&wpType==1) {
                      int len = (int)strlen(name1);
@@ -180,7 +180,7 @@ index 7b98322..fc87cc7 100644
  					CALLBACK_SCF(false);
  				} else {
                      reg_ax=dos.errorcode;
-+                    SWOTL_DosOpen(name1, false, 0, oldal);
++                    WC2_DosOpen(name1, false, 0, oldal);
                      CALLBACK_SCF(true);
                  }
              }
@@ -188,7 +188,7 @@ index 7b98322..fc87cc7 100644
              uint8_t handle = RealHandle(reg_bx);
              uint8_t drive = (handle != 0xff && Files[handle]) ? Files[handle]->GetDrive() : DOS_DRIVES;
              unmask_irq0 |= disk_io_unmask_irq0;
-+            SWOTL_DosClose(reg_bx);
++            WC2_DosClose(reg_bx);
              if (DOS_CloseFile(reg_bx, false, &reg_al)) {
  #if defined(USE_TTF)
                  if (ttf.inUse&&reg_bx == WPvga512CHMhandle)
@@ -201,7 +201,7 @@ index 7b98322..fc87cc7 100644
 +                    const uint16_t swotl_requested = toread;
                      if((fRead = DOS_ReadFile(reg_bx, dos_copybuf, &toread))) {
                          MEM_BlockWrite(SegPhys(ds) + reg_dx, dos_copybuf, toread);
-+                        SWOTL_DosRead(reg_bx, SegPhys(ds) + reg_dx, swotl_pos, swotl_requested, toread);
++                        WC2_DosRead(reg_bx, SegPhys(ds) + reg_dx, swotl_pos, swotl_requested, toread);
                          diskio_delay_handle(reg_bx, toread);
                      }
                  }
@@ -209,7 +209,7 @@ index 7b98322..fc87cc7 100644
              {
                  uint32_t pos=((uint32_t)reg_cx << 16u) + reg_dx;
                  if (DOS_SeekFile(reg_bx,&pos,reg_al)) {
-+                    SWOTL_DosSeek(reg_bx, reg_al, pos);
++                    WC2_DosSeek(reg_bx, reg_al, pos);
                      reg_dx=(uint16_t)((unsigned int)pos >> 16u);
                      reg_ax=(uint16_t)(pos & 0xFFFF);
                      diskio_delay_handle(reg_bx, 32);
@@ -229,7 +229,7 @@ index ef7d196..5094de3 100644
  	}
  	CALLBACK_SCF(false);		/* Carry flag cleared for caller if successful */
  	if(flags == OVERLAY) {
-+		SWOTL_DosExecOverlay(name, loadseg, block.overlay.relocation);
++		WC2_DosExecOverlay(name, loadseg, block.overlay.relocation);
  		reg_ax = 0;             // Testing with MS-DOS (6.22) shows that if INT 21 AX=4B is called with the overlay flag (AL==3), then AX and DX are 0 on return.
  		reg_dx = 0;
  		return true;			/* Everything done for overlays */
@@ -249,7 +249,7 @@ index 34222c4..5d33121 100644
  
  void IO_WriteB(Bitu port,uint8_t val) {
  	log_io(0, true, port, val);
-+	SWOTL_Port(true, 1, (unsigned)port, val);
++	WC2_Port(true, 1, (unsigned)port, val);
  	if (GCC_UNLIKELY(GETFLAG(VM) && (CPU_IO_Exception(port,1)))) {
  		CPU_ForceV86FakeIO_Out(port,val,1);
  	}
@@ -257,7 +257,7 @@ index 34222c4..5d33121 100644
  
  void IO_WriteW(Bitu port,uint16_t val) {
  	log_io(1, true, port, val);
-+	SWOTL_Port(true, 2, (unsigned)port, val);
++	WC2_Port(true, 2, (unsigned)port, val);
  	if (GCC_UNLIKELY(GETFLAG(VM) && (CPU_IO_Exception(port,2)))) {
  		CPU_ForceV86FakeIO_Out(port,val,2);
  	}
@@ -265,7 +265,7 @@ index 34222c4..5d33121 100644
  
  void IO_WriteD(Bitu port,uint32_t val) {
  	log_io(2, true, port, val);
-+	SWOTL_Port(true, 4, (unsigned)port, val);
++	WC2_Port(true, 4, (unsigned)port, val);
  	if (GCC_UNLIKELY(GETFLAG(VM) && (CPU_IO_Exception(port,4)))) {
  		CPU_ForceV86FakeIO_Out(port,val,4);
  	}
@@ -273,7 +273,7 @@ index 34222c4..5d33121 100644
  		retval = (uint8_t)io_readhandlers[0][port](port,1);
  	}
  	log_io(0, false, port, retval);
-+	SWOTL_Port(false, 1, (unsigned)port, retval);
++	WC2_Port(false, 1, (unsigned)port, retval);
  	return retval;
  }
  
@@ -281,7 +281,7 @@ index 34222c4..5d33121 100644
  		retval = (uint16_t)io_readhandlers[1][port](port,2);
  	}
  	log_io(1, false, port, retval);
-+	SWOTL_Port(false, 2, (unsigned)port, retval);
++	WC2_Port(false, 2, (unsigned)port, retval);
  	return retval;
  }
  
@@ -289,7 +289,7 @@ index 34222c4..5d33121 100644
  		retval = (uint32_t)io_readhandlers[2][port](port,4);
  	}
  	log_io(2, false, port, retval);
-+	SWOTL_Port(false, 4, (unsigned)port, retval);
++	WC2_Port(false, 4, (unsigned)port, retval);
  	return retval;
  }
  
@@ -309,7 +309,7 @@ index dc7d787..cea5d36 100644
  }
  
  void PIC_runIRQs(void) {
-+    if (swotl_irq_gate && !swotl_irq_open) return; /* SWOTL_POLLS: poll points only */
++    if (swotl_irq_gate && !swotl_irq_open) return; /* WC2_POLLS: poll points only */
      if (!GETFLAG(IF)) return;
      if (GCC_UNLIKELY(!PIC_IRQCheck)) return;
      if (GCC_UNLIKELY(cpudecoder==CPU_Core_Normal_Trap_Run)) return; // FIXME: Why?
@@ -338,16 +338,16 @@ index 0000000..5d88c20
 @@ -0,0 +1,740 @@
 +/* SWOTL reference instrumentation (Secret Weapons of Luftwaffe port).
 + *
-+ * Enabled by SWOTL_TRACE=1; armed at the first instruction of SWOTL.EXE
++ * Enabled by WC2_TRACE=1; armed at the first instruction of SWOTL.EXE
 + * (CS:IP = PSP+10h+1617h:0382h). Every guest address is recorded as
 + * (module, offset): the root image, or the .OVL/.EXE file whose bytes the
-+ * last DOS read put at that paragraph. Outputs go to SWOTL_TRACE_DIR (".").
++ * last DOS read put at that paragraph. Outputs go to WC2_TRACE_DIR (".").
 + *
-+ * SWOTL_SNAPSHOTS=name@MODULE+HEX[#N],...  dump state on the Nth execution
-+ * SWOTL_EXIT_AFTER=name                    exit(0) after that snapshot
-+ * SWOTL_KEYS=MODULE+HEX[#N]=key,...        press key when reached (in order)
-+ * SWOTL_KEY_HOLD=instructions              release delay (default 600000)
-+ * SWOTL_BIOS_TICKS=n                       BIOS tick count set at arming
++ * WC2_SNAPSHOTS=name@MODULE+HEX[#N],...  dump state on the Nth execution
++ * WC2_EXIT_AFTER=name                    exit(0) after that snapshot
++ * WC2_KEYS=MODULE+HEX[#N]=key,...        press key when reached (in order)
++ * WC2_KEY_HOLD=instructions              release delay (default 600000)
++ * WC2_BIOS_TICKS=n                       BIOS tick count set at arming
 + *                                          (default 0; DOS time and INT 1Ah
 + *                                          derive from it, host time does not
 + *                                          leak in)
@@ -455,12 +455,12 @@ index 0000000..5d88c20
 +KBD_KEYS key_held = KBD_NONE;
 +uint64_t key_hold = 600000;
 +std::string exit_after;
-+/* Service log (SWOTL_SERVICES=1): every software INT raised by module code, with
++/* Service log (WC2_SERVICES=1): every software INT raised by module code, with
 + * full registers at entry ("svc") and when execution is back at its return
 + * address with the entry SP ("svc_ret"). */
 +bool log_services = false;
 +uint64_t service_events = 0;
-+/* Interrupt sync (SWOTL_POLLS=file of "MODULE,0xOFFSET" lines, the translator's
++/* Interrupt sync (WC2_POLLS=file of "MODULE,0xOFFSET" lines, the translator's
 + * poll points): hardware interrupts are taken only before a poll-point
 + * instruction, and each is logged as "irq" with the number of service events
 + * so far and the poll point's executions since the last service event. */
@@ -742,15 +742,15 @@ index 0000000..5d88c20
 +
 +void Configure() {
 +	configured = true;
-+	const char *trace = getenv("SWOTL_TRACE");
++	const char *trace = getenv("WC2_TRACE");
 +	enabled = trace && *trace && strcmp(trace, "0") != 0;
 +	if (!enabled) return;
-+	if (const char *dir = getenv("SWOTL_TRACE_DIR")) out_dir = dir;
++	if (const char *dir = getenv("WC2_TRACE_DIR")) out_dir = dir;
 +	mkdir(out_dir.c_str(), 0755);
-+	if (const char *hold = getenv("SWOTL_KEY_HOLD")) key_hold = strtoull(hold, nullptr, 10);
-+	if (const char *e = getenv("SWOTL_EXIT_AFTER")) exit_after = e;
-+	if (const char *v = getenv("SWOTL_SERVICES")) log_services = *v && strcmp(v, "0") != 0;
-+	for (const auto &spec : Split(getenv("SWOTL_SNAPSHOTS"), ',')) {
++	if (const char *hold = getenv("WC2_KEY_HOLD")) key_hold = strtoull(hold, nullptr, 10);
++	if (const char *e = getenv("WC2_EXIT_AFTER")) exit_after = e;
++	if (const char *v = getenv("WC2_SERVICES")) log_services = *v && strcmp(v, "0") != 0;
++	for (const auto &spec : Split(getenv("WC2_SNAPSHOTS"), ',')) {
 +		Trigger t;
 +		const auto at = spec.find('@');
 +		if (at == std::string::npos || !ParseTarget(spec.substr(at + 1), t))
@@ -758,7 +758,7 @@ index 0000000..5d88c20
 +		t.name = spec.substr(0, at);
 +		snapshots.push_back(t);
 +	}
-+	for (const auto &spec : Split(getenv("SWOTL_KEYS"), ',')) {
++	for (const auto &spec : Split(getenv("WC2_KEYS"), ',')) {
 +		Trigger t;
 +		const auto eq = spec.rfind('=');
 +		if (eq == std::string::npos || !ParseTarget(spec.substr(0, eq), t))
@@ -768,9 +768,9 @@ index 0000000..5d88c20
 +		if (t.key == KBD_NONE) E_Exit("SWOTL: unknown key '%s'", t.name.c_str());
 +		keys.push_back(t);
 +	}
-+	if (const char *polls = getenv("SWOTL_POLLS")) {
++	if (const char *polls = getenv("WC2_POLLS")) {
 +		FILE *f = fopen(polls, "r");
-+		if (!f) E_Exit("SWOTL: cannot read SWOTL_POLLS '%s'", polls);
++		if (!f) E_Exit("SWOTL: cannot read WC2_POLLS '%s'", polls);
 +		char line[128];
 +		while (fgets(line, sizeof line, f)) {
 +			for (const char *c = line; *c; ++c) poll_digest = (poll_digest ^ (uint8_t)*c) * 0x100000001b3ull;
@@ -843,7 +843,7 @@ index 0000000..5d88c20
 +	load_seg = (uint16_t)(SegValue(cs) - ROOT_ENTRY_CS);
 +	const uint16_t root = ModuleId("SWOTL.EXE");
 +	modules[root].loads++;
-+	const char *ticks = getenv("SWOTL_BIOS_TICKS");
++	const char *ticks = getenv("WC2_BIOS_TICKS");
 +	mem_writed(0x46c, ticks ? (uint32_t)strtoul(ticks, nullptr, 0) : 0);
 +	mem_writeb(0x470, 0);
 +	MapRange((uint32_t)load_seg << 4, ROOT_IMAGE_BYTES, root, 0);
@@ -923,7 +923,7 @@ index 0000000..5d88c20
 +
 +} // namespace
 +
-+void SWOTL_Instruction(const uint32_t linear) {
++void WC2_Instruction(const uint32_t linear) {
 +	if (!swotl_active) {
 +		if ((uint16_t)reg_eip != ROOT_ENTRY_IP) return;
 +		if (!configured) Configure();
@@ -970,7 +970,7 @@ index 0000000..5d88c20
 +	}
 +}
 +
-+void SWOTL_MemoryAccess(const bool write, const uint32_t address, const uint8_t width) {
++void WC2_MemoryAccess(const bool write, const uint32_t address, const uint8_t width) {
 +	if (in_interrupt_hook) return;
 +	const bool is_vga = address >= 0xa0000u && address < 0xc0000u;
 +	const uint32_t para = address >> 4;
@@ -985,7 +985,7 @@ index 0000000..5d88c20
 +	if (code) ++code_writes[std::make_tuple(source, address, width)];
 +}
 +
-+bool SWOTL_IrqPoint(const uint32_t linear) {
++bool WC2_IrqPoint(const uint32_t linear) {
 +	if (!swotl_active || !GETFLAG(IF) || !PIC_IRQCheck) return false;
 +	const Location here = Locate(linear);
 +	if (!IsPoll(here)) return false;
@@ -1002,7 +1002,7 @@ index 0000000..5d88c20
 +	return true;
 +}
 +
-+void SWOTL_Interrupt(const unsigned num, const unsigned type, const uint32_t oldeip) {
++void WC2_Interrupt(const unsigned num, const unsigned type, const uint32_t oldeip) {
 +	if (!swotl_active || cpu.pmode) return;
 +	if (swotl_irq_open && (type & CPU_INT_SOFTWARE) == 0) irq_vector = (int)num;
 +	in_interrupt_hook = true;
@@ -1029,26 +1029,26 @@ index 0000000..5d88c20
 +	in_interrupt_hook = false;
 +}
 +
-+void SWOTL_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
++void WC2_Port(const bool write, const uint8_t width, const unsigned port, const uint32_t value) {
 +	if (!swotl_active) return;
 +	++ports[std::make_tuple(write, width, (uint16_t)port, value, CurrentLocation())];
 +}
 +
-+void SWOTL_DosOpen(const char *name, const bool ok, const uint16_t handle, const uint8_t mode) {
++void WC2_DosOpen(const char *name, const bool ok, const uint16_t handle, const uint8_t mode) {
 +	if (!swotl_active) return;
 +	const auto base = BaseName(name);
 +	if (ok) files[handle] = OpenFile{base, 0};
 +	Event("open", "%s ok=%d handle=%u mode=%02x", base.c_str(), ok, handle, mode);
 +}
 +
-+void SWOTL_DosClose(const uint16_t handle) {
++void WC2_DosClose(const uint16_t handle) {
 +	if (!swotl_active) return;
 +	const auto it = files.find(handle);
 +	Event("close", "%s handle=%u", it == files.end() ? "?" : it->second.name.c_str(), handle);
 +	if (it != files.end()) files.erase(it);
 +}
 +
-+void SWOTL_DosRead(const uint16_t handle, const uint32_t buffer, const uint32_t file_pos,
++void WC2_DosRead(const uint16_t handle, const uint32_t buffer, const uint32_t file_pos,
 +                   const uint16_t requested, const uint16_t actual) {
 +	if (!swotl_active) return;
 +	const auto it = files.find(handle);
@@ -1065,14 +1065,14 @@ index 0000000..5d88c20
 +	      buffer, file_pos, requested, actual);
 +}
 +
-+void SWOTL_DosSeek(const uint16_t handle, const uint8_t mode, const uint32_t result) {
++void WC2_DosSeek(const uint16_t handle, const uint8_t mode, const uint32_t result) {
 +	if (!swotl_active) return;
 +	const auto it = files.find(handle);
 +	Event("seek", "%s handle=%u mode=%u pos=0x%05x", it == files.end() ? "?" : it->second.name.c_str(),
 +	      handle, mode, result);
 +}
 +
-+void SWOTL_DosExecOverlay(const char *name, const uint16_t seg, const uint16_t reloc) {
++void WC2_DosExecOverlay(const char *name, const uint16_t seg, const uint16_t reloc) {
 +	if (!swotl_active) return;
 +	Event("exec_overlay", "%s seg=0x%04x reloc=0x%04x", BaseName(name).c_str(), seg, reloc);
 +}

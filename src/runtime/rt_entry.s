@@ -85,7 +85,7 @@ G_DS	equ	1
 	xref	rt_opl_pair
 	xref	rt_irq_interrupting
 
-	ifd SWOTL_REPLAY
+	ifd WC2_REPLAY
 	xref rt_replay_enter,rt_replay_return
 	endif
 
@@ -137,7 +137,7 @@ seg_check:
 ; Software interrupt: d6 = CS << 16 | vector, d7 = next IP. A machine service
 ; runs in C; a vector the guest owns runs its handler on the frame C pushed.
 rt_int:
-	ifd SWOTL_REPLAY
+	ifd WC2_REPLAY
 	jsr rt_replay_enter
 	endif
 	addq.b	#1,rt_irq_mask		; services hold the CIA tick (machine.c)
@@ -153,7 +153,7 @@ deliver_or_return:
 	move.l	(a7)+,d7
 	bne.s	deliver_guest
 rt_exit:	; back to generated code (tests/host_run.py: service returns)
-	ifd SWOTL_REPLAY
+	ifd WC2_REPLAY
 	jsr rt_replay_return
 	endif
 	rts
@@ -169,7 +169,7 @@ deliver_guest:	; d7 = CS << 16 | IP of the pushed frame; the handler's IRET pops
 	bne	rt_ret_far_mismatch
 	addq.l	#4,a7
 rt_exit_guest:
-	ifd SWOTL_REPLAY
+	ifd WC2_REPLAY
 	jsr rt_replay_return
 	endif
 	rts

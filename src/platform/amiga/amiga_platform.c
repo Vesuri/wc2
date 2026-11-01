@@ -1,5 +1,5 @@
 /* Platform services for the runtime on AmigaOS: the game's files through
- * dos.library (each call in an I/O window of the takeover, Swotl.cpp), the
+ * dos.library (each call in an I/O window of the takeover, Wc2.cpp), the
  * PIT on a CIA-B timer (none in the frame bench, argument BENCH), the
  * diagnostic key script, the music skip (off; argument MUSIC keeps it off), and the
  * run of the translated program on its own native stack. Game files are read from the current directory (the game's
@@ -18,7 +18,7 @@
 #include "platform.h"
 #include "amiga_platform.h"
 #include "FileDate.h"
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
 #include "replay_clocks.h"
 #endif
 
@@ -173,7 +173,7 @@ int32_t plat_seek(int32_t handle, int32_t offset, int32_t whence)
 
 uint32_t plat_calendar_date(void)
 {
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     if (REPLAY_CALENDAR_DATE) return REPLAY_CALENDAR_DATE;
 #endif
     struct DateStamp stamp;
@@ -196,7 +196,7 @@ void plat_file_stamp(int32_t handle, uint32_t time, uint32_t date)
 
 void plat_close(int32_t handle)
 {
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     if (REPLAY_FILE_DATE && file_modified[handle] && !file_stamped[handle])
         plat_file_stamp(handle, REPLAY_FILE_TIME, REPLAY_FILE_DATE);
 #endif
@@ -290,7 +290,7 @@ static ULONG cia_tick(void)
     if (rt_sfx_capturing) {
         return 0;               /* the effect capture holds the tick: game time pauses */
     }
-#ifndef SWOTL_SYNC
+#ifndef WC2_SYNC
     /* Production has no poll checks (docs/irq-plan.md I8): ticks posted while
      * IRQ0 could not run go first, then this one. */
     int current = rt_irq0_ready();  /* else this tick waits behind posted ones */
@@ -619,7 +619,7 @@ static int wb_options(int *tfh)
         STRPTR *types = (STRPTR *)icon->do_ToolTypes;
         *tfh = FindToolType(types, (STRPTR)"TFH") != 0;
         if (FindToolType(types, (STRPTR)"ANALOGJOYSTICK")) rt_joystick = 1;
-#ifndef SWOTL_RELEASE
+#ifndef WC2_RELEASE
         if (FindToolType(types, (STRPTR)"BENCH")) rt_bench = 1;
         if (FindToolType(types, (STRPTR)"MUSIC")) rt_music_skip = 0;
         const char *keys = (const char *)FindToolType(types, (STRPTR)"KEYS");
@@ -654,7 +654,7 @@ static int wb_options(int *tfh)
  * RunCommand put it. KEYS points into the RDArgs until the close. */
 static struct RDArgs *shell_args = 0;
 
-#ifdef SWOTL_RELEASE
+#ifdef WC2_RELEASE
 /* The release image (make amiga-release): the player's options only. */
 #define SHELL_TEMPLATE "TFH/S,ANALOGJOYSTICK/S"
 enum { ARG_TFH, ARG_ANALOGJOYSTICK, ARG_COUNT };
@@ -675,7 +675,7 @@ static int shell_options(int *tfh)
     }
     *tfh = values[ARG_TFH] != 0;
     if (values[ARG_ANALOGJOYSTICK]) rt_joystick = 1;   /* proportional stick in port 2; joystick argument Y */
-#ifndef SWOTL_RELEASE
+#ifndef WC2_RELEASE
     if (values[ARG_MUSIC]) rt_music_skip = 0;   /* diagnostic: music records start their songs */
     if (values[ARG_BENCH]) rt_bench = 1;        /* frame bench: ticks from guest progress, no CIA timer */
     if (values[ARG_KEYS]) key_script = (const char *)values[ARG_KEYS];
@@ -697,7 +697,7 @@ int amiga_guest_open(void)
         return 0;
     }
     key_script_check();
-#ifndef SWOTL_SYNC
+#ifndef WC2_SYNC
     if (rt_bench) {         /* production takes no tick at a poll point (irq-plan I8) */
         plat_log("SWOTL frame bench needs the sync image (make amiga-sync)");
         return 0;
@@ -719,7 +719,7 @@ int amiga_guest_open(void)
     }
     plat_log("SWOTL guest start");
     rt_start(guest_block);
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     (void)timer_open;
     plat_log("SWOTL diagnostic reference replay");
 #else

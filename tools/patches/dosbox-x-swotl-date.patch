@@ -1,7 +1,7 @@
 --- a/src/misc/swotl_trace.cpp
 +++ b/src/misc/swotl_trace.cpp
 @@ -562,11 +562,15 @@
- 	const char *ticks = getenv("SWOTL_BIOS_TICKS");
+ 	const char *ticks = getenv("WC2_BIOS_TICKS");
  	mem_writed(0x46c, ticks ? (uint32_t)strtoul(ticks, nullptr, 0) : 0);
  	mem_writeb(0x470, 0);
 +	/* Recorded file-close metadata must not depend on the host calendar. */

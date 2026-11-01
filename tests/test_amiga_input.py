@@ -2,7 +2,7 @@
 """Exercise production Input.cpp through its ciaa.resource calls and MMIO registers.
 
 The fake registers model hardware values, not Input::key/moveMouse calls. Both
-builds: sync (SWOTL_SYNC) posts IRQ1 per event, production none (irq-plan I8).
+builds: sync (WC2_SYNC) posts IRQ1 per event, production none (irq-plan I8).
 The keyboard is read at the vertical blank from ciaa.resource's SP flag with
 the SP interrupt disabled (docs/irq-plan.md I7). This is handler coverage, not
 emulator interrupt-routing or physical input validation. --sabotage proves the
@@ -116,7 +116,7 @@ static void edge(unsigned wire, unsigned scan, unsigned irq) {
     assert(cra == 0x81 && depth == 0 && !(icr & 0x08));
     assert(rt_key_tail == k + 1);
     assert(rt_key_ring[k % RT_KEY_RING] == scan);
-#ifdef SWOTL_SYNC                  // sync builds post IRQ1; production none (irq-plan I8)
+#ifdef WC2_SYNC                  // sync builds post IRQ1; production none (irq-plan I8)
     assert(rt_irq_tail == i + 1 && rt_irq_ring[i % RT_IRQ_RING] == irq);
 #else
     assert(rt_irq_tail == i);
@@ -275,7 +275,7 @@ def run(source: str, expected_ok: bool, sync: bool) -> None:
             p.write_text(text)
         (d / 'Input.cpp').write_text(source)
         (d / 'probe.cpp').write_text(HARNESS)
-        subprocess.run(['c++', '-std=c++17', '-O2', *(['-DSWOTL_SYNC'] if sync else []), '-I', str(d), '-I',
+        subprocess.run(['c++', '-std=c++17', '-O2', *(['-DWC2_SYNC'] if sync else []), '-I', str(d), '-I',
                         str(ROOT / 'src/platform/amiga'), str(d / 'Input.cpp'),
                         str(d / 'probe.cpp'), '-o', str(d / 'probe')], check=True)
         result = subprocess.run([str(d / 'probe')], capture_output=True, text=True)
@@ -293,7 +293,7 @@ if __name__ == '__main__':
         run(source, True, sync)
     if args.sabotage:
         # production posts a keyboard interrupt / the sync build posts none
-        posting = '#ifdef SWOTL_SYNC\n    rt_irq_ring'
+        posting = '#ifdef WC2_SYNC\n    rt_irq_ring'
         assert source.count(posting) == 1
         run(source.replace(posting, '#if 1\n    rt_irq_ring'), False, False)
         run(source.replace(posting, '#if 0\n    rt_irq_ring'), False, True)

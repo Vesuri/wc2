@@ -8,7 +8,7 @@
 #   shell  argument BENCH from the Shell: result 20, no message
 # Shell arguments through ReadArgs (open-work 44), stopped at rt_start once parsed:
 #   lower  tfh keys=1:shot in lower case: TFH chosen, the key script set
-#   prompt `?`, then tfh read from the Shell input (SWOTL_INPUT)
+#   prompt `?`, then tfh read from the Shell input (WC2_INPUT)
 #   bad    an unknown argument: ReadArgs fails with IoErr 118 (wrong number of
 #          arguments) for PrintFault, result 20
 # The release image (make amiga-release), its own symbols:
@@ -30,21 +30,21 @@ fixture() {
   {
     echo 'set pagination off'
     echo 'set confirm off'
-    printf 'break *rt_stop\ncommands\n  silent\n  printf "SWOTL_WB_STOP\\n"\n  detach\n  quit 1\nend\n'
-    printf 'break *rt_unsupported\ncommands\n  silent\n  printf "SWOTL_WB_UNSUPPORTED %%s ax=%%04x\\n", *(char **)($sp + 4), rt_r.ax\n  detach\n  quit 1\nend\n'
-    printf 'break *amiga_script_mark\ncommands\n  silent\n  printf "SWOTL_WB_TIMEOUT fields=%%u\\n", amiga_frames\n  detach\n  quit 1\nend\n'
+    printf 'break *rt_stop\ncommands\n  silent\n  printf "WC2_WB_STOP\\n"\n  detach\n  quit 1\nend\n'
+    printf 'break *rt_unsupported\ncommands\n  silent\n  printf "WC2_WB_UNSUPPORTED %%s ax=%%04x\\n", *(char **)($sp + 4), rt_r.ax\n  detach\n  quit 1\nend\n'
+    printf 'break *amiga_script_mark\ncommands\n  silent\n  printf "WC2_WB_TIMEOUT fields=%%u\\n", amiga_frames\n  detach\n  quit 1\nend\n'
     if [ "$4" = 1 ]; then
-      echo 'break Swotl::handBack'
+      echo 'break Wc2::handBack'
       echo 'continue'
       echo 'finish'
-      echo 'printf "SWOTL_WB_RESTORE status=%u fields=%u music_skip=%u\n", amiga_restore_status, amiga_frames, rt_music_skip'
+      echo 'printf "WC2_WB_RESTORE status=%u fields=%u music_skip=%u\n", amiga_restore_status, amiga_frames, rt_music_skip'
       printf 'if amiga_restore_status != 127 || rt_music_skip != 0\n  detach\n  quit 1\nend\n'
     fi
     echo 'break amiga_start_return'
     echo 'continue'
-    echo 'printf "SWOTL_WB_RESULT case='"$1"' result=%d message=%d\n", result, amiga_wb_startup != 0'
+    echo 'printf "WC2_WB_RESULT case='"$1"' result=%d message=%d\n", result, amiga_wb_startup != 0'
     printf 'if result != %s || (amiga_wb_startup != 0) != %s\n  detach\n  quit 1\nend\n' "$2" "$3"
-    echo 'printf "SWOTL_WB_OK\n"'
+    echo 'printf "WC2_WB_OK\n"'
     echo 'detach'
     echo 'quit 0'
   } > "$run/$1.gdb"
@@ -59,12 +59,12 @@ options() {
     echo 'set pagination off'
     echo 'set confirm off'
     printf 'set $tfh = 0\nbreak amiga_platform.c:%s\ncommands\n  silent\n  set $tfh = 1\n  continue\nend\n' "$line"
-    printf 'break amiga_start_return\ncommands\n  silent\n  printf "SWOTL_WB_RESULT case=%s result=%%d\\n", result\n  detach\n  quit 1\nend\n' "$1"
+    printf 'break amiga_start_return\ncommands\n  silent\n  printf "WC2_WB_RESULT case=%s result=%%d\\n", result\n  detach\n  quit 1\nend\n' "$1"
     echo 'break rt_start'
     echo 'continue'
-    printf 'printf "SWOTL_WB_ARGS case=%s tfh=%%d music_skip=%%u bench=%%u keys=%%d\\n", $tfh, rt_music_skip, rt_bench, key_script != 0\n' "$1"
+    printf 'printf "WC2_WB_ARGS case=%s tfh=%%d music_skip=%%u bench=%%u keys=%%d\\n", $tfh, rt_music_skip, rt_bench, key_script != 0\n' "$1"
     printf 'if !(%s)\n  detach\n  quit 1\nend\n' "$2"
-    echo 'printf "SWOTL_WB_OK\n"'
+    echo 'printf "WC2_WB_OK\n"'
     echo 'detach'
     echo 'quit 0'
   } > "$run/$1.gdb"
@@ -78,19 +78,19 @@ fault() {
     echo 'set pagination off'
     echo 'set confirm off'
     echo 'break rt_start'
-    printf 'commands\n  silent\n  printf "SWOTL_WB_PARSED\\n"\n  detach\n  quit 1\nend\n'
+    printf 'commands\n  silent\n  printf "WC2_WB_PARSED\\n"\n  detach\n  quit 1\nend\n'
     echo "break amiga_platform.c:$line"
     echo 'continue'
     echo 'set $err = *(long *)(*(long *)(*(long *)4 + 276) + 148)'
-    printf 'printf "SWOTL_WB_FAULT case=%s ioerr=%%d\\n", $err\n' "$1"
+    printf 'printf "WC2_WB_FAULT case=%s ioerr=%%d\\n", $err\n' "$1"
     printf 'if $err != %s\n  detach\n  quit 1\nend\n' "$2"
     # The PrintFault line has more than one location.
     echo 'delete'
     echo 'break amiga_start_return'
     echo 'continue'
-    printf 'printf "SWOTL_WB_RESULT case=%s result=%%d\\n", result\n' "$1"
+    printf 'printf "WC2_WB_RESULT case=%s result=%%d\\n", result\n' "$1"
     printf 'if result != 20\n  detach\n  quit 1\nend\n'
-    echo 'printf "SWOTL_WB_OK\n"'
+    echo 'printf "WC2_WB_OK\n"'
     echo 'detach'
     echo 'quit 0'
   } > "$run/$1.gdb"
@@ -98,30 +98,30 @@ fault() {
 
 check() {
   local name=$1
-  FSUAE_RUN="../tmp/${run##*/}/$name" bash amiga/debug.sh "" "$run/$name.gdb" ${SWOTL_EXE:+"$SWOTL_EXE"} \
+  FSUAE_RUN="../tmp/${run##*/}/$name" bash amiga/debug.sh "" "$run/$name.gdb" ${WC2_EXE:+"$WC2_EXE"} \
     > "$run/$name.log" 2>&1 || true
   cat "$run/$name.log"
   # A disconnected debugger or an exhausted command file is not a pass.
-  grep -q '^SWOTL_WB_OK$' "$run/$name.log" || { echo "FAIL: $name"; exit 1; }
+  grep -q '^WC2_WB_OK$' "$run/$name.log" || { echo "FAIL: $name"; exit 1; }
 }
 
 fixture icon 0 1 1
-SWOTL_WORKBENCH=1 SWOTL_TOOLTYPES="MUSIC $exit_keys" check icon
+WC2_WORKBENCH=1 WC2_TOOLTYPES="MUSIC $exit_keys" check icon
 fixture bench 20 1 0
-SWOTL_WORKBENCH=1 SWOTL_TOOLTYPES=BENCH check bench
+WC2_WORKBENCH=1 WC2_TOOLTYPES=BENCH check bench
 fixture shell 20 0 0
-SWOTL_ARGS=BENCH check shell
+WC2_ARGS=BENCH check shell
 options lower '$tfh == 1 && rt_music_skip == 0 && key_script != 0 && *key_script == 0x31'
-SWOTL_ARGS='tfh keys=1:shot' check lower
+WC2_ARGS='tfh keys=1:shot' check lower
 options prompt '$tfh == 1'
-SWOTL_INPUT=tfh SWOTL_ARGS='?' check prompt
+WC2_INPUT=tfh WC2_ARGS='?' check prompt
 fault bad 118
-SWOTL_ARGS=foo check bad
-release=(SWOTL_RELEASE=1 SWOTL_ELF="$PWD/build/amiga-release/out/Swotl.elf" SWOTL_EXE="$PWD/amiga/out/Swotl-release.exe")
+WC2_ARGS=foo check bad
+release=(WC2_RELEASE=1 WC2_ELF="$PWD/build/amiga-release/out/Wc2.elf" WC2_EXE="$PWD/amiga/out/Wc2-release.exe")
 options release '$tfh == 1 && rt_joystick == 1 && key_script == 0'
-env "${release[@]}" SWOTL_ARGS='tfh analogjoystick' bash -c "$(declare -f check); run='$run'; check release"
+env "${release[@]}" WC2_ARGS='tfh analogjoystick' bash -c "$(declare -f check); run='$run'; check release"
 for arg in 'KEYS=1:shot' MUSIC BENCH; do
   fault release-keys 118
-  env "${release[@]}" SWOTL_ARGS="$arg" bash -c "$(declare -f check); run='$run'; check release-keys"
+  env "${release[@]}" WC2_ARGS="$arg" bash -c "$(declare -f check); run='$run'; check release-keys"
 done
 echo 'PASS: Workbench and Shell starts return their results; Shell arguments parse; the release image takes the player options only'

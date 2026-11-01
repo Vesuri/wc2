@@ -111,11 +111,11 @@ def sync_points(path=None) -> dict[tuple[str, int], str]:
 def poll(lab: str, always: bool = False) -> list[str]:
     """D8 safe point at a sync point (a block leader: live flags are in the state
     block, so the CCR is free): a posted interrupt branches to the poll's stub
-    (poll_stub), the common case falls through. Only sync builds (SWOTL_SYNC: host
+    (poll_stub), the common case falls through. Only sync builds (WC2_SYNC: host
     runs, replays, the bench) test, but at an IF 0→1 point (always): production
     takes ticks at the CIA interrupt (irq-plan I8)."""
     test = ["\ttst.b G_IRQ(a6)", f"\tbne {lab}_irq"]
-    return (test if always else ["\tifd SWOTL_SYNC", *test, "\tendif"]) + [f"{lab}_np:"]
+    return (test if always else ["\tifd WC2_SYNC", *test, "\tendif"]) + [f"{lab}_np:"]
 
 
 def poll_stub(lab: str, ip: int, cs: str, always: bool = False, loop: bool = False) -> list[str]:
@@ -126,7 +126,7 @@ def poll_stub(lab: str, ip: int, cs: str, always: bool = False, loop: bool = Fal
     would be another visit, and loop while the bench watch keeps G_IRQ set."""
     stub = [f"{lab}_irq:", f"\tmove.l #{hx(ip)},d7", f"\tmove.l #({cs})<<16{'|1' if loop else ''},d6",
             "\tjsr rt_irq", f"\tbra {lab}_np"]
-    return stub if always else ["\tifd SWOTL_SYNC", *stub, "\tendif"]
+    return stub if always else ["\tifd WC2_SYNC", *stub, "\tendif"]
 
 
 # A return check's mismatch branch (lower.return_check) targets a module-local

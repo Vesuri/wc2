@@ -4,7 +4,7 @@
  bool swotl_irq_gate = false, swotl_irq_open = false;
  
  extern HostPt MemBase;
-+extern void SWOTL_MouseInput(int dx, int dy, int buttons);
++extern void WC2_MouseInput(int dx, int dy, int buttons);
  
  namespace {
  
@@ -31,14 +31,14 @@
 +		if (t.key == KBD_NONE && !MouseAction(t.name)) E_Exit("SWOTL: unknown key '%s'", t.name.c_str());
  		keys.push_back(t);
  	}
- 	if (const char *polls = getenv("SWOTL_POLLS")) {
+ 	if (const char *polls = getenv("WC2_POLLS")) {
 @@ -625,6 +634,14 @@
  	if (key_held == KBD_NONE && key_index < keys.size() && Hit(keys[key_index], here)) {
  		auto &t = keys[key_index++];
  		t.done = true;
 +        if (MouseAction(t.name)) {
 +            const int amount = atoi(t.name.c_str() + 2);
-+            SWOTL_MouseInput(t.name[1] == 'x' ? amount : 0,
++            WC2_MouseInput(t.name[1] == 'x' ? amount : 0,
 +                             t.name[1] == 'y' ? amount : 0,
 +                             t.name[1] == 'b' ? amount : -1);
 +            Event("mouse", "%s", t.name.c_str());
@@ -70,7 +70,7 @@
 +// unit (two vertical mickeys after the standard INT33 reset). Feed the real
 +// DOS driver event path, normalizing its frontend sensitivity/rate first.
 +// Called only by the explicitly armed SWOTL reference script.
-+void SWOTL_MouseInput(int dx, int dy, int buttons) {
++void WC2_MouseInput(int dx, int dy, int buttons) {
 +    swotl_mouse_captured = true;
 +    const bool was_locked = user_cursor_locked;
 +    extern MOUSE_EMULATION user_cursor_emulation;

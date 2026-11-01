@@ -7,7 +7,7 @@ set confirm off
 break plat_exit
 commands
   silent
-  printf "SWOTL_MILESTONE_EXIT\n"
+  printf "WC2_MILESTONE_EXIT\n"
   quit 1
 end
 break *rt_stop
@@ -20,10 +20,10 @@ break @LABEL@
 continue
 disable $bpnum
 set $bm = &amiga_bitmap
-printf "SWOTL_REGS ax=%04x cx=%04x dx=%04x bx=%04x sp=%04x bp=%04x si=%04x di=%04x bpr=%d\n", $d0 & 0xffff, $d1 & 0xffff, $d2 & 0xffff, $d3 & 0xffff, ($d4 ^ 0x7fff) & 0xffff, ($d5 ^ 0x7fff) & 0xffff, (unsigned)$a4 & 0xffff, (unsigned)$a5 & 0xffff, $bm ? $bm->BytesPerRow : 0
-printf "SWOTL_AUDIO restarts=%u renders=%u\n", amiga_audio_restarts, fm_renders
-printf "SWOTL_EFFECTS capture=%u render=%u save=%u cached=%u bytes=%u\n", amiga_sfx_capture_fields, amiga_audio_effect_fields, amiga_audio_effect_save_fields, amiga_audio_effect_cached, amiga_audio_effect_bytes
-printf "SWOTL_CHIP free=%u largest=%u\n", amiga_chip_free, amiga_chip_largest
+printf "WC2_REGS ax=%04x cx=%04x dx=%04x bx=%04x sp=%04x bp=%04x si=%04x di=%04x bpr=%d\n", $d0 & 0xffff, $d1 & 0xffff, $d2 & 0xffff, $d3 & 0xffff, ($d4 ^ 0x7fff) & 0xffff, ($d5 ^ 0x7fff) & 0xffff, (unsigned)$a4 & 0xffff, (unsigned)$a5 & 0xffff, $bm ? $bm->BytesPerRow : 0
+printf "WC2_AUDIO restarts=%u renders=%u\n", amiga_audio_restarts, fm_renders
+printf "WC2_EFFECTS capture=%u render=%u save=%u cached=%u bytes=%u\n", amiga_sfx_capture_fields, amiga_audio_effect_fields, amiga_audio_effect_save_fields, amiga_audio_effect_cached, amiga_audio_effect_bytes
+printf "WC2_CHIP free=%u largest=%u\n", amiga_chip_free, amiga_chip_largest
 set $g = *(unsigned char **)&rt_guest
 dump binary memory @OUT@/state.bin $g+1 $g+17
 dump binary memory @OUT@/ram.bin $g-0xfffff $g+1
@@ -31,13 +31,13 @@ set $d = (char *)rt_dac
 dump binary memory @OUT@/dac.bin $d $d+768
 set $pt = (unsigned char *)amiga_pointer_state
 dump binary memory @OUT@/pointer.bin $pt $pt+amiga_pointer_bytes
-set $display = Swotl::application->display
+set $display = Wc2::application->display
 if $display->queue.pending >= 0
   set $serial = $display->queuedSerial
   break *amiga_display_shown
   continue
   if *(unsigned int *)($sp+4) != $serial || amiga_display_late
-    printf "SWOTL_MILESTONE_WRONG_HANDOFF\n"
+    printf "WC2_MILESTONE_WRONG_HANDOFF\n"
     quit 1
   end
 end
@@ -54,7 +54,7 @@ if $pt[0] && amiga_sprites && !amiga_sprites[36] && !amiga_sprites[37]
   disable $bpnum
 end
 if amiga_display_count != $count
-  printf "SWOTL_MILESTONE_WRONG_HANDOFF sprite wait\n"
+  printf "WC2_MILESTONE_WRONG_HANDOFF sprite wait\n"
   quit 1
 end
 if amiga_sprites
@@ -84,5 +84,5 @@ if $bm
   set $c = (char *)amiga_colours
   dump binary memory @OUT@/colours.bin $c $c+sizeof(amiga_colours)
 end
-printf "SWOTL_MILESTONE_OK\n"
+printf "WC2_MILESTONE_OK\n"
 quit 0

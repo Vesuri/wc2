@@ -2,7 +2,7 @@
 """Run the original under instrumented DOSBox-X, headless, from a fresh root.
 
 Outputs in tmp/pc-runs/<name>/: root/ (disposable game copy), trace/ (hook
-outputs), dosbox-x.log, result.txt. Exit status: 0 success (SWOTL_EXIT_AFTER
+outputs), dosbox-x.log, result.txt. Exit status: 0 success (WC2_EXIT_AFTER
 snapshot reached), 2 time limit, 3 guest fault, 4 emulator failure.
 A time limit is never success.
 """
@@ -84,25 +84,25 @@ def main() -> int:
     fixture_inputs.stage_missing(root, missing)
     fixture_inputs.record(run, missing)
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy",
-               SWOTL_TRACE="1", SWOTL_TRACE_DIR=str(run / "trace"),
-               SWOTL_FIXED_FILE_CLOCK="1",
-               SWOTL_SNAPSHOTS=args.snapshots, SWOTL_EXIT_AFTER=args.exit_after,
-               SWOTL_KEYS=args.keys)
-    env.pop('SWOTL_JOYSTICK', None)
+               WC2_TRACE="1", WC2_TRACE_DIR=str(run / "trace"),
+               WC2_FIXED_FILE_CLOCK="1",
+               WC2_SNAPSHOTS=args.snapshots, WC2_EXIT_AFTER=args.exit_after,
+               WC2_KEYS=args.keys)
+    env.pop('WC2_JOYSTICK', None)
     if args.joystick:
-        env['SWOTL_JOYSTICK'] = '1'
+        env['WC2_JOYSTICK'] = '1'
     if args.services:
-        env["SWOTL_SERVICES"] = "1"
+        env["WC2_SERVICES"] = "1"
     if args.rep_chunks:
-        env["SWOTL_REP_CHUNKS"] = "1"
+        env["WC2_REP_CHUNKS"] = "1"
     if args.opl:
-        env["SWOTL_OPL"] = "1"
+        env["WC2_OPL"] = "1"
     if args.probes:
-        env["SWOTL_PROBES"] = args.probes
+        env["WC2_PROBES"] = args.probes
     if args.polls:
-        env["SWOTL_POLLS"] = str(args.polls.resolve())
+        env["WC2_POLLS"] = str(args.polls.resolve())
     if args.key_hold is not None:
-        env["SWOTL_KEY_HOLD"] = str(args.key_hold)
+        env["WC2_KEY_HOLD"] = str(args.key_hold)
     command = [str(DOSBOX), "-conf", str(CONF), "-nogui", "-nomenu", "-silent", "-fastlaunch",
                "-time-limit", str(args.time_limit),
                "-set", f"log logfile={run / 'dosbox-x.log'}"]
@@ -113,7 +113,7 @@ def main() -> int:
     command += ["-c", f"mount c \"{root}\"", "-c", "c:", "-c", args.launch, "-c", "exit"]
     (run / "clock-inputs.json").write_text(json.dumps({
         "host_file_clock": "1991-01-01T12:00:00", "basis": "local calendar",
-        "SWOTL_FIXED_FILE_CLOCK": env["SWOTL_FIXED_FILE_CLOCK"]}, indent=2) + "\n")
+        "WC2_FIXED_FILE_CLOCK": env["WC2_FIXED_FILE_CLOCK"]}, indent=2) + "\n")
     with open(run / "stdout.txt", "w") as out:
         try:
             proc = subprocess.run(command, cwd=run, env=env, stdout=out, stderr=subprocess.STDOUT,

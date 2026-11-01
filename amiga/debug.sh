@@ -2,9 +2,9 @@
 # Source-level debug the Amiga build via FS-UAE's GDB stub.
 #   ./debug.sh [path-to-kickstart] [fixture.gdb] [executable]
 # AMIGA_CPU=68030 (make test-amiga) for the faster development model.
-# SWOTL_WORKBENCH=1: started from its icon by Workbench (SYS:WBStartup), tool
-# types from SWOTL_TOOLTYPES (words), instead of SWOTL_ARGS from the Shell.
-# SWOTL_INPUT: the Shell start's input (redirected from S:swotl-input), e.g. the
+# WC2_WORKBENCH=1: started from its icon by Workbench (SYS:WBStartup), tool
+# types from WC2_TOOLTYPES (words), instead of WC2_ARGS from the Shell.
+# WC2_INPUT: the Shell start's input (redirected from S:swotl-input), e.g. the
 # line a ReadArgs `?` prompt reads.
 # Without a fixture: interactive gdb; `continue` runs the program.
 # The stub serves memory reads but silently drops writes: inject inputs from C.
@@ -16,37 +16,37 @@ cd "$(dirname "$0")"
 GDB="${GDB:-m68k-amiga-elf-gdb}"
 ROM="${1:-$KICKSTART}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM"; exit 1; }
-ELF="${SWOTL_ELF:-out/Swotl.elf}"
+ELF="${WC2_ELF:-out/Wc2.elf}"
 [ -f "$ELF" ] || { echo "build first: make"; exit 1; }
 
 # KS 3.1 sets the AGA bits in GfxBase only after SetPatch (docs/amiga-lessons.md L8).
 [ -f "$SETPATCH" ] || { echo "SetPatch not found: $SETPATCH"; exit 1; }
 RUN="$FSUAE_RUN"; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/c" "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
-# Do not simplify to `dh1:Swotl`: with the path form gdb resolves symbols
+# Do not simplify to `dh1:Wc2`: with the path form gdb resolves symbols
 # against the wrong base and no breakpoint is ever hit (Rescue on Fractalus).
 # MUSIC: fixtures check the guest path, which the references hold (music_skip off);
-# SWOTL_RELEASE=1 leaves it out for the release image, which refuses it.
+# WC2_RELEASE=1 leaves it out for the release image, which refuses it.
 GAME="$DH1"; BOOT=()
-if [ -n "${SWOTL_WORKBENCH:-}" ]; then
+if [ -n "${WC2_WORKBENCH:-}" ]; then
   # Workbench 2.04's C: and Libs: (LoadWB); ENV: as a startup-sequence makes it.
   GAME="$DH0/WBStartup"; rm -rf "$GAME"; mkdir -p "$GAME"
   BOOT=(--floppy_drive_0="$WORKBENCH_ADF" --hard_drive_0_priority=10)
   printf '%s\n' 'DH0:c/SetPatch QUIET' 'DF0:C/Assign C: DF0:C' 'Assign LIBS: DF0:Libs' \
     'MakeDir RAM:ENV' 'Assign ENV: RAM:ENV' 'LoadWB' 'EndCLI >NIL:' > "$DH0/s/startup-sequence"
   # shellcheck disable=SC2086  # one tool type per word
-  python3 ../tools/tool_icon.py "$GAME/Swotl.info" ${SWOTL_TOOLTYPES:-} || exit 1
+  python3 ../tools/tool_icon.py "$GAME/Wc2.info" ${WC2_TOOLTYPES:-} || exit 1
 else
   rm -rf "$DH0/WBStartup"
   redirect=
-  if [ -n "${SWOTL_INPUT+set}" ]; then
-    printf '%s\n' "$SWOTL_INPUT" > "$DH0/s/swotl-input"; redirect=' <S:swotl-input'
+  if [ -n "${WC2_INPUT+set}" ]; then
+    printf '%s\n' "$WC2_INPUT" > "$DH0/s/swotl-input"; redirect=' <S:swotl-input'
   fi
-  music=' MUSIC'; [ -n "${SWOTL_RELEASE:-}" ] && music=
-  printf 'C:SetPatch QUIET\ncd dh1:\nSwotl%s%s %s\n' "$redirect" "$music" "${SWOTL_ARGS:-}" > "$DH0/s/startup-sequence"
+  music=' MUSIC'; [ -n "${WC2_RELEASE:-}" ] && music=
+  printf 'C:SetPatch QUIET\ncd dh1:\nWc2%s%s %s\n' "$redirect" "$music" "${WC2_ARGS:-}" > "$DH0/s/startup-sequence"
 fi
 cp -f "$SETPATCH" "$DH0/c/SetPatch"
-cp -f "${3:-out/Swotl.exe}" "$GAME/Swotl" || exit 1
+cp -f "${3:-out/Wc2.exe}" "$GAME/Wc2" || exit 1
 # The game's own data files next to the executable (local only, never committed).
 rsync -a --exclude '*.pdf' ../ref/ "$GAME/"
 rm -f "$RUN"/state/*.uss
@@ -59,7 +59,7 @@ fsuae_options
 FSUAE_LOG="$RUN/fsuae-dbg.log" fsuae_launch \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" ${BOOT[@]+"${BOOT[@]}"} \
   --window_width=720 --window_height=568 \
-  --remote_debugger_trigger=Swotl --state_dir="$RUN/state"
+  --remote_debugger_trigger=Wc2 --state_dir="$RUN/state"
 
 for i in $(seq 1 60); do
   kill -0 "$FSUAE_PID" 2>/dev/null || { echo "FS-UAE exited early; see $RUN/fsuae-dbg.log"; exit 1; }

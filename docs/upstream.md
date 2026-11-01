@@ -40,3 +40,4 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 
 | Change | Files | Kind |
 |---|---|---|
+| Rename `SWOTL_` → `WC2_`, `Swotl` → `Wc2`, `swotl-gen` → `wc2-gen`; `Swotl.{cpp,h}` → `Wc2.{cpp,h}` | 65 imported files | ren |

@@ -5,7 +5,7 @@
  std::map<uint16_t, OpenFile> files;
  FILE *events = nullptr;
 +FILE *read_data = nullptr;
- /* OPL log (SWOTL_OPL=1): every AdLib register write (index at 388h, data at
+ /* OPL log (WC2_OPL=1): every AdLib register write (index at 388h, data at
   * 389h) with the emulated time in ms. */
  FILE *opl = nullptr;
 @@ -369,6 +370,8 @@
@@ -25,7 +25,7 @@
 +	if (!read_data) E_Exit("SWOTL: cannot open reads.bin");
  	events = fopen(Path("events.csv").c_str(), "w");
  	if (events) fputs("icount,kind,module,offset,detail\n", events);
- 	if (const char *v = getenv("SWOTL_OPL"); v && *v && strcmp(v, "0") != 0) {
+ 	if (const char *v = getenv("WC2_OPL"); v && *v && strcmp(v, "0") != 0) {
 @@ -794,8 +799,15 @@
  	} else {
  		MapRange(buffer, actual, 0, 0);
@@ -43,4 +43,4 @@
 +	      buffer, file_pos, requested, actual, payload);
  }
  
- void SWOTL_DosSeek(const uint16_t handle, const uint8_t mode, const uint32_t result) {
+ void WC2_DosSeek(const uint16_t handle, const uint8_t mode, const uint32_t result) {

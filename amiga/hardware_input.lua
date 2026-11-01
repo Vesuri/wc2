@@ -1,12 +1,12 @@
 -- Emulator events enter CIA/JOY0DAT; no writes to game RAM or calls to Input.
 local field = 0
 local function event(s)
-    uae_log("SWOTL_INPUT " .. s .. "\n")
+    uae_log("WC2_INPUT " .. s .. "\n")
     uae_write_config(s)
 end
 function on_uae_vsync()
     field = field + 1
-    if field == 10 then uae_log("SWOTL_HARDWARE_LUA_STARTED") end
+    if field == 10 then uae_log("WC2_HARDWARE_LUA_STARTED") end
     if field == 2000 then event("KEY_RETURN 1") end
     if field == 2010 then event("KEY_RETURN 0") end
     if field == 2020 then

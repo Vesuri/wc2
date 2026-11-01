@@ -1,5 +1,5 @@
-#ifndef _SWOTL_H
-#define _SWOTL_H
+#ifndef _WC2_H
+#define _WC2_H
 
 #include <exec/interrupts.h>
 #include "Util.h"
@@ -15,10 +15,10 @@ struct plat_rect;
 // (AGA copper display, the VERTB vector, the keyboard), the translated program
 // runs to its exit, and the machine is handed back. Disk access inside the
 // takeover goes through I/O windows (L7).
-class Swotl {
+class Wc2 {
 public:
-    Swotl();
-    ~Swotl();
+    Wc2();
+    ~Wc2();
 
     bool isRunnable() const { return runnable; }
     void run();
@@ -38,8 +38,8 @@ public:
 
     // The display and I/O windows (set by the constructor); the VERTB
     // handler's owner (set at the takeover).
-    static Swotl* application;
-    static Swotl* active;
+    static Wc2* application;
+    static Wc2* active;
 
 private:
     void takeOver();

@@ -249,7 +249,7 @@ uint32_t rt_int_c(uint32_t d6, uint32_t ip)
     if (rt_bench) {
         bench_service();
     }
-#ifndef SWOTL_SYNC
+#ifndef WC2_SYNC
     /* Production (I8): no keyboard interrupt; the BIOS takes the keys typed
      * since the last service with IF set, as its INT 09h would have. */
     if (G_IF) {
@@ -641,7 +641,7 @@ void rt_stop(const char *what, uint32_t a, uint32_t b)
         rt_irq_interrupting = 0;
         rt_irq_abort();
     }
-    char line[160], *p = put_str(line, "SWOTL_STOP ");
+    char line[160], *p = put_str(line, "WC2_STOP ");
     p = put_str(p, what);
     *p++ = ' ';
     p = put_hex(p, a, 4);
@@ -654,7 +654,7 @@ void rt_stop(const char *what, uint32_t a, uint32_t b)
 
 void rt_unsupported(const char *what, uint16_t vector, uint16_t cs, uint16_t ip)
 {
-    char line[160], *p = put_str(line, "SWOTL_STOP unsupported ");
+    char line[160], *p = put_str(line, "WC2_STOP unsupported ");
     p = put_str(p, what);
     p = put_str(p, " int ");
     p = put_hex(p, vector, 2);

@@ -25,7 +25,7 @@ end
 break *rt_stop
 commands
   silent
-  printf "SWOTL_PLAY_STOP fields=%u calls=%u returns=%u\n", amiga_frames, $walk_calls, $walk_returns
+  printf "WC2_PLAY_STOP fields=%u calls=%u returns=%u\n", amiga_frames, $walk_calls, $walk_returns
   x/s *(char **)($sp+4)
   printf "args=%x %x\n", *(unsigned int *)($sp+8), *(unsigned int *)($sp+12)
   detach
@@ -34,10 +34,10 @@ end
 break *amiga_script_mark
 commands
   silent
-  printf "SWOTL_PLAY_MARK fields=%u reads=%u calls=%u returns=%u\n", amiga_frames, amiga_mouse_reads, $walk_calls, $walk_returns
+  printf "WC2_PLAY_MARK fields=%u reads=%u calls=%u returns=%u\n", amiga_frames, amiga_mouse_reads, $walk_calls, $walk_returns
   if *(unsigned int *)($sp+4)
     if $walk_calls > 0 && $walk_calls == $walk_returns
-      printf "SWOTL_PLAY_OK\n"
+      printf "WC2_PLAY_OK\n"
       detach
       quit 0
     end

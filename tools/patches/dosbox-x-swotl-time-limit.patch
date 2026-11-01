@@ -1,13 +1,13 @@
 --- a/include/swotl_trace.h
 +++ b/include/swotl_trace.h
 @@ -12,6 +12,7 @@
- bool SWOTL_IrqPoint(uint32_t linear);
+ bool WC2_IrqPoint(uint32_t linear);
  
- void SWOTL_Instruction(uint32_t linear);
-+void SWOTL_TimeLimit();
- void SWOTL_MemoryAccess(bool write, uint32_t address, uint8_t width);
- void SWOTL_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
- void SWOTL_Port(bool write, uint8_t width, unsigned port, uint32_t value);
+ void WC2_Instruction(uint32_t linear);
++void WC2_TimeLimit();
+ void WC2_MemoryAccess(bool write, uint32_t address, uint8_t width);
+ void WC2_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
+ void WC2_Port(bool write, uint8_t width, unsigned port, uint32_t value);
 --- a/src/hardware/pic.cpp
 +++ b/src/hardware/pic.cpp
 @@ -867,8 +867,10 @@
@@ -16,7 +16,7 @@
      /* timeout */
 -    if (time_limit_ms != 0 && PIC_Ticks >= time_limit_ms)
 +    if (time_limit_ms != 0 && PIC_Ticks >= time_limit_ms) {
-+        SWOTL_TimeLimit();
++        WC2_TimeLimit();
          throw int(1);
 +    }
  
@@ -39,6 +39,6 @@
 +
 +/* -time-limit (pic.cpp): the outputs while guest memory is still mapped; at
 + * exit it is gone (OverlayName reads the PLINK table). */
-+void SWOTL_TimeLimit() {
++void WC2_TimeLimit() {
 +	WriteOutputs();
 +}

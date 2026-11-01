@@ -738,7 +738,7 @@ void rt_int21(uint16_t cs, uint16_t ip)
     case 0x4e: find_first(cs, ip); break;
     case 0x4f: find_next_entry(); break;
     case 0x4c:
-        rt_log_hex("SWOTL_EXIT", AL(rt_r.ax));
+        rt_log_hex("WC2_EXIT", AL(rt_r.ax));
         plat_exit(AL(rt_r.ax));
     default:
         rt_unsupported("DOS function", 0x21, cs, ip);

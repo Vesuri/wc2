@@ -8,7 +8,7 @@
 + * latest service event. Diagnostic metadata only; never drives input. */
 +uint64_t held_trigger_hits = 0;
  std::string exit_after;
- /* Service log (SWOTL_SERVICES=1): every software INT raised by module code, with
+ /* Service log (WC2_SERVICES=1): every software INT raised by module code, with
   * full registers at entry ("svc") and when execution is back at its return
 @@ -220,6 +223,7 @@
  

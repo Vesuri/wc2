@@ -95,6 +95,6 @@ if $wire != 2 || $totalx <= 0 || $totaly >= 0 || !$xwrap || !$ywrap || $button_s
   detach
   quit 1
 end
-printf "SWOTL_HARDWARE_INPUT_OK wire=%u dx=%d dy=%d xwrap=%u ywrap=%u buttons=%x\n", $wire, $totalx, $totaly, $xwrap, $ywrap, $buttons_seen
+printf "WC2_HARDWARE_INPUT_OK wire=%u dx=%d dy=%d xwrap=%u ywrap=%u buttons=%x\n", $wire, $totalx, $totaly, $xwrap, $ywrap, $buttons_seen
 detach
 quit 0

@@ -12,7 +12,7 @@ export AMIGA_CPU="${AMIGA_CPU:-68030}" JOY0=mouse JOY1=none
 # UAE synthesizes early key releases in warp mode. Keep the scripted edges.
 export WARP=0
 # Only the timeout mark uses KEYS; all key and mouse events come from Lua.
-export SWOTL_ARGS='KEYS=3500:shot'
+export WC2_ARGS='KEYS=3500:shot'
 cp amiga/hardware_input.lua "$run/input.lua"
 export EXTRA_ARGS="--uae_lua=$relative/input.lua ${EXTRA_ARGS:-}"
 printf 'Diagnostic logs: %s\n' "$run"
@@ -26,7 +26,7 @@ import sys
 # fail if the expected unique load no longer exists.
 def load_site(symbol, address):
     dis = subprocess.check_output(['m68k-amiga-elf-objdump', '-d',
-        '--disassemble=' + symbol, 'amiga/out/Swotl.elf'], text=True)
+        '--disassemble=' + symbol, 'amiga/out/Wc2.elf'], text=True)
     base = int(re.search(r'^([0-9a-f]+) <' + symbol + r'>:', dis, re.M)[1], 16)
     ins = re.findall(r'^\s*([0-9a-f]+):\s+(?:[0-9a-f]{4}\s+)+(\S.*)$', dis, re.M)
     hits = [(i, re.search(r'move\.[bw] ' + address + r' .*?,(d[0-7])$', op))
@@ -57,5 +57,5 @@ while lines:
 Path(sys.argv[1]).write_text(''.join(out))
 PYGDB
 bash amiga/debug.sh "" "$run/input.gdb" > "$run/check.log" 2>&1
-grep '^HARDWARE_\|^SWOTL_HARDWARE' "$run/check.log"
-grep -q '^SWOTL_HARDWARE_INPUT_OK ' "$run/check.log"
+grep '^HARDWARE_\|^WC2_HARDWARE' "$run/check.log"
+grep -q '^WC2_HARDWARE_INPUT_OK ' "$run/check.log"

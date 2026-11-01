@@ -8,7 +8,7 @@
   ab_runs.py meter  SESSION ARM... [--runs 3]
 
 An arm is a directory frozen from the current build by `freeze`: gen/
-(build/gen), swotl.elf (build/host), amiga/Swotl.elf and amiga/Swotl.exe
+(build/gen), swotl.elf (build/host), amiga/Wc2.elf and amiga/Wc2.exe
 (amiga/out) and, when built (`make amiga-sync`), amiga-sync/ (build/amiga-sync/
 out: the sync image the bench runs, docs/irq-plan.md I8; an arm without it,
 from before I8, polls in its production image). Build each arm's commit, then
@@ -80,7 +80,7 @@ def freeze(arm):
     shutil.copytree(ROOT / "build/gen", arm / "gen")
     shutil.copy2(ROOT / "build/host/swotl.elf", arm / "swotl.elf")
     sync = ROOT / "build/amiga-sync/out"
-    for name in ("Swotl.elf", "Swotl.exe"):
+    for name in ("Wc2.elf", "Wc2.exe"):
         shutil.copy2(AMIGA / "out" / name, arm / "amiga" / name)
         if sync.is_dir():
             (arm / "amiga-sync").mkdir(exist_ok=True)
@@ -88,7 +88,7 @@ def freeze(arm):
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"], capture_output=True, text=True).stdout
     sums = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in (arm / "swotl.elf", *sorted(arm.glob("amiga*/Swotl.*")))}
+            for p in (arm / "swotl.elf", *sorted(arm.glob("amiga*/Wc2.*")))}
     (arm / "arm.json").write_text(json.dumps(dict(head=head, dirty=bool(dirty), sha256=sums), indent=2) + "\n")
     print(f"froze {arm} at {head}{' (dirty tree)' if dirty else ''}")
 
@@ -119,11 +119,11 @@ def fsuae(session, arm, d, fixture, replace, args="", image="amiga"):
     arm = Path(arm).resolve()
     if not (arm / image).is_dir():
         image = "amiga"
-    env.update(SWOTL_ARGS=args, SWOTL_ELF=str(arm / image / "Swotl.elf"), FSUAE_RUN=f"{rel}/uae",
+    env.update(WC2_ARGS=args, WC2_ELF=str(arm / image / "Wc2.elf"), FSUAE_RUN=f"{rel}/uae",
                DEBUG_PORT=str(port), FSUAE_PORT_PINNED="1", FSUAE_CLAIM_STRICT="1")
     with (d / "run.log").open("w") as log:
         subprocess.run(["bash", str(AMIGA / "debug.sh"), "", str(d / "fixture.gdb"),
-                        str(arm / image / "Swotl.exe")], env=env, stdout=log,
+                        str(arm / image / "Wc2.exe")], env=env, stdout=log,
                        stderr=subprocess.STDOUT, check=True)
     shutil.rmtree(d / "uae", ignore_errors=True)
     check_tools(session)
@@ -143,7 +143,7 @@ def profile(d, arm, capture, count=(), image="amiga"):
     extra = [x for c in count for x in ("--count", c)]
     if not (Path(arm) / image).is_dir():
         image = "amiga"
-    tool("profile_report.py", capture, Path(arm) / image / "Swotl.elf", "--entries", Path(arm) / "gen",
+    tool("profile_report.py", capture, Path(arm) / image / "Wc2.elf", "--entries", Path(arm) / "gen",
          *extra, out=d / "profile.txt")
     if not (d / "profile.txt").read_text().startswith("100 PAL fields"):
         sys.exit(f"{d}: incomplete capture")
@@ -199,10 +199,10 @@ def flyby(a):
             files = {f"../tmp/prof/flyby-%d.{x}": f"flyby-%d.{x}" for x in ("bin", "vram", "dac")}
             log = fsuae(a.session, arm, d, AMIGA / "perf_flyby.gdb", files)
             caps = [d / f"flyby-{k}.bin" for k in range(5)]
-            tool("profile_tree.py", Path(arm) / "amiga/Swotl.elf", *caps, "--gen", Path(arm) / "gen",
+            tool("profile_tree.py", Path(arm) / "amiga/Wc2.elf", *caps, "--gen", Path(arm) / "gen",
                  "--json", d / "tree.json", out=d / "tree.txt")
             for k, c in enumerate(caps):
-                tool("profile_report.py", c, Path(arm) / "amiga/Swotl.elf", "--entries", Path(arm) / "gen",
+                tool("profile_report.py", c, Path(arm) / "amiga/Wc2.elf", "--entries", Path(arm) / "gen",
                      out=d / f"profile-{k}.txt")
                 if not a.keep:
                     c.unlink()
@@ -251,7 +251,7 @@ def main():
     a.session = a.session.resolve()
     a.arms = [str(Path(arm).resolve()) for arm in a.arms]
     for arm in a.arms:
-        need = [Path(arm) / p for p in ("gen", "swotl.elf", "amiga/Swotl.elf", "amiga/Swotl.exe")]
+        need = [Path(arm) / p for p in ("gen", "swotl.elf", "amiga/Wc2.elf", "amiga/Wc2.exe")]
         if not all(p.exists() for p in need):
             sys.exit(f"{arm}: not a frozen arm (ab_runs.py freeze)")
     result = dict(bench=bench, frames=frames, flyby=flyby, meter=meter)[a.kind](a)

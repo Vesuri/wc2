@@ -10,7 +10,7 @@
 # is a state change: a breakpoint on the guest's polls (thousands per field)
 # distorts the model's timing, and a stop with an interrupt pending is
 # reported again after it.
-# SWOTL_ELF and SWOTL_EXE (absolute) select another build.
+# WC2_ELF and WC2_EXE (absolute) select another build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . amiga/env.sh
@@ -18,13 +18,13 @@ mkdir -p tmp
 run=$(mktemp -d "$PWD/tmp/pointer-measure.XXXXXX")
 export FSUAE_RUN="../tmp/${run##*/}/run" FSUAE_CLAIM_STRICT=1
 export AMIGA_CPU="${AMIGA_CPU:-68030}" JOY0=none JOY1=none
-export SWOTL_ELF="${SWOTL_ELF:-$PWD/amiga/out/Swotl.elf}"
+export WC2_ELF="${WC2_ELF:-$PWD/amiga/out/Wc2.elf}"
 move=${MOVE:-24}
 steps=
 for d in mx+4 my-4; do
   for _ in $(seq 1 $((move / 2))); do steps+=",p0:$d"; done
 done
-export SWOTL_ARGS="KEYS=300:enter,p300:enter,p200:shot${steps},p0:shot,p${REST:-5000}:quit"
+export WC2_ARGS="KEYS=300:enter,p300:enter,p200:shot${steps},p0:shot,p${REST:-5000}:quit"
 {
   cat <<'EOF'
 set pagination off
@@ -105,6 +105,6 @@ continue
 EOF
 } > "$run/measure.gdb"
 printf 'Diagnostic logs: %s\n' "$run"
-bash amiga/debug.sh "" "$run/measure.gdb" "${SWOTL_EXE:-out/Swotl.exe}" > "$run/measure.log" 2>&1 || true
+bash amiga/debug.sh "" "$run/measure.gdb" "${WC2_EXE:-out/Wc2.exe}" > "$run/measure.log" 2>&1 || true
 grep '^POINTER' "$run/measure.log"
 grep -q '^POINTER_OK$' "$run/measure.log"

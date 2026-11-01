@@ -2,8 +2,8 @@
  * wrote it (runtime.h rt_opl) -> commands for the four Paula voices, once
  * per field (PAL, or NTSC with fm_ntsc). Plain C, no Amiga headers:
  * tools/fm_check.cpp runs it on the host against Nuked OPL. */
-#ifndef SWOTL_FM_PAULA_H
-#define SWOTL_FM_PAULA_H
+#ifndef WC2_FM_PAULA_H
+#define WC2_FM_PAULA_H
 
 #include <stdint.h>
 

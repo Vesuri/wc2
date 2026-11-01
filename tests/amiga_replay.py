@@ -143,29 +143,29 @@ def run(name, out, trace=None, plant=None, work=None):
     fd, video_trace = tempfile.mkstemp(prefix='swotl-video-', suffix='.bin')
     os.close(fd)
     template = (ROOT / 'amiga/milestone.gdb.in').read_text()
-    template = template.replace('printf "SWOTL_MILESTONE_OK\\n"',
+    template = template.replace('printf "WC2_MILESTONE_OK\\n"',
         'set $video_count = amiga_display_count\n'
         f'monitor profile 1 "" "{video_trace}"\n'
-        'if amiga_display_count != $video_count\n  printf "SWOTL_VIDEO_HANDOFF\\n"\n  quit 1\nend\n'
-        'printf "SWOTL_MILESTONE_OK\\n"')
+        'if amiga_display_count != $video_count\n  printf "WC2_VIDEO_HANDOFF\\n"\n  quit 1\nend\n'
+        'printf "WC2_MILESTONE_OK\\n"')
     template = template.replace('@LABEL@', 'rt_replay_done').replace('@OUT@', os.path.relpath(capture, ROOT / 'amiga'))
     expected = json.loads((out / 'expected.json').read_text())
-    check = '\n'.join(f'if replay_{key} != {value}\n  printf "SWOTL_REPLAY_INCOMPLETE\\n"\n  quit 1\nend'
+    check = '\n'.join(f'if replay_{key} != {value}\n  printf "WC2_REPLAY_INCOMPLETE\\n"\n  quit 1\nend'
                       for key, value in expected.items())
     template = template.replace('set $bm = &amiga_bitmap', check + '\nset $bm = &amiga_bitmap')
-    template = template.replace('    printf "SWOTL_MILESTONE_WRONG_HANDOFF',
-        '    printf "SWOTL_REPLAY_HANDOFF expected=%u actual=%u late=%u line=%u fields=%u d0=%u sp=%x queued=%u count=%u\\n", $serial, *(unsigned int *)($sp+4), amiga_display_late, amiga_display_line, amiga_frames, $d0, $sp, $display->queuedSerial, amiga_display_count\n'
-        '    printf "SWOTL_MILESTONE_WRONG_HANDOFF')
+    template = template.replace('    printf "WC2_MILESTONE_WRONG_HANDOFF',
+        '    printf "WC2_REPLAY_HANDOFF expected=%u actual=%u late=%u line=%u fields=%u d0=%u sp=%x queued=%u count=%u\\n", $serial, *(unsigned int *)($sp+4), amiga_display_late, amiga_display_line, amiga_frames, $d0, $sp, $display->queuedSerial, amiga_display_count\n'
+        '    printf "WC2_MILESTONE_WRONG_HANDOFF')
     (capture / 'fixture.gdb').write_text(template)
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
     env = dict(os.environ, DEBUG_PORT=str(port), FSUAE_PORT_PINNED='1',
                AMIGA_CPU=os.environ.get('AMIGA_CPU', '68030'),
-               SWOTL_ELF=str(work / 'out/Swotl.elf'), FSUAE_RUN=os.path.relpath(fresh_run_directory(out), ROOT / 'amiga'), FSUAE_CLAIM_STRICT='1', SWOTL_ARGS='')
+               WC2_ELF=str(work / 'out/Wc2.elf'), FSUAE_RUN=os.path.relpath(fresh_run_directory(out), ROOT / 'amiga'), FSUAE_CLAIM_STRICT='1', WC2_ARGS='')
     with (capture / 'gdb.log').open('w') as log:
         command = [str(ROOT / 'amiga/debug.sh'), '', str(capture / 'fixture.gdb'),
-                   str(work / 'out/Swotl.exe')]
+                   str(work / 'out/Wc2.exe')]
         process = subprocess.Popen(command, env=env, stdout=log,
                                    stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -182,8 +182,8 @@ def run(name, out, trace=None, plant=None, work=None):
         if result:
             raise subprocess.CalledProcessError(result, command)
     lines = (capture / 'gdb.log').read_text().splitlines()
-    assert 'SWOTL_MILESTONE_OK' in lines, lines[-20:]
-    regs = [line.removeprefix('SWOTL_REGS ') for line in lines if line.startswith('SWOTL_REGS ')]
+    assert 'WC2_MILESTONE_OK' in lines, lines[-20:]
+    regs = [line.removeprefix('WC2_REGS ') for line in lines if line.startswith('WC2_REGS ')]
     assert len(regs) == 1
     (capture / 'regs.txt').write_text(regs[0])
     shot = barto.last_screenshot(video_trace)

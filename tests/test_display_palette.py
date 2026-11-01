@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'src/platform/amiga/Swotl.cpp'
+SOURCE = ROOT / 'src/platform/amiga/Wc2.cpp'
 
 
 def body(source, start):
@@ -50,7 +50,7 @@ static void c2p(const void*, int, int, int, int, BitMap*) { assert(false); }
 static const unsigned SCREEN_HEIGHT = 200, SCREEN_WIDTH = 320;
 '''
 DECL = r'''
-struct Swotl {
+struct Wc2 {
     DisplayState* display;
     uint32_t buildPalette(uint16_t);
     uint16_t beginDisplayUpdate();
@@ -63,7 +63,7 @@ int main() {
     DisplayState d{};
     CopperList lists[2];
     d.list[0] = &lists[0]; d.list[1] = &lists[1];
-    Swotl app{&d};
+    Wc2 app{&d};
     app.buildPalette(0); app.buildPalette(1); // production constructor order
     uint8_t want[768] = {};
     std::mt19937 rng(17);
@@ -119,8 +119,8 @@ int main() {
 
 def run(source, good):
     state = body(source, 'struct DisplayState {') + ';'
-    names = ['uint32_t Swotl::buildPalette', 'uint16_t Swotl::beginDisplayUpdate',
-             'void Swotl::setPalette', 'void Swotl::finishDisplayUpdate']
+    names = ['uint32_t Wc2::buildPalette', 'uint16_t Wc2::beginDisplayUpdate',
+             'void Wc2::setPalette', 'void Wc2::finishDisplayUpdate']
     code = PRELUDE + state + DECL + '\n'.join(body(source, n) for n in names) + HARNESS
     with tempfile.TemporaryDirectory(prefix='display-palette-', dir=ROOT / 'tmp') as name:
         p = Path(name)

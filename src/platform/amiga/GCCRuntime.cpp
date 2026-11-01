@@ -15,7 +15,7 @@ __attribute__((constructor)) static void initSysBase()
     __asm__ volatile("move.l 4.w,%0" : "=r"(SysBase));
 }
 
-// Used by the proto/graphics.h inline calls; opened by Swotl's ctor.
+// Used by the proto/graphics.h inline calls; opened by Wc2's ctor.
 struct GfxBase* GfxBase = 0;
 
 void* operator new(unsigned long n)

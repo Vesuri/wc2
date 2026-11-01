@@ -14,7 +14,7 @@ extern "C" {
 #include "amiga_platform.h"
 #include "fm_paula.h"
 }
-#include "Swotl.h"
+#include "Wc2.h"
 #include "DisplayQueue.h"
 #include "Input.h"
 #include "Audio.h"
@@ -99,8 +99,8 @@ static uint16_t beamLine() {
 
 uint8_t amiga_ntsc = 0;
 
-Swotl* Swotl::application = 0;
-Swotl* Swotl::active = 0;
+Wc2* Wc2::application = 0;
+Wc2* Wc2::active = 0;
 
 static struct Interrupt vbiInterrupt, fieldInterrupt, ioKeyboardInterrupt;
 
@@ -108,8 +108,8 @@ static struct Interrupt vbiInterrupt, fieldInterrupt, ioKeyboardInterrupt;
 static uint32_t vbiHandler()
 {
     AmigaHardware::clearInterruptRequests(INTF_VERTB);
-    if (Swotl::active) {
-        Swotl::active->verticalBlank();
+    if (Wc2::active) {
+        Wc2::active->verticalBlank();
     }
     return 0;
 }
@@ -121,8 +121,8 @@ static uint32_t vbiHandler()
 static uint32_t fieldHandler()
 {
     AmigaHardware::clearInterruptRequests(INTF_SOFTINT);
-    if (Swotl::active) {
-        Swotl::active->field();
+    if (Wc2::active) {
+        Wc2::active->field();
     }
     return 0;
 }
@@ -135,7 +135,7 @@ static uint32_t ioKeyboardServer()
     return 0;
 }
 
-void Swotl::field()
+void Wc2::field()
 {
     rt_video_refresh();
 }
@@ -146,7 +146,7 @@ static bool sameVector(const struct IntVector& a, const struct IntVector& b)
 }
 
 // Our VERTB and SOFTINT vectors (call under Disable).
-void Swotl::takeVectors()
+void Wc2::takeVectors()
 {
     struct IntVector* vector = &SysBase->IntVects[INTB_VERTB];
     vector->iv_Data = 0;
@@ -160,13 +160,13 @@ void Swotl::takeVectors()
 
 // Exec's (call under Disable). The callers then request SOFTINT once: a cause
 // queued while the vector was ours still reaches Exec's dispatch.
-void Swotl::restoreVectors()
+void Wc2::restoreVectors()
 {
     SysBase->IntVects[INTB_VERTB] = oldVerticalBlankVector;
     SysBase->IntVects[INTB_SOFTINT] = oldSoftwareVector;
 }
 
-Swotl::Swotl() :
+Wc2::Wc2() :
     display(0),
     oldActiView(0),
     oldCopperList(0),
@@ -213,7 +213,7 @@ Swotl::Swotl() :
             SCREEN_PLANES, false, false, false, false, false, true, AMIGA_TOP_LINE + SCREEN_HEIGHT / 2);
         // The framework's AGA fetch ($20-$98) takes the DMA slots of sprites
         // 3-7; FMODE 3 fetches the same 320 pixels at the same place from $38.
-#ifndef SWOTL_PLANT_FETCH_WINDOW  // replay plant (tests/amiga_replay.py)
+#ifndef WC2_PLANT_FETCH_WINDOW  // replay plant (tests/amiga_replay.py)
         display->copper[b][at++] = copperMove(ddfstrt, 0x38);
         display->copper[b][at++] = copperMove(ddfstop, 0xb0);
 #endif
@@ -243,7 +243,7 @@ Swotl::Swotl() :
     amiga_chip_largest = AvailMem(MEMF_CHIP | MEMF_LARGEST);
 }
 
-Swotl::~Swotl()
+Wc2::~Wc2()
 {
     if (guestOpen) {
         amiga_guest_close();
@@ -267,7 +267,7 @@ Swotl::~Swotl()
     }
 }
 
-void Swotl::run()
+void Wc2::run()
 {
     takeOver();
     amiga_guest_run();
@@ -277,7 +277,7 @@ void Swotl::run()
 // Takeover order and its mirror in handBack: docs/amiga-lessons.md L2, L4;
 // the template's ProductionRunner sequence, with Exec's VERTB vector in place
 // of the level-3 autovector (L10, L13: PORTS and EXTER stay on Exec).
-void Swotl::takeOver()
+void Wc2::takeOver()
 {
     oldActiView = GfxBase->ActiView;
     oldCopperList = (uint32_t*)GfxBase->copinit;
@@ -334,7 +334,7 @@ void Swotl::takeOver()
     Forbid();
 }
 
-void Swotl::handBack()
+void Wc2::handBack()
 {
     Input::end();
     Audio::handBack();
@@ -369,7 +369,7 @@ void Swotl::handBack()
 
 // Only readable state: COP1LC and BPLCON3 are write-only. Check after the
 // OS has processed the restored view, while our saved state still exists.
-uint16_t Swotl::restoreStatus() const
+uint16_t Wc2::restoreStatus() const
 {
     uint16_t status = 0;
     if (!active && !vectorTaken) {
@@ -401,7 +401,7 @@ uint16_t Swotl::restoreStatus() const
 
 // Each vertical blank: the mouse and typematic repeat, then the field task
 // (a published frame is due, D9).
-void Swotl::verticalBlank()
+void Wc2::verticalBlank()
 {
     // Publish first. A delayed VBI must leave the completed buffer queued,
     // never restart the copper in the visible window. Exclude higher-level
@@ -444,7 +444,7 @@ void Swotl::verticalBlank()
 // LoadView(NULL) stay, and the keyboard is read from a VERTB server (keys typed
 // during the window still reach the game). The vertical blanks the OS serves are
 // counted from graphics.library's own counter.
-void Swotl::beginIO()
+void Wc2::beginIO()
 {
     if (!vectorTaken || ioDepth++) {
         return;
@@ -467,7 +467,7 @@ void Swotl::beginIO()
     Permit();
 }
 
-void Swotl::endIO()
+void Wc2::endIO()
 {
     if (!vectorTaken || --ioDepth) {
         return;
@@ -489,7 +489,7 @@ void Swotl::endIO()
 
 // A complete palette is built only in the withdrawn back list. Palette-only
 // updates also bring that bitmap up to date before queuing its handoff.
-uint32_t Swotl::buildPalette(uint16_t back)
+uint32_t Wc2::buildPalette(uint16_t back)
 {
     uint32_t* table = display->colours[back];
     table[0] = 256u << 16;
@@ -514,7 +514,7 @@ uint32_t Swotl::buildPalette(uint16_t back)
     return end;
 }
 
-uint16_t Swotl::beginDisplayUpdate()
+uint16_t Wc2::beginDisplayUpdate()
 {
     Disable();
     uint16_t back = display->queue.begin();
@@ -522,7 +522,7 @@ uint16_t Swotl::beginDisplayUpdate()
     return back;
 }
 
-void Swotl::setPalette(const uint8_t* dac)
+void Wc2::setPalette(const uint8_t* dac)
 {
     uint16_t back = beginDisplayUpdate();
     for (unsigned k = 0; k < 768; ++k) display->dac[k] = dac[k];
@@ -546,7 +546,7 @@ static void c2p(const void* chunky, int32_t w, int32_t h, int32_t x, int32_t y, 
                    : "r"(d2), "r"(d3) : "cc", "memory");
 }
 
-void Swotl::finishDisplayUpdate(uint16_t back)
+void Wc2::finishDisplayUpdate(uint16_t back)
 {
     // Each bitmap remembers changes since its own last conversion, including
     // updates that were replaced before a VBI. Bounds originate in guest
@@ -574,7 +574,7 @@ void Swotl::finishDisplayUpdate(uint16_t back)
     Enable();
 }
 
-void Swotl::present(const uint8_t* frame, const struct plat_rect* rects, int32_t n)
+void Wc2::present(const uint8_t* frame, const struct plat_rect* rects, int32_t n)
 {
     uint16_t back = beginDisplayUpdate();
     display->frame = frame;
@@ -587,26 +587,26 @@ void Swotl::present(const uint8_t* frame, const struct plat_rect* rects, int32_t
 
 extern "C" void plat_present(const uint8_t* frame, const struct plat_rect* rects, int32_t n)
 {
-    if (Swotl::application) Swotl::application->present(frame, rects, n);
+    if (Wc2::application) Wc2::application->present(frame, rects, n);
 }
 
 extern "C" void plat_palette(const uint8_t* dac)
 {
-    if (Swotl::application) {
-        Swotl::application->setPalette(dac);
+    if (Wc2::application) {
+        Wc2::application->setPalette(dac);
     }
 }
 
 extern "C" void amiga_io_begin(void)
 {
-    if (Swotl::application) {
-        Swotl::application->beginIO();
+    if (Wc2::application) {
+        Wc2::application->beginIO();
     }
 }
 
 extern "C" void amiga_io_end(void)
 {
-    if (Swotl::application) {
-        Swotl::application->endIO();
+    if (Wc2::application) {
+        Wc2::application->endIO();
     }
 }

@@ -1,13 +1,13 @@
 # SWOTL — Amiga cross-build (m68k-amiga-elf-gcc), A1200 68020/AGA.
 #
-#   . ./env.sh && make   — build out/Swotl.exe
+#   . ./env.sh && make   — build out/Wc2.exe
 #   make clean           — remove obj/ and out/
 #   ./run.sh             — boot in FS-UAE (A1200, Kickstart 3.1)
 #   ./debug.sh [ROM] [fixture.gdb] — source-level debug via the FS-UAE GDB stub
 #
 # Code lives under $(REPO)/src; this directory holds only build infrastructure.
 
-OUT      = out/Swotl
+OUT      = out/Wc2
 CC       = m68k-amiga-elf-gcc
 AS       = m68k-amiga-elf-as
 VASM     = vasmm68k_mot
@@ -40,7 +40,7 @@ LDFLAGS  = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
 # start.o first: DOS enters the first hunk at offset 0, and the link check below
 # holds _start there.
-OBJECTS = obj/start.o obj/main.o obj/Swotl.o obj/Input.o obj/Pointer.o obj/Audio.o obj/GCCRuntime.o \
+OBJECTS = obj/start.o obj/main.o obj/Wc2.o obj/Input.o obj/Pointer.o obj/Audio.o obj/GCCRuntime.o \
 	obj/framework_amiga_hardware.o obj/framework_bitmap.o \
 	obj/framework_copper_list.o obj/framework_palette24.o \
 	obj/gcc8_c_support.o obj/gcc8_a_support.o obj/memory.o obj/version.o \
@@ -51,24 +51,24 @@ OBJECTS = obj/start.o obj/main.o obj/Swotl.o obj/Input.o obj/Pointer.o obj/Audio
 # runtime's sync mode (no tick at the CIA interrupt, keys as IRQ1), for the bench
 # (make amiga-sync) and every replay image. Production has neither.
 ifneq ($(SYNC)$(REPLAY),)
-CCFLAGS += -DSWOTL_SYNC
-VASMGEN += -DSWOTL_SYNC=1
+CCFLAGS += -DWC2_SYNC
+VASMGEN += -DWC2_SYNC=1
 endif
 
 # Release image (make amiga-release): the player's options only, no diagnostic
 # arguments or tool types (amiga_platform.c).
 ifneq ($(RELEASE),)
-CCFLAGS += -DSWOTL_RELEASE
+CCFLAGS += -DWC2_RELEASE
 endif
 
 # Diagnostic image is built in a separate working directory by the replay test.
 ifneq ($(REPLAY),)
-CCFLAGS += -DSWOTL_REPLAY -I"$(REPLAY)"
+CCFLAGS += -DWC2_REPLAY -I"$(REPLAY)"
 # A planted display fault the replay's real-video check must catch.
 ifneq ($(PLANT),)
-CCFLAGS += -DSWOTL_PLANT_$(PLANT)
+CCFLAGS += -DWC2_PLANT_$(PLANT)
 endif
-VASMFLAGS += -DSWOTL_REPLAY=1
+VASMFLAGS += -DWC2_REPLAY=1
 OBJECTS += obj/replay_c.o obj/replay_s.o
 ifneq ($(wildcard $(REPLAY)/joystick_data.h),)
 OBJECTS += obj/joystick_replay.o
@@ -101,7 +101,7 @@ obj/start.o: $(AMIGA_SRC)/start.c | obj
 obj/main.o: $(REPO)/src/main.cpp | obj
 	$(CC) $(CPPFLAGS) -c -o $@ $<
 
-obj/Swotl.o: $(AMIGA_SRC)/Swotl.cpp | obj
+obj/Wc2.o: $(AMIGA_SRC)/Wc2.cpp | obj
 	$(CC) $(CPPFLAGS) -c -o $@ $<
 
 obj/Pointer.o: $(AMIGA_SRC)/Pointer.cpp | obj

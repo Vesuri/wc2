@@ -1,5 +1,5 @@
-#ifndef SWOTL_FILE_DATE_H
-#define SWOTL_FILE_DATE_H
+#ifndef WC2_FILE_DATE_H
+#define WC2_FILE_DATE_H
 #include <stdint.h>
 
 /* Amiga DateStamp uses local calendar days since 1978-01-01, minutes since

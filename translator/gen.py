@@ -35,7 +35,7 @@ from collections import Counter
 from . import cfg, emit, image, irq, support
 from .sem import lift
 
-VERSION = "swotl-gen 2 (ir, 68020)"
+VERSION = "wc2-gen 2 (ir, 68020)"
 AUDIT = image.REPO / "tests/audit.csv"
 SUPPORT = "support"
 POLLS = "poll-points.csv"
@@ -172,7 +172,7 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
     write(out, "program.s", PROGRAM, (support.equates() + prog.program_text(files)).encode())
     # the state-block equates for the native compute rows (compute_native.s)
     write(out, "equates.i", PROGRAM, support.equates().encode())
-    # D8/I8 sync points for the reference tracer (SWOTL_POLLS): DOSBox-X takes
+    # D8/I8 sync points for the reference tracer (WC2_POLLS): DOSBox-X takes
     # hardware interrupts only there, so the host can replay them exactly
     (out / POLLS).write_text("module,offset,kind\n" + "".join(
         f"{m},0x{o:05x},{prog.sync[(m, o)]}\n" for m, o in sorted(prog.loop_heads)))

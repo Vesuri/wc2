@@ -1,8 +1,8 @@
 /* Platform services the runtime needs: the game's files and their directory, the timer, the
  * mouse, the display of the mode 13h frame (changed rectangles, DAC), a log line and exit. Implemented by src/platform/host (Unicorn harness) and
  * src/platform/amiga (dos.library). */
-#ifndef SWOTL_PLATFORM_H
-#define SWOTL_PLATFORM_H
+#ifndef WC2_PLATFORM_H
+#define WC2_PLATFORM_H
 
 #include <stdint.h>
 

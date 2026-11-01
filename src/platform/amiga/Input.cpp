@@ -7,7 +7,7 @@ extern "C" {
 #include "runtime.h"
 #include "platform.h"
 #include "amiga_platform.h"
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
 uint32_t replay_mouse(int32_t*, int32_t*);
 #endif
 }
@@ -65,7 +65,7 @@ static void post(uint16_t scan)
     Disable();                      // the rings are shared with the PIT interrupt
     rt_key_ring[rt_key_tail % RT_KEY_RING] = scan;
     ++rt_key_tail;
-#ifdef SWOTL_SYNC
+#ifdef WC2_SYNC
     rt_irq_ring[rt_irq_tail % RT_IRQ_RING] = (scan & 0x80) ? 0x89 : 0x09;
     ++rt_irq_tail;
     RT_RAISE_IRQ();
@@ -120,7 +120,7 @@ void Input::keyboard()
 
 bool Input::begin()
 {
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     return true; // Diagnostic events come from the original reference only.
 #endif
     repeatKey = 0xff;
@@ -233,7 +233,7 @@ static void analogJoystick()
 
 void Input::verticalBlank()
 {
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     return;
 #endif
     keyboard();
@@ -278,7 +278,7 @@ void Input::setScriptButtons(uint8_t buttons)
 
 extern "C" uint32_t plat_mouse(int32_t* dx, int32_t* dy)
 {
-#ifdef SWOTL_REPLAY
+#ifdef WC2_REPLAY
     return replay_mouse(dx, dy);
 #endif
     Input::sample();

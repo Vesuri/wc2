@@ -73,7 +73,7 @@ def check_delivery(corrupt_check=False):
             if wrong is None:
                 assert not h.halted, h.log
             else:
-                expected = f"SWOTL_STOP return site reached with IP/CS {actual_ip:04x} {actual_cs:04x}"
+                expected = f"WC2_STOP return site reached with IP/CS {actual_ip:04x} {actual_cs:04x}"
                 assert h.halted and expected in h.log, (wrong, expected, h.log)
             U.uc.uc_close(h.e.h)
             count += 1

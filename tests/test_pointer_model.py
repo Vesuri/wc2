@@ -72,7 +72,7 @@ def planted_elf(name):
     tools = Path(os.environ.get("AMIGA_TOOLCHAIN") or Path.home() / ".local/opt") / "bin"
     subprocess.run([str(tools / "m68k-amiga-elf-gcc"), "-m68020", "-O2", "-ffreestanding", "-nostdlib",
                     "-fomit-frame-pointer", "-fno-tree-loop-distribute-patterns", "-Wall", "-Wextra",
-                    "-Werror", "-I" + str(ROOT / "src/runtime"), "-DSWOTL_SYNC", "-c",
+                    "-Werror", "-I" + str(ROOT / "src/runtime"), "-DWC2_SYNC", "-c",
                     "-o", str(out / "pointer.o"), str(out / "pointer.c")], check=True)
     host = ROOT / "build/host"
     objects = [host / n for n in ("host_s.o", "host.o", "rt_entry.o")]

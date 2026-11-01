@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from translator import check, gen  # noqa: E402
 
-PLANTED = ["void sub_1369A(void);", "g_SWOTL_EXE_13692:", "int FRONTEND_1A2F;", "seg_1617_034C:",
+PLANTED = ["void sub_1369A(void);", "g_WC2_EXE_13692:", "int FRONTEND_1A2F;", "seg_1617_034C:",
            "jsr loc_6A4D", "static int flight0x3E8E;"]
 CLEAN = ["int21_3Dh:", "port_out_3C8:", "move.w #$7FFF,INTENA", "x = 0xDFF09A;", "stop_unknown:",
          "overlay_load:", "uint16_t value = 0x1234;"]

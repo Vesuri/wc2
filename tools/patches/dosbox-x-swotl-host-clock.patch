@@ -27,7 +27,7 @@
 +/* Reference-only external host clock. DOS-managed timestamps still use
 + * UpdateLocalDateTime; only host filesystem modification times are pinned. */
 +static bool swotl_fixed_file_clock() {
-+    const char *v = getenv("SWOTL_FIXED_FILE_CLOCK");
++    const char *v = getenv("WC2_FIXED_FILE_CLOCK");
 +    return v && strcmp(v, "1") == 0;
 +}
 +

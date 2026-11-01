@@ -31,7 +31,7 @@ end
 break *amiga_io_begin
 commands
   silent
-  if $phase == 0 && $reads == $toggles && 'Swotl::active'
+  if $phase == 0 && $reads == $toggles && 'Wc2::active'
     set $down = !$down
     set $toggles = $toggles + 1
     if $down

@@ -2,12 +2,12 @@
 +++ b/include/swotl_trace.h
 @@ -13,6 +13,7 @@
  
- void SWOTL_Instruction(uint32_t linear);
- void SWOTL_TimeLimit();
-+void SWOTL_RepChunk(uint32_t linear, uint16_t cx, uint16_t si, uint16_t di, bool restart);
- void SWOTL_MemoryAccess(bool write, uint32_t address, uint8_t width);
- void SWOTL_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
- void SWOTL_Port(bool write, uint8_t width, unsigned port, uint32_t value);
+ void WC2_Instruction(uint32_t linear);
+ void WC2_TimeLimit();
++void WC2_RepChunk(uint32_t linear, uint16_t cx, uint16_t si, uint16_t di, bool restart);
+ void WC2_MemoryAccess(bool write, uint32_t address, uint8_t width);
+ void WC2_Interrupt(unsigned num, unsigned type, uint32_t oldeip);
+ void WC2_Port(bool write, uint8_t width, unsigned port, uint32_t value);
 --- a/src/cpu/core_normal/string.h
 +++ b/src/cpu/core_normal/string.h
 @@ -17,6 +17,7 @@
@@ -47,7 +47,7 @@
  		}
  	}
 +	if (TEST_PREFIX_REP && swotl_active)
-+		SWOTL_RepChunk(swotl_rep_ip, swotl_rep_cx, swotl_rep_si, swotl_rep_di,
++		WC2_RepChunk(swotl_rep_ip, swotl_rep_cx, swotl_rep_si, swotl_rep_di,
 +		               swotl_rep_restart);
 +
  }
@@ -59,7 +59,7 @@
  FILE *events = nullptr;
  FILE *read_data = nullptr;
 +FILE *rep_chunks = nullptr;
- /* OPL log (SWOTL_OPL=1): every AdLib register write (index at 388h, data at
+ /* OPL log (WC2_OPL=1): every AdLib register write (index at 388h, data at
   * 389h) with the emulated time in ms. */
  FILE *opl = nullptr;
 @@ -377,6 +378,8 @@
@@ -75,7 +75,7 @@
  		fclose(f);
  		poll_gate = swotl_irq_gate = true;
  	}
-+	if (getenv("SWOTL_REP_CHUNKS")) {
++	if (getenv("WC2_REP_CHUNKS")) {
 +		rep_chunks = fopen(Path("rep.csv").c_str(), "w");
 +		if (!rep_chunks) E_Exit("SWOTL: cannot open rep.csv");
 +		fputs("module,offset,service,hits,cx,si,di,end_cx,end_si,end_di,restart\n", rep_chunks);
@@ -84,13 +84,13 @@
  	if (!read_data) E_Exit("SWOTL: cannot open reads.bin");
  	events = fopen(Path("events.csv").c_str(), "w");
 @@ -874,3 +882,19 @@
- void SWOTL_TimeLimit() {
+ void WC2_TimeLimit() {
  	WriteOutputs();
  }
 +
 +/* Observation only: record original decoder slices; never change cycle budgets,
 + * registers, poll counts or delivery. Zero-count REP is a completed slice too. */
-+void SWOTL_RepChunk(uint32_t linear, uint16_t cx, uint16_t si, uint16_t di, bool restart)
++void WC2_RepChunk(uint32_t linear, uint16_t cx, uint16_t si, uint16_t di, bool restart)
 +{
 +    if (!rep_chunks || !swotl_active || !poll_gate) return;
 +    const Location here = Locate(linear);

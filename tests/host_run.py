@@ -1526,7 +1526,7 @@ def reference_clocks(trace):
     clock = None
     if source.exists():
         fields = json.loads(source.read_text())
-        assert fields['SWOTL_FIXED_FILE_CLOCK'] == '1' and fields['basis'] == 'local calendar'
+        assert fields['WC2_FIXED_FILE_CLOCK'] == '1' and fields['basis'] == 'local calendar'
         clock = time.mktime(time.strptime(fields['host_file_clock'], '%Y-%m-%dT%H:%M:%S'))
     return calendar, clock
 

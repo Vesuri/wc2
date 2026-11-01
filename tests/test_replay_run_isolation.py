@@ -32,12 +32,12 @@ def check():
             (directory / 'dh1').mkdir(parents=True, exist_ok=True)
             (directory / 'dh1/A.CBA').write_bytes(b'new game write')
             assert start_new_session and stderr == subprocess.STDOUT
-            assert env['SWOTL_ARGS'] == '' and env['FSUAE_CLAIM_STRICT'] == '1'
+            assert env['WC2_ARGS'] == '' and env['FSUAE_CLAIM_STRICT'] == '1'
             fixture = Path(command[2]).read_text()
             for value in ('replay_services != 7', 'replay_interrupts != 3', 'replay_steps != 2',
-                          'SWOTL_MILESTONE_WRONG_HANDOFF'):
+                          'WC2_MILESTONE_WRONG_HANDOFF'):
                 assert value in fixture
-            stdout.write('SWOTL_REGS ax=0000\nSWOTL_MILESTONE_OK\n')
+            stdout.write('WC2_REGS ax=0000\nWC2_MILESTONE_OK\n')
 
             class Process:
                 def wait(self, timeout):
