@@ -1,0 +1,108 @@
+/* I/O ports the game touches (docs/external-surface.md), as devices of the
+ * reference machine: PIC, PIT, AdLib, joystick. Any other port stops. */
+#include "runtime.h"
+#include "platform.h"
+
+/* PIC: the mask register (reference mask F8h: IRQ 0-2 enabled); the
+ * non-specific EOI is answered in rt_out8 (rt_entry.s). */
+static uint8_t pic_mask = 0xf8;
+
+/* PIT: per channel the access mode of its control word (1 lo, 2 hi, 3 lo/hi)
+ * and the lo/hi toggle; channel 0's reload (0 = 65536) sets the tick rate.
+ * BIOS start state: all channels lo/hi. */
+static uint8_t pit_access[3] = {3, 3, 3}, pit_high[3];
+static uint16_t pit_reload[3];
+uint32_t rt_pit_divisor = 0x10000;
+
+/* AdLib: index register, the written OPL2 register file (D10) and the key-on
+ * edges per channel (fm_paula.c); rt_out8 (rt_entry.s) answers its byte
+ * writes. */
+uint8_t rt_opl_index;
+uint8_t rt_opl[256];
+uint8_t rt_opl_keyon[9];
+/* Music skip (annotations/hle.csv music_skip, rt_hle_music_skip): 1, a play
+ * of a music record starts no song; 0 runs the guest code. Music stays
+ * enabled by default (user 2026-10-15; docs/sound-plan.md). */
+uint8_t rt_music_skip = 0;
+/* Effect starts (annotations/hle.csv sfx_start, rt_hle_sfx_start): per SPAZ
+ * slot the id last started and a wrapping start count. */
+uint8_t rt_sfx_id[3] = {0xff, 0xff, 0xff};
+uint8_t rt_sfx_starts[3];
+
+/* Gameport: with rt_joystick, the trigger latches the axes and each read
+ * counts; an axis bit stays 1 for its latched number of reads, so the game's
+ * timing loop (root +04466) measures the latch on any CPU. Stick B's axes
+ * never time out and its buttons read released, as the reference's. */
+uint8_t rt_joystick;
+volatile uint16_t rt_joystick_axis[2];
+volatile uint8_t rt_joystick_buttons;
+static uint16_t joystick_latch[2], joystick_reads;
+
+static uint8_t joystick_in(void)
+{
+    if (joystick_reads < 0xffff) {
+        ++joystick_reads;
+    }
+    return (uint8_t)(0xcc | (~rt_joystick_buttons & 3) << 4 |
+                     (joystick_reads <= joystick_latch[0]) |
+                     (joystick_reads <= joystick_latch[1]) << 1);
+}
+
+static void pit_control(uint8_t v)
+{
+    uint8_t ch = v >> 6, access = (v >> 4) & 3;
+    if (ch == 3 || access == 0) {
+        rt_stop("PIT read-back or latch command", v, 0);
+    }
+    pit_access[ch] = access;
+    pit_high[ch] = 0;
+}
+
+static void pit_data(uint8_t ch, uint8_t v)
+{
+    uint8_t access = pit_access[ch];
+    int high = access == 2 || (access == 3 && pit_high[ch]);
+    pit_reload[ch] = high ? (uint16_t)((pit_reload[ch] & 0x00ff) | v << 8)
+                          : (uint16_t)((pit_reload[ch] & 0xff00) | v);
+    if (access == 3) {
+        pit_high[ch] ^= 1;
+    }
+    if (ch == 0 && (access != 3 || !pit_high[ch])) {
+        rt_pit_divisor = pit_reload[0] ? pit_reload[0] : 0x10000;
+        plat_timer_rate(rt_pit_divisor);
+        if (rt_bench) {
+            rt_bench_watch();
+        }
+    }
+}
+
+uint32_t rt_port_in(uint32_t port, uint32_t width)
+{
+    port &= 0xffff;
+    if (width == 8) {
+        switch (port) {
+        case 0x21: return pic_mask;
+        case 0x201: return rt_joystick ? joystick_in() : 0xff;  /* reference: no joystick, axes never time out */
+        }
+    }
+    rt_stop("unsupported port in (port, width)", port, width);
+}
+
+void rt_port_out(uint32_t port, uint32_t value, uint32_t width)
+{
+    port &= 0xffff;
+    uint8_t v = (uint8_t)value;
+    if (width == 8) {
+        switch (port) {
+        case 0x21: pic_mask = v; return;
+        case 0x40: case 0x41: case 0x42: pit_data((uint8_t)(port - 0x40), v); return;
+        case 0x43: pit_control(v); return;
+        case 0x201:                 /* joystick one-shots */
+            joystick_latch[0] = rt_joystick_axis[0];
+            joystick_latch[1] = rt_joystick_axis[1];
+            joystick_reads = 0;
+            return;
+        }
+    }
+    rt_stop("unsupported port out (port, width)", port, width);
+}

@@ -1,0 +1,12 @@
+dosbox-x-swotl-trace.patch
+dosbox-x-swotl-mouse.patch
+dosbox-x-swotl-sound.patch
+dosbox-x-swotl-time-limit.patch
+dosbox-x-swotl-read-data.patch
+dosbox-x-swotl-date.patch
+dosbox-x-swotl-host-clock.patch
+dosbox-x-swotl-release-visits.patch
+dosbox-x-swotl-key-chords.patch
+dosbox-x-swotl-rep-chunks.patch
+dosbox-x-swotl-joystick.patch
+dosbox-x-swotl-irq0-backlog.patch
