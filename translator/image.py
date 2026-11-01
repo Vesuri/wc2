@@ -1,4 +1,4 @@
-"""Proved module images and annotations (gate 1 layout: tools/swotl_model.py)."""
+"""Proved module images and annotations (gate 1 layout: tools/wc2_model.py)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
-import swotl_model as M  # noqa: E402
+import wc2_model as M  # noqa: E402
 
 ANNOTATIONS = REPO / "annotations"
 SCOPE = M.SCOPE

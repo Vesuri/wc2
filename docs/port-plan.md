@@ -97,8 +97,9 @@ can run beside stream A (reference and map, P1–P2) once P0 is in.
 1. Copy by the copy map below in one commit that names SWOTL `658fc60`. Record each file's
    origin and every later local change in `docs/upstream.md`, so that fixes can move
    between the two ports.
-2. Take the framework from AmigaXDev's canonical tree (`python3 -m amigaxdev.framework
-   sync`), not from SWOTL, and record that in `src/platform/amiga/framework/README.md`.
+2. Framework: SWOTL's copy (the DanceDiverse3 lineage, shared with Slicks), recorded in
+   `src/platform/amiga/framework/README.md`. AmigaXDev's canonical tree has not merged that
+   lineage, and the copied platform code does not build against it (MEASURED at P0).
 3. Rename mechanically in one commit: `SWOTL_` → `WC2_` (environment, macros, probe
    symbols), `Swotl` → `Wc2`, the `swotl-gen` header. Rename nothing else yet.
 4. Empty every `annotations/*.csv` to its header. Remove SWOTL's fixtures,
@@ -455,7 +456,7 @@ WC2 as its two consumers. `docs/upstream.md` lists what has diverged by then.
 | `src/runtime/compute_*.s`, `sfx.c`, `compute_opl.s` | not copied: SWOTL natives and SPAZ effect capture |
 | `src/platform/host/` | copy |
 | `src/platform/amiga/` | copy. `Swotl.cpp` becomes `Wc2.cpp`. `tfh_paula.c` dropped. A speech voice added |
-| `src/platform/amiga/framework/` | from AmigaXDev, not SWOTL |
+| `src/platform/amiga/framework/` | SWOTL's copy (P0.2: the canonical tree lacks its lineage) |
 | `tests/` generic harnesses: `x86_diff`, `m68k_diff`, `m68k_blocks`, `host_run`, sabotage, guards, `uc.py`, display, EMS, DOS, FM, input | copy; SWOTL fixtures and audit rows dropped |
 | `tools/` generic: `pc_run`, `reference`, `trace_summary`, `snap_png`, `surface`, `profile_*`, `cost_meter`, `lowering_cost`, `ab_*`, `host_census`, `irq_profile`, `align_targets`, `bp_regions`, `outline_sites`, `seg_repeat`, `fm_check`, `opl_render`, `gate_launch`, `fixture_inputs`, `hunk_size`, `tool_icon`, `build_dosbox_x.sh`, `_amigaxdev.py` | copy; defaults (milestone names, ELF names, prefixes) adapted |
 | `tools/` game-specific: `swotl_model`, `plink_check`, `load_image`, `ovl_info`, `sweep`, `code_writes`, `compute_oracle`, `native_entries`, `sound_reference`, `install-data/`, release tools | rewrite or adapt, keeping each tool's interface: `wc2_model` from `bc_exe.py`, `vroomm_check` |

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import m68k_blocks as B  # noqa: E402
 import m68k_diff as D  # noqa: E402
-from translator import emit as E, flags as F, lower as L, region as R, reuse as U, smc as S  # noqa: E402
+from translator import emit as E, flags as F, image, lower as L, region as R, reuse as U, smc as S  # noqa: E402
 
 real_run = L.Lowering.run
 real_helpers = D.HELPERS
@@ -590,7 +590,7 @@ SABOTAGE = [
     ("partial flag merge as full store", no_merge, "boundary"),
     ("shift count mod 16", sub(r"moveq #\$1f,d7", "moveq #$f,d7"), "boundary"),
     ("fused setter stores nothing", drop_fused_store, "program"),
-    ("RMW word at its byte address", rmw_word_at_byte_address, "forms"),
+    ("RMW word at its byte address", rmw_word_at_byte_address, "forms,boundary"),
     ("sti does not re-arm G_IRQ", sub(r"^\tmove\.b rt_irq_pending,G_IRQ\(a6\)$", "\tnop"), "boundary"),
     ("popf/iret do not re-arm G_IRQ", ("helpers", "\tmove.b\trt_irq_pending,G_IRQ(a6)", "\tnop"),
      "boundary"),
@@ -876,18 +876,36 @@ def slow_first(k: int) -> tuple:
     return ("," not in corpus and callable(fn), "boundary" not in corpus)
 
 
+# WC2: the program and walk corpora are the generated program's blocks; with no
+# module in scope (port-plan P1.4) there is none, so those plants are deferred,
+# printed, and never counted as caught.
+PROGRAM_CORPORA = ("program", "walk")
+
+
+def deferred(k: int) -> bool:
+    return not image.SCOPE and SABOTAGE[k][2] in PROGRAM_CORPORA
+
+
 def main() -> int:
     missed = []
     replayed = cases = 0
-    with ProcessPoolExecutor(min(len(SABOTAGE), os.cpu_count() or 1)) as pool:
-        futures = {k: pool.submit(plant, k) for k in sorted(range(len(SABOTAGE)), key=slow_first)}
+    held = [k for k in range(len(SABOTAGE)) if deferred(k)]
+    run = sorted(set(range(len(SABOTAGE))) - set(held), key=slow_first)
+    with ProcessPoolExecutor(min(len(run), os.cpu_count() or 1)) as pool:
+        futures = {k: pool.submit(plant, k) for k in run}
         for k, (name, _fn, corpus) in enumerate(SABOTAGE):
+            if k in held:
+                print(f"{name:36} {corpus:15} deferred: no generated program (P1.4)", flush=True)
+                continue
             bad, total, r, n = futures[k].result()
             replayed, cases = replayed + r, cases + n
             print(f"{name:36} {corpus:15} mismatches {bad} of {total}", flush=True)
             if not bad:
                 missed.append(name)
     print(f"x86 side replayed from {RECORD.name}: {replayed} of {cases} cases")
+    if held:
+        print(f"deferred: {len(held)} plants on {', '.join(PROGRAM_CORPORA)}; "
+              f"run: {len(run)}, caught: {len(run) - len(missed)}")
     if missed:
         print("not caught:", ", ".join(missed))
     return 1 if missed else 0

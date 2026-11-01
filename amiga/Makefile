@@ -44,8 +44,8 @@ OBJECTS = obj/start.o obj/main.o obj/Wc2.o obj/Input.o obj/Pointer.o obj/Audio.o
 	obj/framework_amiga_hardware.o obj/framework_bitmap.o \
 	obj/framework_copper_list.o obj/framework_palette24.o \
 	obj/gcc8_c_support.o obj/gcc8_a_support.o obj/memory.o obj/version.o \
-	obj/amiga_platform.o obj/tfh_paula.o obj/fm_paula.o obj/fm_effect_run.o obj/amiga_run.o obj/c2p1x1_8_c5_bm.o obj/rt_entry.o \
-	$(patsubst $(RUNTIME)/%.c,obj/rt_%.o,$(wildcard $(RUNTIME)/*.c)) obj/program.o obj/compute_projection.o obj/compute_normalise.o obj/compute_scenery.o obj/compute_native.o
+	obj/amiga_platform.o obj/fm_paula.o obj/fm_effect_run.o obj/amiga_run.o obj/c2p1x1_8_c5_bm.o obj/rt_entry.o \
+	$(patsubst $(RUNTIME)/%.c,obj/rt_%.o,$(wildcard $(RUNTIME)/*.c)) obj/program.o
 
 # Sync image (docs/irq-plan.md I8): the generated sync-point checks and the
 # runtime's sync mode (no tick at the CIA interrupt, keys as IRQ1), for the bench
@@ -143,9 +143,6 @@ obj/memory.o: $(AMIGA_SRC)/memory.s | obj
 obj/amiga_platform.o: $(AMIGA_SRC)/amiga_platform.c | obj
 	$(CC) $(CCFLAGS) -ffreestanding -I"$(RUNTIME)" -I"$(AMIGA_SRC)" -c -o $@ $<
 
-obj/tfh_paula.o: $(AMIGA_SRC)/tfh_paula.c | obj
-	$(CC) $(CCFLAGS) -ffreestanding -c -o $@ $<
-
 obj/fm_paula.o: $(AMIGA_SRC)/fm_paula.c | obj
 	$(CC) $(CCFLAGS) -ffreestanding -DFM_EFFECT_ASM -c -o $@ $<
 
@@ -161,16 +158,7 @@ obj/c2p1x1_8_c5_bm.o: $(AMIGA_SRC)/c2p1x1_8_c5_bm.s | obj
 obj/rt_%.o: $(RUNTIME)/%.c | obj
 	$(CC) $(CCFLAGS) -ffreestanding -I"$(RUNTIME)" -c -o $@ $<
 
-obj/rt_entry.o: $(RUNTIME)/rt_entry.s $(RUNTIME)/compute_transform.s | obj
-	$(VASM) $(VASMFLAGS) -I"$(RUNTIME)" -o $@ $<
-
-obj/compute_scenery.o: $(RUNTIME)/compute_scenery.s | obj
-	$(VASM) $(VASMFLAGS) -I"$(RUNTIME)" -o $@ $<
-
-obj/compute_normalise.o: $(RUNTIME)/compute_normalise.s | obj
-	$(VASM) $(VASMFLAGS) -I"$(RUNTIME)" -o $@ $<
-
-obj/compute_projection.o: $(RUNTIME)/compute_projection.s | obj
+obj/rt_entry.o: $(RUNTIME)/rt_entry.s | obj
 	$(VASM) $(VASMFLAGS) -I"$(RUNTIME)" -o $@ $<
 
 obj/program.o: $(GEN)/program.s $(wildcard $(GEN)/*.s) | obj
@@ -199,5 +187,3 @@ clean:
 
 -include obj/*.d
 
-obj/compute_native.o: $(RUNTIME)/compute_native.s $(RUNTIME)/compute_sprite.s $(RUNTIME)/compute_line.s $(RUNTIME)/compute_raster.s $(RUNTIME)/compute_edge.s $(RUNTIME)/compute_opl.s $(RUNTIME)/compute_classify.s $(RUNTIME)/compute_ground.s $(RUNTIME)/compute_terrain.s $(RUNTIME)/compute_polygons.s $(GEN)/equates.i | obj
-	$(VASM) $(VASMFLAGS) -I"$(RUNTIME)" -I"$(GEN)" -o $@ $<

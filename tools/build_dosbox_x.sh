@@ -1,12 +1,12 @@
 #!/bin/sh
 # Build the instrumented DOSBox-X reference emulator.
 # autoconf breaks on the spaces in the repo path, so the tree lives in
-# $WC2_DOSBOX_X_SRC (default ~/.local/src/swotl-dosbox-x) and
+# $WC2_DOSBOX_X_SRC (default ~/.local/src/wc2-dosbox-x) and
 # tools/vendor/dosbox-x links to it. Patches apply in tools/patches/ORDER.
 set -eu
 TAG=dosbox-x-v2026.08.31
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-SRC=${WC2_DOSBOX_X_SRC:-$HOME/.local/src/swotl-dosbox-x}
+SRC=${WC2_DOSBOX_X_SRC:-$HOME/.local/src/wc2-dosbox-x}
 
 if [ ! -d "$SRC/.git" ]; then
 	git clone --branch "$TAG" --depth 1 https://github.com/joncampbell123/dosbox-x.git "$SRC"

@@ -23,8 +23,6 @@ G_DS	equ	1
 	xdef	rt_halt
 	xdef	rt_trap
 	xdef	rt_hle_music_skip
-	xdef	rt_hle_sfx_start
-	xdef	rt_hle_sfx_prerender
 	xdef	rt_guest_call
 	xdef	rt_hle_pointer_tracked
 	xdef	rt_in8
@@ -70,11 +68,6 @@ G_DS	equ	1
 	xref	rt_opl_index
 	xref	rt_opl_keyon
 	xref	rt_music_skip
-	xref	rt_sfx_id
-	xref	rt_sfx_starts
-	xref	rt_sfx_capturing
-	xref	rt_sfx_write
-	xref	rt_sfx_prerender
 	xref	rt_pointer_ds
 	xref	rt_pointer_tracked
 	xref	rt_irq0_enter
@@ -336,60 +329,10 @@ rt_halt:
 ; HLE music_skip (annotations/hle.csv): NE skips the song start of a music
 ; record. Registers preserved.
 rt_hle_music_skip:
-	move.b	#$ff,rt_sfx_id
-	move.b	#$ff,rt_sfx_id+1
-	move.b	#$ff,rt_sfx_id+2
 	tst.b	rt_music_skip
 	rts
 
-; HLE sfx_start (annotations/hle.csv): an effect takes a slot, d7 = slot*6,
-; d6 = id*4. Observe only: EQ. Clobbers d6, d7 and a0.
-rt_hle_sfx_start:
-	and.l	#$ffff,d7
-	divu.w	#6,d7
-	lsr.w	#2,d6
-	lea	rt_sfx_id,a0
-	move.b	d6,(a0,d7.w)
-	lea	rt_sfx_starts,a0
-	addq.b	#1,(a0,d7.w)
-	cmp.w	d7,d7
-	rts
-
-; HLE sfx_prerender (annotations/hle.csv): SPAZ init's return. The effect
-; capture (sfx.c) runs guest code: the 68k registers, the state block and
-; rt_r are saved around it and restored. Observe only: EQ.
-rt_hle_sfx_prerender:
-	movem.l	d0-d7/a0-a6,-(a7)
-	bsr	save_regs
-	lea	-32(a7),a7
-	movea.l	a7,a0
-	move.l	1(a6),(a0)+
-	move.l	5(a6),(a0)+
-	move.l	9(a6),(a0)+
-	move.l	13(a6),(a0)+
-	lea	rt_r,a1
-	move.l	(a1)+,(a0)+
-	move.l	(a1)+,(a0)+
-	move.l	(a1)+,(a0)+
-	move.l	(a1)+,(a0)+
-	jsr	rt_sfx_prerender
-	movea.l	rt_guest,a6
-	movea.l	a7,a0
-	move.l	(a0)+,1(a6)
-	move.l	(a0)+,5(a6)
-	move.l	(a0)+,9(a6)
-	move.l	(a0)+,13(a6)
-	lea	rt_r,a1
-	move.l	(a0)+,(a1)+
-	move.l	(a0)+,(a1)+
-	move.l	(a0)+,(a1)+
-	move.l	(a0)+,(a1)+
-	lea	32(a7),a7
-	movem.l	(a7)+,d0-d7/a0-a6
-	cmp.w	d7,d7
-	rts
-
-; Effect capture (sfx.c): the translated far entry rt_deliver_code
+; A guest far call from C: the translated far entry rt_deliver_code
 ; (rt_deliver_cs:ip) with the guest registers of rt_r and the state block;
 ; its far return (RETF or IRET) must pop the sentinel CS:IP, the argument.
 ; The guest registers back in rt_r. C calling convention.
@@ -458,8 +401,6 @@ rt_out8:
 .opl_handler:
 	rts
 .opl_data:
-	tst.b	rt_sfx_capturing
-	bne.s	opl_capture
 	tst.b	rt_irq0_running
 	bne.s	.opl_pair_done
 	sf	rt_opl_pair
@@ -485,18 +426,6 @@ rt_out8:
 .port:	movem.l	d0-d1/a1,-(a7)
 	pea	8.w
 	bra.s	port_out
-; The effect capture (sfx.c) runs: the data write goes to rt_sfx_write.
-opl_capture:
-	movem.l	d0-d1/a0-a1,-(a7)
-	moveq	#0,d0
-	move.b	d6,d0
-	move.l	d0,-(a7)
-	move.b	rt_opl_index,d0
-	move.l	d0,-(a7)
-	jsr	rt_sfx_write
-	addq.l	#8,a7
-	movem.l	(a7)+,d0-d1/a0-a1
-	rts
 rt_out16:
 	movem.l	d0-d1/a1,-(a7)
 	pea	16.w
@@ -711,8 +640,6 @@ rt_vdrv_return:
 	movem.l	(a7)+,d0-d1/a0-a1
 .inner:	rts
 
-; Authorized compute callbacks share the generated ABI above.
-	include "compute_transform.s"
 
 	section	.bss,bss
 	cnop	0,4

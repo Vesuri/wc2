@@ -55,6 +55,8 @@ POINTER_NAMES = ("x", "y", "width", "height", "hot_x", "hot_y", "image", "x_min"
 
 def pointer_guest() -> list[int]:
     rows = image.rows("pointer.csv")
+    if not rows and not image.SCOPE:
+        return [0] * len(POINTER_NAMES)  # WC2: no guest yet (port-plan P1.4); never read
     if tuple(r["name"] for r in rows) != POINTER_NAMES:
         raise LowerError(f"pointer.csv: names must be {', '.join(POINTER_NAMES)} in order")
     return [int(r["offset"], 16) for r in rows]

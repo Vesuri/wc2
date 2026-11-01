@@ -12,9 +12,6 @@ public:
     // The Chip loop pool and the re-hoster (before the takeover); false
     // without the Chip RAM.
     static bool begin();
-    static bool loadTFH(const uint8_t *rsc, uint32_t size);
-    // The captured effects prerendered into Chip (after loadTFH).
-    static void loadEffects();
     static void end();
 
     // DMA on for the four channels on a silent loop; off again, volume 0.

@@ -367,8 +367,9 @@ class Host:
                 cs = int.from_bytes(self.gmem(8 * 4 + 2, 2), "little")
                 self.sfx_phase = int.from_bytes(self.gmem((cs + 0x11A) * 16 + 0x176, 2), "little")
 
-        a = self.syms["rt_sfx_prerender"]
-        e.hook_range(U.HOOK_CODE, capture_entry, a, a)
+        if "rt_sfx_prerender" in self.syms:  # SWOTL's effect capture; not in WC2's runtime
+            a = self.syms["rt_sfx_prerender"]
+            e.hook_range(U.HOOK_CODE, capture_entry, a, a)
         self.music_skip = music_skip
         self.skips = self.moved = 0
         self.skipped_ran: set[str] = set()

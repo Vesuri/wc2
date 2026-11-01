@@ -26,6 +26,15 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 - Preserve the original's decisions: implement the services it calls; never replace game
   logic with screen-specific guesses. Unknown calls, control flow, code writes, ports and
   interrupts are loud stops until deliberately supported.
+- Guest code reaches the Amiga only as translator output. Never hand-port a guest routine
+  to C or asm, never edit generated files (`build/gen/`), never fix output by hand: fix the
+  translator or `annotations/` and regenerate.
+- Hand-written code is the runtime and platform layer only, named by surface item, never by
+  guest address (`make lint`). Native replacement of a guest routine needs the owner's
+  per-routine authorization and an `annotations/hle.csv` row with reason and oracle.
+- Phase gates (`docs/port-plan.md`, `docs/phases.md`) are hard: do not commit a phase's work
+  before the previous gate passes. A milestone counts only if its pixels come from
+  generated code.
 - Tests settle correctness. A timeout or an unreached probe is never a pass; every check
   needs a positive completion signal, and a negative observation needs a positive control.
 - No performance claim without a measurement on matched workloads.
@@ -34,6 +43,14 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 - No local paths in the repo (home directories, usernames, `/tmp`, other projects' paths).
   Name another project by name. DOSBox command paths are relative (the project path has
   spaces).
+- Validation scope: run the gates relevant to the changed code and its callers, consumers
+  and shared contracts; say which and why before running them. Translator or shared runtime
+  changes: the affected differential, guard and sabotage tests, then host or replay
+  fixtures. Audio synthesis only: the FM checks and their sabotage, plus build and smoke.
+  Docs only: consistency and diff checks. Scope by dependency, never by whether a test
+  passes; never weaken a check, oracle or tolerance.
+- Fixes to files imported from Secret Weapons of Luftwaffe are logged in
+  `docs/upstream.md` (one row each) so they can move between the ports.
 - `docs/open-work.md` is the only work queue: open items with acceptance checks, removed
   in the commit that completes them; measured dead ends stay. History belongs in git.
 - Names have one source of truth (`disasm/symbols.csv`, once it exists). Addresses use the
@@ -52,6 +69,10 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 | [docs/open-work.md](docs/open-work.md) | always first: the work queue |
 | [docs/design.md](docs/design.md) | choosing target, scope or approach; owner decisions |
 | [docs/port-plan.md](docs/port-plan.md) | starting a phase; what to copy from Secret Weapons of Luftwaffe and why |
+| [docs/upstream.md](docs/upstream.md) | changing a file imported from Secret Weapons of Luftwaffe |
+| [docs/translator-design.md](docs/translator-design.md), [docs/translation-lessons.md](docs/translation-lessons.md), [docs/x86-notes.md](docs/x86-notes.md) | translator work (SWOTL's contracts; facts SWOTL's until re-derived) |
+| [docs/amiga-arch.md](docs/amiga-arch.md), [docs/amiga-lessons.md](docs/amiga-lessons.md), `src/platform/amiga/framework/README.md` | Amiga platform work |
+| [docs/irq-plan.md](docs/irq-plan.md), [docs/sound-plan.md](docs/sound-plan.md), [docs/speed-plan.md](docs/speed-plan.md), [docs/native-compute.md](docs/native-compute.md) | interrupts, sound, speed, native routines (SWOTL's methods) |
 | [docs/source-inventory.md](docs/source-inventory.md) | facts and hashes of the original files |
 | [docs/pc-reference-loop.md](docs/pc-reference-loop.md) | running the installer or the game under DOSBox |
 | [docs/wc1-wc2-comparison.md](docs/wc1-wc2-comparison.md) | WC1/WC2 code and data sharing; the WC1 reuse plan |
@@ -71,4 +92,7 @@ Luftwaffe is the model for the translator, reference loop and Makefile.
 `make extract` (archives → `tmp/union`, hash-checked), `make install` (original installer,
 headless → `ref/`, hash-checked), `make hash` / `make check-ref`, `make prepare-reference`
 (`ref/` → disposable `tmp/pc-root`), `make reference-staging` (play it), `make compare`
-(PC WC1 vs WC2).
+(PC WC1 vs WC2), `make reference-emulator` (instrumented DOSBox-X).
+Translator and Amiga: `make gen`, `make gen-check`, `make lint`, `make test` (lint,
+decoder, x86 and 68020 differentials on the synthetic corpora, guards, unit tests),
+`make test-sabotage`, `make host`, `make amiga`, `make smoke`, `make size`.

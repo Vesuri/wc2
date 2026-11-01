@@ -16,7 +16,7 @@ from collections import defaultdict
 import capstone
 from capstone import x86
 
-import swotl_model as M
+import wc2_model as M
 
 
 def static_sites(mods):

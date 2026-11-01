@@ -287,9 +287,6 @@ volatile ULONG amiga_ticks = 0, amiga_ticks_async = 0;
 static ULONG cia_tick(void)
 {
     ++amiga_ticks;
-    if (rt_sfx_capturing) {
-        return 0;               /* the effect capture holds the tick: game time pauses */
-    }
 #ifndef WC2_SYNC
     /* Production has no poll checks (docs/irq-plan.md I8): ticks posted while
      * IRQ0 could not run go first, then this one. */
@@ -322,25 +319,6 @@ static ULONG cia_tick(void)
     ++rt_irq_tail;
     RT_RAISE_IRQ();
     return 0;
-}
-
-/* Effect capture (runtime.h rt_sfx_*): the effects Audio prerenders
- * (docs/sound-plan.md R3). */
-extern int amiga_audio_effect_wanted(uint8_t id);
-extern void amiga_audio_effects(void);
-volatile uint32_t amiga_sfx_capture_fields;  /* the capture's fields (diagnostics) */
-int plat_sfx_wanted(uint8_t id)
-{
-    if (!id) {
-        amiga_sfx_capture_fields = amiga_frames;
-    }
-    return amiga_audio_effect_wanted(id);
-}
-
-void plat_sfx_captured(void)
-{
-    amiga_sfx_capture_fields = amiga_frames - amiga_sfx_capture_fields;
-    amiga_audio_effects();
 }
 
 static void cia_load(uint32_t divisor)
@@ -574,38 +552,15 @@ void plat_log(const char *line)
     amiga_io_end();
 }
 
-/* Before takeover: the optional sample file is read into temporary public
- * memory; Audio owns only the parsed Chip samples after this returns. */
-extern int amiga_audio_tfh(const uint8_t *rsc, uint32_t size);
-static void load_tfh(void)
-{
-    BPTR f = Open((CONST_STRPTR)"sfx.rsc", MODE_OLDFILE);
-    int ok = 0;
-    if (f) {
-        LONG size;
-        Seek(f, 0, OFFSET_END);
-        size = Seek(f, 0, OFFSET_BEGINNING);
-        if (size > 0) {
-            uint8_t *rsc = AllocMem((ULONG)size, MEMF_ANY);
-            if (rsc) {
-                if (Read(f, rsc, size) == size) ok = amiga_audio_tfh(rsc, (uint32_t)size);
-                FreeMem(rsc, (ULONG)size);
-            }
-        }
-        Close(f);
-    }
-    plat_log(ok ? "SWOTL sound TFH" : "SWOTL TFH unavailable; sound FM");
-}
-
 /* Workbench start (L84): the icon's drawer becomes the current directory
  * (a Shell's is its own) and the icon's tool types are the arguments, the
  * same keywords; KEYS= is copied, the icon is freed before the run. The
- * release image reads TFH and ANALOGJOYSTICK only. */
+ * release image reads ANALOGJOYSTICK only. */
 static BPTR wb_old_dir = 0;
 static char *wb_keys = 0;
 static ULONG wb_keys_bytes = 0;
 
-static int wb_options(int *tfh)
+static int wb_options(void)
 {
     struct WBArg *tool = amiga_wb_startup->sm_ArgList;
     wb_old_dir = CurrentDir(tool->wa_Lock);
@@ -617,7 +572,6 @@ static int wb_options(int *tfh)
     int ok = 1;
     if (icon) {
         STRPTR *types = (STRPTR *)icon->do_ToolTypes;
-        *tfh = FindToolType(types, (STRPTR)"TFH") != 0;
         if (FindToolType(types, (STRPTR)"ANALOGJOYSTICK")) rt_joystick = 1;
 #ifndef WC2_RELEASE
         if (FindToolType(types, (STRPTR)"BENCH")) rt_bench = 1;
@@ -656,14 +610,14 @@ static struct RDArgs *shell_args = 0;
 
 #ifdef WC2_RELEASE
 /* The release image (make amiga-release): the player's options only. */
-#define SHELL_TEMPLATE "TFH/S,ANALOGJOYSTICK/S"
-enum { ARG_TFH, ARG_ANALOGJOYSTICK, ARG_COUNT };
+#define SHELL_TEMPLATE "ANALOGJOYSTICK/S"
+enum { ARG_ANALOGJOYSTICK, ARG_COUNT };
 #else
-#define SHELL_TEMPLATE "TFH/S,ANALOGJOYSTICK/S,MUSIC/S,BENCH/S,KEYS/K"
-enum { ARG_TFH, ARG_ANALOGJOYSTICK, ARG_MUSIC, ARG_BENCH, ARG_KEYS, ARG_COUNT };
+#define SHELL_TEMPLATE "ANALOGJOYSTICK/S,MUSIC/S,BENCH/S,KEYS/K"
+enum { ARG_ANALOGJOYSTICK, ARG_MUSIC, ARG_BENCH, ARG_KEYS, ARG_COUNT };
 #endif
 
-static int shell_options(int *tfh)
+static int shell_options(void)
 {
     LONG values[ARG_COUNT] = {0};
     shell_args = ReadArgs((CONST_STRPTR)SHELL_TEMPLATE, values, 0);
@@ -673,7 +627,6 @@ static int shell_options(int *tfh)
         amiga_io_end();
         return 0;
     }
-    *tfh = values[ARG_TFH] != 0;
     if (values[ARG_ANALOGJOYSTICK]) rt_joystick = 1;   /* proportional stick in port 2; joystick argument Y */
 #ifndef WC2_RELEASE
     if (values[ARG_MUSIC]) rt_music_skip = 0;   /* diagnostic: music records start their songs */
@@ -683,20 +636,30 @@ static int shell_options(int *tfh)
     return 1;
 }
 
+/* The empty image (no translated program yet): fields the takeover stays live. */
+#define EMPTY_FIELDS 200
+static int empty_image = 0;
+
 int amiga_guest_open(void)
 {
     DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR)"dos.library", 39);
     if (!DOSBase) {
         return 0;
     }
-    int tfh = 0;
-    if (amiga_wb_startup && !wb_options(&tfh)) {
+    if (amiga_wb_startup && !wb_options()) {
         return 0;
     }
-    if (!amiga_wb_startup && !shell_options(&tfh)) {
+    if (!amiga_wb_startup && !shell_options()) {
         return 0;
     }
     key_script_check();
+    if (!dispatch_count) {
+        /* WC2 before port-plan P1.4: no translated program. The takeover runs
+         * EMPTY_FIELDS fields and hands back (make smoke). */
+        empty_image = 1;
+        plat_log("WC2 empty image: no translated program");
+        return 1;
+    }
 #ifndef WC2_SYNC
     if (rt_bench) {         /* production takes no tick at a poll point (irq-plan I8) */
         plat_log("SWOTL frame bench needs the sync image (make amiga-sync)");
@@ -705,10 +668,7 @@ int amiga_guest_open(void)
     rt_frame_cap = 1;       /* one game frame per field (runtime.h) */
     rt_mouse_scale = 1;     /* flight mouse at a fixed frame time (runtime.h) */
     rt_mickeys_y = 1;       /* vertical counts 1:1, as a real PC mouse (runtime.h) */
-    rt_sfx_prerender_on = 1;  /* effects prerendered at SPAZ init (runtime.h) */
 #endif
-    if (tfh) load_tfh();
-    else plat_log("SWOTL sound FM");
     /* Guest RAM, the state block below it and the EMS store after it; Fast RAM
      * when present (D15). */
     guest_block = (uint8_t *)AllocMem(RT_STATE_BYTES + RT_GUEST_BYTES + RT_EMS_BYTES, MEMF_ANY | MEMF_CLEAR);
@@ -734,6 +694,12 @@ int amiga_guest_open(void)
 
 long amiga_guest_run(void)
 {
+    if (empty_image) {
+        uint32_t start = amiga_frames;
+        while (amiga_frames - start < EMPTY_FIELDS) {
+        }
+        return 0;
+    }
     return amiga_guest_call(guest_stack + GUEST_STACK_BYTES);
 }
 

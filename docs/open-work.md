@@ -3,13 +3,6 @@
 The single list of open work. Remove items when done; history is in git.
 Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
 
-## Setup
-
-2. Amiga scaffold (playbook §6): framework subset from AmigaXDev, `amiga/Makefile`,
-   `run.sh`, `debug.sh`, an empty A1200 takeover that boots and quits under FS-UAE.
-   Copy from Secret Weapons of Luftwaffe (port-plan P0). Acceptance: `make amiga` and
-   `make smoke` pass.
-
 ## The original
 
 3. Map the game executable: Borland C++ 1991 large model, 80186+, VROOMM overlays

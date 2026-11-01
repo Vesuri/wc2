@@ -60,9 +60,9 @@ def sp_no_wrap(ops, s, ip, next_ip):
 
 SABOTAGE = [
     ("adc ignores carry", "status", adc_ignores_carry, "boundary"),
-    ("sub OF = CF", "status", of_from_carry, "forms"),
+    ("sub OF = CF", "status", of_from_carry, "forms,boundary"),
     ("rcl count mod 16", "status", rcl_mod16, "boundary"),
-    ("disp8 not sign-extended", "decode", disp8_unsigned, "forms"),
+    ("disp8 not sign-extended", "decode", disp8_unsigned, "forms,boundary"),
     ("DF ignored", "execute", df_ignored, "boundary"),
     ("SP not 16-bit", "execute", sp_no_wrap, "boundary"),
 ]
@@ -98,7 +98,7 @@ def main() -> int:
     missed = []
     with ProcessPoolExecutor(min(len(SABOTAGE), os.cpu_count() or 1)) as pool:
         for (name, _t, _f, corpus), caught in zip(SABOTAGE, pool.map(plant, range(len(SABOTAGE)))):
-            print(f"{name:28} {corpus:9} mismatches {caught}", flush=True)
+            print(f"{name:28} {corpus:15} mismatches {caught}", flush=True)
             if not caught:
                 missed.append(name)
     if missed:

@@ -5,7 +5,7 @@ Output per module `build/gen/<module>.ir` (decoded IR listing) and
 `build/gen/support.s` (flag/BCD helpers) and `build/gen/program.s` (assembly root:
 state equates, runtime xrefs, module includes, dispatch table); never edited by hand
 (G1). Header: generator version, SHA-256 of the inputs (translator sources,
-tools/swotl_model.py, annotations/, the module file) and of the body.
+tools/wc2_model.py, annotations/, the module file) and of the body.
 Alignment pads (R8, emit.align) are sized here: the program is assembled
 with vasm and pads grown in two-byte steps until every requested residue
 is verified in the assembled object. Nonconvergence fails generation.
@@ -48,7 +48,7 @@ M = image.M
 
 def inputs_digest(module: str) -> str:
     h = hashlib.sha256()
-    files = sorted((image.REPO / "translator").glob("*.py")) + [image.REPO / "tools/swotl_model.py"]
+    files = sorted((image.REPO / "translator").glob("*.py")) + [image.REPO / "tools/wc2_model.py"]
     files += sorted(image.ANNOTATIONS.glob("*.csv"))
     if module not in (SUPPORT, PROGRAM):
         files.append(M.REF / module)
@@ -143,11 +143,12 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
     units = program.units if program is not None else cfg.build()
     out.mkdir(parents=True, exist_ok=True)
     proof = None
-    if program is None:
+    if program is None and units:  # WC2: no handler to prove before P1.4
         # I2/I8: the footprint proof on the program with loop heads only gives the
         # sync points (irq.Proof.sync_points); they are leaders of the generated one
         proof = irq.prove(emit.Program(units, sync={}))
-    prog = program if program is not None else emit.Program(units, sync=proof.sync_points())
+    prog = program if program is not None else emit.Program(
+        units, sync=proof.sync_points() if proof else {})
     total, per = Counter(), {}
     files: list[str] = []
     texts: dict[str, list[str]] = {}

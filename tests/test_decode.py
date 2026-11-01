@@ -179,6 +179,9 @@ def main() -> int:
         print(b)
     if bad:
         print(f"{len(bad)} mismatches")
+    if not image.SCOPE:  # WC2 before port-plan P1.4: the opcode space is the whole check
+        print("static, executed: no module in scope yet")
+        return 1 if bad or not counts["space"] else 0
     return 1 if bad or not counts["static"] or not counts["executed"] else 0
 
 

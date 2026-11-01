@@ -24,10 +24,6 @@ uint8_t rt_opl_keyon[9];
  * of a music record starts no song; 0 runs the guest code. Music stays
  * enabled by default (user 2026-10-15; docs/sound-plan.md). */
 uint8_t rt_music_skip = 0;
-/* Effect starts (annotations/hle.csv sfx_start, rt_hle_sfx_start): per SPAZ
- * slot the id last started and a wrapping start count. */
-uint8_t rt_sfx_id[3] = {0xff, 0xff, 0xff};
-uint8_t rt_sfx_starts[3];
 
 /* Gameport: with rt_joystick, the trigger latches the axes and each read
  * counts; an axis bit stays 1 for its latched number of reads, so the game's

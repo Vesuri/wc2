@@ -2,7 +2,8 @@
 """G1/G2 guardrails fail on planted violations (plan step 3.1).
 
 G1: in a copy of build/gen, one body byte edited, one stale header and one
-deleted line, each in an IR listing and in a 68020 `.s` file, must each be
+deleted line, each in an IR listing (two `.s` files while no module is in scope) and in a
+68020 `.s` file, must each be
 rejected; the untouched copy passes, including byte-identical regeneration. G2: planted guest-address names in a
 hand-written file are each reported; surface-item names are not.
 Run after `make gen`.
@@ -18,8 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from translator import check, gen  # noqa: E402
 
-PLANTED = ["void sub_1369A(void);", "g_WC2_EXE_13692:", "int FRONTEND_1A2F;", "seg_1617_034C:",
-           "jsr loc_6A4D", "static int flight0x3E8E;"]
+PLANTED = ["void sub_1369A(void);", "g_WC2_EXE_13692:", "int WC2_1A2F;", "seg_1617_034C:",
+           "jsr loc_6A4D", "static int wc2exe0x3E8E;"]
 CLEAN = ["int21_3Dh:", "port_out_3C8:", "move.w #$7FFF,INTENA", "x = 0xDFF09A;", "stop_unknown:",
          "overlay_load:", "uint16_t value = 0x1234;"]
 
@@ -31,7 +32,9 @@ def main() -> int:
         shutil.copytree(gen.OUT, base)
         if check.check_gen(True, base):
             fails.append(f"untouched copy rejected: {check.check_gen(True, base)[:2]}")
-        for target in (sorted(base.glob("*.ir"))[0], sorted(base.glob("*.s"))[0]):
+        # WC2 before port-plan P1.4: no module, so no IR listing; two .s files instead
+        irs, asms = sorted(base.glob("*.ir")), sorted(base.glob("*.s"))
+        for target in (irs[:1] + asms)[:2]:
             original = target.read_bytes()
             cases = {
                 "edited body": original[:-3] + bytes([original[-3] ^ 1]) + original[-2:],

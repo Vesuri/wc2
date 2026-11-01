@@ -3,8 +3,10 @@
 An investigation into porting the 1991 DOS space combat game **Wing Commander II:
 Vengeance of the Kilrathi** by Origin Systems to the Amiga. Nothing playable exists yet.
 
-The default plan is a PAL A1200 (68020, AGA) target with the original x86 code translated
-offline to 68020 assembly, as in the Secret Weapons of the Luftwaffe Amiga port. The
+The target is an AGA Amiga with a 68030 or better (68040 recommended), with the original
+x86 code translated offline to 68020 assembly by the translator of the Secret Weapons of the
+Luftwaffe Amiga port, copied here with its runtime and Amiga layer
+([docs/upstream.md](docs/upstream.md)). The
 original game running under DOSBox-X is the ground truth for every test.
 
 ## Originals
