@@ -1,7 +1,7 @@
 ## Wing Commander II — repository-level targets.
 
 .PHONY: all help extract install hash check-ref prepare-reference reference-staging compare \
-	reference-emulator gen gen-check lint test test-decode test-x86 test-m68k test-sabotage \
+	reference-emulator reference gen gen-check lint test test-decode test-x86 test-m68k test-sabotage \
 	test-guards host amiga smoke size clean
 
 REFERENCE_ROOT ?= tmp/pc-root
@@ -25,6 +25,7 @@ help:
 	@echo "  make reference-staging  play the disposable copy in DOSBox Staging"
 	@echo "  make compare            PC WC1 vs WC2 code and data comparison -> tmp/compare/"
 	@echo "  make reference-emulator build instrumented DOSBox-X (tools/patches/ORDER)"
+	@echo "  make reference          gate 1: every milestone twice, image proof, identical state"
 	@echo
 	@echo "  Translator and Amiga build (Secret Weapons of Luftwaffe's; docs/upstream.md):"
 	@echo "  make gen                translate the in-scope modules -> build/gen (none before P1.4)"
@@ -82,6 +83,10 @@ compare:
 reference-emulator:
 	tools/build_dosbox_x.sh
 
+# Gate 1 (docs/pc-reference-loop.md): reference/milestones.csv, two runs each.
+reference: check-ref
+	. amiga/env.sh && $(PYTHON) tools/reference.py
+
 # --- Translator, tests and builds (Secret Weapons of Luftwaffe 658fc60, docs/upstream.md) ---
 
 gen:
@@ -113,13 +118,13 @@ JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc)
 RUN = @mkdir -p tmp/test; if $(2) > tmp/test/$(1).log 2>&1; then echo "ok    $(1)"; \
 	else echo "FAIL  $(1) (tmp/test/$(1).log)"; tail -n 15 tmp/test/$(1).log; exit 1; fi
 SHARDS = space.0/1 boundary.0/1
-# Unit tests that need no game code (docs/upstream.md lists the deferred ones).
+# Unit tests (docs/upstream.md lists the deferred ones); test_load_image needs ref/.
 UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_boundary \
 	test_byteorder_entries test_carry_entries test_compact test_cost_meter \
 	test_display_queue test_dosbox_retf test_fixture_inputs test_fm_allocation \
 	test_fm_cache test_fm_envelope test_fm_phase test_fm_quality test_fm_render \
 	test_gate_runner test_helper_branches test_hunk_size test_joystick_cli \
-	test_joystick_events test_joystick_link test_joystick_recorder test_joystick_replay \
+	test_joystick_events test_joystick_link test_load_image test_joystick_recorder test_joystick_replay \
 	test_jump_fusion test_key_release test_m68k_assembly test_next_branch \
 	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
 	test_rep_replay test_replay_chords test_replay_events test_smc_flow

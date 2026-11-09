@@ -143,7 +143,7 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
     units = program.units if program is not None else cfg.build()
     out.mkdir(parents=True, exist_ok=True)
     proof = None
-    if program is None and units:  # WC2: no handler to prove before P1.4
+    if program is None and units:  # WC2: no handler to prove before P2
         # I2/I8: the footprint proof on the program with loop heads only gives the
         # sync points (irq.Proof.sync_points); they are leaders of the generated one
         proof = irq.prove(emit.Program(units, sync={}))

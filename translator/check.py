@@ -21,7 +21,7 @@ from . import gen, image
 
 HAND = ("src", "amiga")
 SOURCES = {".c", ".cc", ".cpp", ".h", ".hpp", ".s", ".asm", ".i", ".inc"}
-# WC2: the root's name stands in while the scope is empty (port-plan P1.4).
+# WC2: the root's name stands in while the scope is empty (port-plan P2).
 MODULES = "|".join(re.escape(m.split(".")[0])
                    for m in dict.fromkeys(image.SCOPE + image.M.OUT_OF_SCOPE + [image.M.ROOT]))
 # Identifiers that name a guest address: generated-label style, IDA/Ghidra style,

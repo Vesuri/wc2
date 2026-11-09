@@ -28,7 +28,7 @@ otherwise.
 | `src/runtime/compute_*.s`, `sfx.c` | SWOTL native routines and SPAZ effect capture |
 | `src/platform/amiga/tfh_paula.*` | Their Finest Hour samples |
 | `tests/audit.csv` and the tests of SWOTL routines: `test_compute_*`, `test_point_*`, `test_polygon_classify*`, `test_rasterize`, `test_edge_submit`, `test_terrain_*`, `test_ground_vertices`, `test_scenery`, `test_sprite_packet`, `test_line_pixels`, `test_priority_search`, `test_opl_delay`, `test_tfh`, `test_sfx_*`, `test_sound_hooks`, `test_pointer_static`, `test_gameport`, `test_machine_vectors`, `test_amiga_file_sharing`, `test_mouse_scale` | SWOTL routines, fixtures or scenes |
-| `tools/`: `swotl_model`, `plink_check`, `load_image`, `ovl_info`, `sweep`, `code_writes`, `compute_oracle`, `native_entries`, `sound_reference`, `sfx_levels`, `pointer_static`, `tfh_*`, `ghidra_import`, `m68k_cost_probe`, `fm_effect_check.cpp`, `fsuae-input-lua.patch`, `install-data/`, release tools (`originals`, `pack_preinstalled`, `package_release`, `check_release`, `test_release_installer`, `test_whdload`) | game-specific: rewritten or adapted in their phase (P1, P2, P8) |
+| `tools/`: `swotl_model`, `plink_check`, `load_image` (adapted at P1.4, below), `ovl_info`, `sweep`, `code_writes`, `compute_oracle`, `native_entries`, `sound_reference`, `sfx_levels`, `pointer_static`, `tfh_*`, `ghidra_import`, `m68k_cost_probe`, `fm_effect_check.cpp`, `fsuae-input-lua.patch`, `install-data/`, release tools (`originals`, `pack_preinstalled`, `package_release`, `check_release`, `test_release_installer`, `test_whdload`) | game-specific: rewritten or adapted in their phase (P1, P2, P8) |
 | `whdload/`, `release/` | P8 |
 | other docs | SWOTL facts and history |
 
@@ -42,8 +42,7 @@ P0: every one fails before it for the reason given). Enter each into `make test`
 | `test_cell_cache`, `test_dos_sda`, `test_dos_search`, `test_ems`, `test_far_return_protocol`, `test_file_dates`, `test_host_launch`, `test_irq_in_service`, `test_mouse_irq`, `test_pointer_model`, `test_interrupt_frame_mask`, `test_key_chords`, `test_keyboard_prefix`, `test_host_replay_visits`, `test_replay_hooks`, `test_replay_run_isolation` | generated labels of SWOTL's guest code (`R_03E64` and others): re-pointed at WC2's | P5 |
 | `test_irq_footprint` | an INT 08h handler row in `entries.csv` | P4.4 |
 | `test_profile_tools` | generated guest call targets | P4 |
-| `test_load_image` | `tools/load_image.py` (not imported) | P1.4 |
-| `m68k_sabotage` plants on `program` and `walk` (37): `tests/m68k_blocks.py` needs generated blocks, and it imports SWOTL's compute and scene predecessor tests (`test_compute_contract` and others, not imported): drop those for WC2's | a module in scope | P1.4 |
+| `m68k_sabotage` plants on `program` and `walk` (37): `tests/m68k_blocks.py` needs generated blocks, and it imports SWOTL's compute and scene predecessor tests (`test_compute_contract` and others, not imported): drop those for WC2's | a module in scope (P1.4 brings the loader model only) | P2 |
 | `test_audio`, `test_fm_effect_asm` | TFH and SWOTL's effect capture: rewritten for WC2's effects | P6b.2 |
 | `test_display_palette` | its C++ extract does not compile: fails in SWOTL `658fc60` too (`Pointer` undeclared), an upstream fix | P6b.1 |
 
@@ -55,7 +54,7 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | Change | Files | Kind |
 |---|---|---|
 | Rename `SWOTL_` → `WC2_`, `Swotl` → `Wc2`, `swotl-gen` → `wc2-gen`; `Swotl.{cpp,h}` → `Wc2.{cpp,h}` | 65 imported files | ren |
-| Empty scope before P1.4: `tools/wc2_model.py` from `swotl_model.py` (generic parts; no modules, no PLINK); `cfg.build` returns no unit; `gen` skips the IRQ0 proof without units; `pointer_guest` zeros without rows; `lint` names the root; `test_decode` passes on the opcode space alone | `tools/wc2_model.py`, `translator/{image,gen,cfg,emit,check}.py`, `tools/surface.py`, `tests/test_decode.py` | wc2 |
+| Empty scope before P2: `tools/wc2_model.py` from `swotl_model.py` (generic parts; no modules, no PLINK); `cfg.build` returns no unit; `gen` skips the IRQ0 proof without units; `pointer_guest` zeros without rows; `lint` names the root; `test_decode` passes on the opcode space alone | `tools/wc2_model.py`, `translator/{image,gen,cfg,emit,check}.py`, `tools/surface.py`, `tests/test_decode.py` | wc2 |
 | `tests/audit.csv`: header only | `tests/audit.csv` | wc2 |
 | TFH and SPAZ effect capture removed: sample loading, the effect cache and prerender in `Audio`, the `TFH` option, `rt_sfx_*`, the HLE `sfx_start`/`sfx_prerender` entries, the OPL capture path, the `compute_transform.s` include. `plat_sfx_*` stay as host stubs until P6b.2 | `src/platform/amiga/{Audio.cpp,Audio.h,amiga_platform.c}`, `src/runtime/{rt_entry.s,runtime.h,ports.c}` | wc2 |
 | Amiga link without TFH and the compute objects | `amiga/Makefile` | wc2 |
@@ -65,3 +64,10 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | Guard plants: two `.s` files while no IR listing exists; planted module names use the root's | `tests/test_guards.py` | wc2 |
 | Sabotage plants aimed at `forms` alone run on `forms,boundary` (`forms` is empty until P2; `boundary` catches each, MEASURED): x86 `sub OF = CF`, `disp8 not sign-extended`; 68020 `RMW word at its byte address` | `tests/{x86,m68k}_sabotage.py` | wc2 |
 | 68020 sabotage: plants on the `program` and `walk` corpora (the generated program's blocks) print `deferred` while no module is in scope and count neither as caught nor as passed | `tests/m68k_sabotage.py` | wc2 |
+| WC2 trace patch on top of the imported one: root `WC2.EXE` (entry `0000:0000`, 6656-byte header), stub scan, `vroomm.csv` (INT 3Fh traps, overlay reads, entries, stub and frame writes, buffer moves with ownership), `.DRV` code files, code reads own their trailing partial paragraph, OPL at the SB aliases and `sound.csv`, `WC2_REPLAY_PORTS`; generic: per-key hold `key*N`, the caller's return address in `probe.csv`, key names `backslash`, `kpminus`, `kpplus`, `kpenter`, `insert`, `delete` | `tools/patches/{dosbox-x-wc2-trace.patch,ORDER}` | wc2; per-key hold and probe caller up |
+| `reference/dosbox-x.conf`: the Staging machine (`vgaonly`, SB 2.0 with OPL2) | `reference/dosbox-x.conf` | wc2 |
+| `quit warning = false`: a signal to stop a run while the game runs opened a native macOS confirmation dialog | `reference/dosbox-x.conf`, `reference/dosbox-x-install.conf` | up |
+| `pc_run`: launch `WC2` in `WING2`, writable root copy, `--replay-ports`; `-exit` replaces `-silent`, which also sets the Sound Blaster type to none; `mount c root` relative to the run directory, since DOSBox echoes the command into text VRAM and an absolute path made the entry snapshots of two runs differ | `tools/pc_run.py` | wc2; `-silent` and the mount up |
+| `reference`: each milestone twice in parallel, RAM, VRAM and DAC compared between the runs, image proof on every snapshot, `opened` and `irqs` columns, poll points passed only when the file has rows | `tools/reference.py` | wc2; poll-point guard up |
+| Loader model (root with DOSBox-X's EXEC entry frame below the initial SS:SP, VROOMM overlays relocated through the root segment table, drivers) in `wc2_model`; `load_image` adapted to it, with the overlay-tail and read-tail rules; `test_load_image` rewritten on synthetic snapshots of the model and entered into `make test` (it needs `ref/`) | `tools/{wc2_model,load_image}.py`, `tests/test_load_image.py`, `Makefile` | wc2 |
+| `make reference` | `Makefile` | wc2 |

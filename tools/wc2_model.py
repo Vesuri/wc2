@@ -1,10 +1,10 @@
 """Shared static model of Wing Commander II: modules, link layout, traces.
 
 Adapted from Secret Weapons of Luftwaffe's tools/swotl_model.py (docs/upstream.md). The
-generic parts (Module, MZ reader, trace readers) are SWOTL's. The scope is empty until
-port-plan P1.4 proves the image (WC2.EXE, its VROOMM overlays and drivers, from
-tools/bc_exe.py); until then the translator has no module to translate and the
-differentials run on their synthetic corpora only.
+generic parts (Module, MZ reader, trace readers) are SWOTL's. Port-plan P1.4 proves the
+image (WC2.EXE, its VROOMM overlays and drivers, from tools/bc_exe.py) with the loader
+model below. The scope stays empty until P2 brings modules; until then the translator
+has no module to translate and the differentials run on their synthetic corpora only.
 
 Module address = module offset: root = MZ load-image offset. Link linear address =
 link segment * 16 + offset, before relocation by the load segment.
@@ -23,7 +23,7 @@ RUNS = REPO / "tmp/pc-runs"
 ROOT = "WC2.EXE"
 OVL_TABLE = 0  # SWOTL's PLINK table; WC2's VROOMM model replaces it (P2.1, P4.2)
 MANAGER = (None, None)  # SWOTL's PLINK manager entry; no WC2 equivalent
-SCOPE: list[str] = []  # P1.4
+SCOPE: list[str] = []  # P2 (P1.4 proves the loader model only)
 OUT_OF_SCOPE: list[str] = []
 
 
@@ -154,9 +154,82 @@ def cpu_writes(traces: list[Path]) -> dict[str, dict[int, set[str]]]:
     return out
 
 
+# --- Loader model (port-plan P1.4, docs/pc-reference-loop.md "Loader model") ---
+# Image offsets number the root and its overlays alike: the MZ load image is
+# offsets 0..ROOT_IMAGE-1, and the FBOV area that follows it in the file keeps
+# going at file offset - MZ header (the trace patch attributes overlay reads so).
+SEG_TABLE = 0x16C40  # root: 8-byte segment records, word 0 = link segment (MEASURED)
+DRIVERS = ("TM.DRV", "SUPERTM.DRV", "STRAX.DRV")  # GAMEDAT; read whole, not relocated
+
+
+@dataclass
+class Overlay:
+    stub: int                   # image offset of its stub segment in the root
+    code: int                   # image offset of its first code byte (FBOV area)
+    size: int                   # code bytes
+    relocs: list[int]           # code offsets of segment words (table byte offsets)
+
+    @property
+    def end(self) -> int:
+        """Image offset after the code and its relocation records."""
+        return self.code + self.size + 2 * len(self.relocs)
+
+
+def overlays(ref: Path = REF) -> list[Overlay]:
+    """The VROOMM overlays (tools/bc_exe.py), at image offsets."""
+    import bc_exe
+    x = bc_exe.load(str(ref / ROOT))
+    base = x.fbov - x.header + 16
+    out = []
+    for o in x.overlays:
+        code = base + o.file_off
+        rel = x.data[x.header + code + o.code_size: x.header + code + o.code_size + o.reloc_size]
+        out.append(Overlay(o.stub_off, code, o.code_size,
+                           [struct.unpack_from("<H", rel, 2 * i)[0] for i in range(o.reloc_size // 2)]))
+    return sorted(out, key=lambda o: o.code)
+
+
+def image_file(ref: Path = REF) -> bytes:
+    """WC2.EXE from the load image on: image offset k is byte k."""
+    data = (ref / ROOT).read_bytes()
+    return data[struct.unpack_from("<H", data, 8)[0] * 16:]
+
+
+def root_image(load: int, ref: Path = REF) -> bytearray:
+    """The MZ load image relocated at load segment `load`, with the entry frame
+    of the DOS EXEC: DOSBox-X pushes the entry CS and IP on the initial stack and
+    enters with RETF (src/dos/dos_execute.cpp, LOADNGO), so the 4 bytes below the
+    initial SS:SP hold IP, then CS + load (MEASURED at entry: image 277DCh)."""
+    image, rels, (cs, ip) = mz(ref / ROOT)
+    out = bytearray(image)
+    for off, seg in rels:
+        a = seg * 16 + off
+        struct.pack_into("<H", out, a, (struct.unpack_from("<H", out, a)[0] + load) & 0xFFFF)
+    data = (ref / ROOT).read_bytes()
+    ss, sp = struct.unpack_from("<HH", data, 0x0E)
+    frame = ss * 16 + sp - 4
+    if 0 <= frame <= len(out) - 4:
+        struct.pack_into("<HH", out, frame, ip, (cs + load) & 0xFFFF)
+    return out
+
+
+def overlay_code(o: Overlay, load: int, ref: Path = REF, image: bytes | None = None) -> bytearray:
+    """An overlay's code as VROOMM leaves it after the load: each segment word w
+    becomes load + the link segment in segment record w / 8 (MEASURED: 1487 of
+    1487 words in the resident overlays of a flight snapshot)."""
+    image = image if image is not None else image_file(ref)
+    code = bytearray(image[o.code:o.code + o.size])
+    for f in o.relocs:
+        w = struct.unpack_from("<H", code, f)[0]
+        seg = struct.unpack_from("<H", image, SEG_TABLE + w)[0]
+        struct.pack_into("<H", code, f, (seg + load) & 0xFFFF)
+    return code
+
+
 def load_modules(ref: Path = REF) -> dict[str, Module]:
-    """The in-scope modules (P1.4). Empty until the image is proved."""
-    assert not SCOPE, "the WC2 module loader is port-plan P1.4"
+    """The in-scope modules for the translator: none until the sweep (port-plan
+    P2.3); the loader model above is the image proof's (P1.4)."""
+    assert not SCOPE, "WC2 translator modules come with port-plan P2"
     return {}
 
 

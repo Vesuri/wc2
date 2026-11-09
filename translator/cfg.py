@@ -195,7 +195,7 @@ class _Descent:
 def build(mods: dict[str, M.Module] | None = None) -> dict[str, Unit]:
     mods = mods or image.load()
     if not image.SCOPE:
-        return {}  # WC2: no proved module yet (port-plan P1.4)
+        return {}  # WC2: no proved module yet (port-plan P2)
     bases = {n: {0 if n == M.ROOT else mods[n].link_seg} for n in image.SCOPE}
     bases[M.ROOT].add(M.mz(M.REF / M.ROOT)[2][0])  # MZ entry CS (the PLINK manager segment)
     start = seeds(mods)

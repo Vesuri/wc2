@@ -21,7 +21,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 DOSBOX = REPO / "tools/vendor/dosbox-x/src/dosbox-x"
 CONF = REPO / "reference/dosbox-x.conf"
-LAUNCH = "swotl V S 5 N Y Y 64"
+LAUNCH = "WC2"
+GAME_DIR = "WING2"  # the installer's C:\WING2 (docs/pc-reference-loop.md)
 
 EXIT_SUCCESS, EXIT_LIMIT, EXIT_FAULT, EXIT_EMULATOR = 0, 2, 3, 4
 
@@ -32,6 +33,8 @@ def prepare(run: Path) -> Path:
     root = run / "root"
     subprocess.run(["rsync", "-a", "--exclude", "*.pdf", f"{REPO / 'ref'}/", f"{root}/"],
                    check=True)
+    # ref/ is read-only; the game writes into GAMEDAT and exits when it cannot
+    subprocess.run(["chmod", "-R", "u+w", str(root)], check=True)
     (run / "trace").mkdir()
     return root
 
@@ -71,7 +74,10 @@ def main() -> int:
     parser.add_argument("--rep-chunks", action="store_true",
                         help="record original REP decoder slices at poll points")
     parser.add_argument("--opl", action="store_true",
-                        help="log every AdLib register write with emulated ms (trace/opl.csv)")
+                        help="log every OPL register write (trace/opl.csv) and Sound Blaster DSP/DMA access "
+                             "(trace/sound.csv) with emulated ms")
+    parser.add_argument("--replay-ports", action="store_true",
+                        help="record PIT counter and 3DAh reads, run-length coded (trace/replay-ports.csv)")
     parser.add_argument("--probes", default="",
                         help="MODULE+HEX:N=name,...: log entry ms and N far-call stack words (trace/probe.csv)")
     parser.add_argument("--polls", type=Path,
@@ -99,18 +105,24 @@ def main() -> int:
         env["WC2_OPL"] = "1"
     if args.probes:
         env["WC2_PROBES"] = args.probes
+    if args.replay_ports:
+        env["WC2_REPLAY_PORTS"] = "1"
     if args.polls:
         env["WC2_POLLS"] = str(args.polls.resolve())
     if args.key_hold is not None:
         env["WC2_KEY_HOLD"] = str(args.key_hold)
-    command = [str(DOSBOX), "-conf", str(CONF), "-nogui", "-nomenu", "-silent", "-fastlaunch",
+    # -exit, not -silent: -silent also removes the Sound Blaster (WC2's speech)
+    command = [str(DOSBOX), "-conf", str(CONF), "-nogui", "-nomenu", "-exit", "-fastlaunch",
                "-time-limit", str(args.time_limit),
                "-set", f"log logfile={run / 'dosbox-x.log'}"]
     if args.cputype:
         command += ["-set", f"cpu cputype={args.cputype}"]
     if args.cycles:
         command += ["-set", f"cpu cycles=fixed {args.cycles}"]
-    command += ["-c", f"mount c \"{root}\"", "-c", "c:", "-c", args.launch, "-c", "exit"]
+    # relative to the run directory (cwd): DOSBox echoes the command on the screen,
+    # so an absolute path would differ between runs
+    command += ["-c", "mount c root", "-c", "c:", "-c", f"cd {GAME_DIR}",
+                "-c", args.launch, "-c", "exit"]
     (run / "clock-inputs.json").write_text(json.dumps({
         "host_file_clock": "1991-01-01T12:00:00", "basis": "local calendar",
         "WC2_FIXED_FILE_CLOCK": env["WC2_FIXED_FILE_CLOCK"]}, indent=2) + "\n")

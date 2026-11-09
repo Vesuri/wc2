@@ -877,7 +877,7 @@ def slow_first(k: int) -> tuple:
 
 
 # WC2: the program and walk corpora are the generated program's blocks; with no
-# module in scope (port-plan P1.4) there is none, so those plants are deferred,
+# module in scope (port-plan P2) there is none, so those plants are deferred,
 # printed, and never counted as caught.
 PROGRAM_CORPORA = ("program", "walk")
 
@@ -895,7 +895,7 @@ def main() -> int:
         futures = {k: pool.submit(plant, k) for k in run}
         for k, (name, _fn, corpus) in enumerate(SABOTAGE):
             if k in held:
-                print(f"{name:36} {corpus:15} deferred: no generated program (P1.4)", flush=True)
+                print(f"{name:36} {corpus:15} deferred: no generated program (P2)", flush=True)
                 continue
             bad, total, r, n = futures[k].result()
             replayed, cases = replayed + r, cases + n

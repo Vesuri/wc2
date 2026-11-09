@@ -1,0 +1,486 @@
+--- a/src/misc/swotl_trace.cpp
++++ b/src/misc/swotl_trace.cpp
+@@ -1,6 +1,13 @@
+ /* SWOTL reference instrumentation (Secret Weapons of Luftwaffe port).
+  *
+- * Enabled by WC2_TRACE=1; armed at the first instruction of SWOTL.EXE
++ * Wing Commander II: armed at the first instruction of WC2.EXE (CS:IP =
++ * PSP+10h:0000). Overlay code read from WC2.EXE's FBOV area is attributed to
++ * WC2.EXE at its load-image offset (file offset - MZ header), so the root and
++ * every overlay share one numbering; .DRV reads are their own modules.
++ * VROOMM events (INT 3Fh traps, overlay reads, stub writes, stack writes
++ * while a trap is active) go to vroomm.csv.
++ *
++ * Enabled by WC2_TRACE=1; armed at the first instruction of the root
+  * (CS:IP = PSP+10h+1617h:0382h). Every guest address is recorded as
+  * (module, offset): the root image, or the .OVL/.EXE file whose bytes the
+  * last DOS read put at that paragraph. Outputs go to WC2_TRACE_DIR (".").
+@@ -51,9 +58,13 @@
+ 
+ namespace {
+ 
+-constexpr uint16_t ROOT_ENTRY_CS = 0x1617;
+-constexpr uint16_t ROOT_ENTRY_IP = 0x0382;
+-constexpr uint32_t ROOT_IMAGE_BYTES = 96000;
++/* WC2.EXE (tools/bc_exe.py, MEASURED): entry 0000:0000, a 161760-byte load
++ * image after a 6656-byte header; the FBOV overlay area follows the image. */
++constexpr const char *ROOT_NAME = "WC2.EXE";
++constexpr uint16_t ROOT_ENTRY_CS = 0x0000;
++constexpr uint16_t ROOT_ENTRY_IP = 0x0000;
++constexpr uint32_t ROOT_IMAGE_BYTES = 161760;
++constexpr uint32_t ROOT_HEADER_BYTES = 6656;
+ constexpr uint32_t PARAGRAPHS = 0x10000 + 0x1000;
+ 
+ struct Module {
+@@ -79,6 +90,7 @@
+ 	uint32_t hits = 0;
+ 	KBD_KEYS key = KBD_NONE;
+ 	unsigned modifiers = 0;
++	uint64_t hold = 0; /* WC2_KEYS key*N: held N instructions (0: WC2_KEY_HOLD) */
+ 	bool done = false;
+ };
+ 
+@@ -135,6 +147,21 @@
+  * 389h) with the emulated time in ms. */
+ FILE *opl = nullptr;
+ uint8_t opl_index = 0;
++/* With WC2_OPL also sound.csv: Sound Blaster DSP (22x) and DMA (00h-0Fh, 83h)
++ * accesses with the emulated ms. OPL index/data also at the SB aliases
++ * 220h/221h and 228h/229h (one OPL2 chip). */
++FILE *sound = nullptr;
++/* WC2_REPLAY_PORTS=1: reads of the PIT counter (40h-42h) and the VGA input
++ * status (3DAh), run-length coded per service event (replay-ports.csv). */
++FILE *replay_ports = nullptr;
++struct PortRun { uint64_t service = 0; uint16_t port = 0; uint32_t value = 0; uint64_t count = 0; };
++PortRun port_run;
++void FlushPortRun() {
++	if (replay_ports && port_run.count)
++		fprintf(replay_ports, "%llu,0x%04x,0x%02x,%llu\n", (unsigned long long)port_run.service,
++		        port_run.port, port_run.value, (unsigned long long)port_run.count);
++	port_run.count = 0;
++}
+ /* Call probes (WC2_PROBES=MODULE+HEX:N=name,...): at each entry, the emulated
+  * ms and the N stack words above a far return address (probe.csv). */
+ struct Probe {
+@@ -174,20 +201,22 @@
+ struct PendingService { uint32_t ret_linear; uint16_t ss, sp; uint8_t vector; };
+ std::vector<PendingService> services;
+ 
+-/* PLINK probe: calls of the "make overlay CX resident" routine (root +16462). */
+-constexpr uint32_t PLINK_LOAD = 0x16462, PLINK_MANAGER_RET = 0x164E7, PLINK_TABLE = 0x169E8;
+-struct PlinkCall {
+-	bool active = false;
+-	uint16_t id = 0;
+-	uint32_t ret_linear = 0, caller_linear = 0;
+-	Location caller{0, 0};
+-	bool via_thunk = false, resident = false;
+-	uint64_t reads = 0;
+-};
+-PlinkCall plink;
++/* VROOMM (Borland overlays): stub segments in the root, found at arming by
++ * the same signature as tools/bc_exe.py (INT 3Fh, saveret 0, 16 zero bytes of
++ * workspace, n 5-byte entries CD 3F lo hi 00). */
++struct Stub { uint32_t offset, size; };
++std::vector<Stub> stubs;               /* sorted by root offset */
++FILE *vroomm = nullptr;
++struct Trap { bool active = false; uint32_t stub = 0, entry = 0, sp_linear = 0, ss_linear = 0; };
++Trap trap;
+ uint64_t overlay_reads = 0;
+-std::map<std::tuple<std::string, uint16_t, bool, bool, bool, bool>, uint64_t> plink_calls;
+-std::string OverlayName(uint16_t id);
++/* The VROOMM move (root +F7F6): DS = old segment, ES = new, CX words, then
++ * `rep movsw` at +F81F (MEASURED). Ownership, executed marks and last writers
++ * move with the code before the copy runs; the copy itself writes nothing new. */
++constexpr uint32_t VROOMM_MOVE_SETUP = 0xF81D, VROOMM_MOVE = 0xF81F;
++bool move_armed = false;
++void MoveOwnership(uint32_t src, uint32_t dst, uint32_t bytes);
++int StubAt(uint32_t offset);
+ 
+ std::string Path(const std::string &file) { return out_dir + "/" + file; }
+ 
+@@ -203,7 +232,7 @@
+ 	const auto dot = name.rfind('.');
+ 	if (dot == std::string::npos) return false;
+ 	const auto ext = name.substr(dot);
+-	return ext == ".OVL" || ext == ".EXE";
++	return ext == ".OVL" || ext == ".EXE" || ext == ".DRV";
+ }
+ 
+ uint16_t ModuleId(const std::string &name) {
+@@ -254,8 +283,10 @@
+ 
+ void MapRange(const uint32_t linear, const uint32_t length, const uint16_t module,
+               const int32_t module_offset) {
+-	/* Only paragraphs the read covers completely change owner. */
+-	const uint32_t first = (linear + 15) >> 4, end = (linear + length) >> 4;
++	/* Only paragraphs the read covers completely change owner; a code read
++	 * also owns its trailing partial paragraph (WC2's overlays and drivers
++	 * are read to paragraph starts with lengths that are not). */
++	const uint32_t first = (linear + 15) >> 4, end = (linear + length + (module ? 15 : 0)) >> 4;
+ 	for (uint32_t para = first; para < end && para < PARAGRAPHS; ++para) {
+ 		para_module[para] = module;
+ 		para_offset[para] = module_offset + (int32_t)(para * 16) - (int32_t)linear;
+@@ -377,15 +408,6 @@
+ 			fprintf(f, ",0x%05x,%u,%llu\n", std::get<1>(item.first), std::get<2>(item.first),
+ 			        (unsigned long long)item.second);
+ 		}
+-		fclose(f);
+-	}
+-	if (auto *f = fopen(Path("plink.csv").c_str(), "w")) {
+-		fputs("caller_module,id,overlay,via_thunk,resident,loaded,caller_intact,count\n", f);
+-		for (const auto &item : plink_calls)
+-			fprintf(f, "%s,%u,%s,%d,%d,%d,%d,%llu\n", std::get<0>(item.first).c_str(),
+-			        std::get<1>(item.first), OverlayName(std::get<1>(item.first)).c_str(),
+-			        std::get<2>(item.first), std::get<3>(item.first), std::get<4>(item.first),
+-			        std::get<5>(item.first), (unsigned long long)item.second);
+ 		fclose(f);
+ 	}
+ 	if (auto *f = fopen(Path("summary.txt").c_str(), "w")) {
+@@ -403,8 +425,15 @@
+ 	rep_chunks = nullptr;
+ 	if (events) fclose(events);
+ 	events = nullptr;
++	if (vroomm) fclose(vroomm);
++	vroomm = nullptr;
+ 	if (opl) fclose(opl);
+ 	opl = nullptr;
++	if (sound) fclose(sound);
++	sound = nullptr;
++	FlushPortRun();
++	if (replay_ports) fclose(replay_ports);
++	replay_ports = nullptr;
+ 	if (probe_log) fclose(probe_log);
+ 	probe_log = nullptr;
+ 	LOG_MSG("SWOTL: wrote trace to %s (%llu instructions)", out_dir.c_str(),
+@@ -459,7 +488,9 @@
+ 	        {"up", KBD_up}, {"down", KBD_down}, {"left", KBD_left}, {"right", KBD_right},
+ 	        {"backspace", KBD_backspace}, {"f1", KBD_f1}, {"f2", KBD_f2}, {"f3", KBD_f3},
+ 	        {"f4", KBD_f4}, {"f5", KBD_f5}, {"f6", KBD_f6}, {"f7", KBD_f7}, {"f8", KBD_f8},
+-	        {"f9", KBD_f9}, {"f10", KBD_f10}, {"minus", KBD_minus}, {"equals", KBD_equals}};
++	        {"f9", KBD_f9}, {"f10", KBD_f10}, {"minus", KBD_minus}, {"equals", KBD_equals},
++	        {"backslash", KBD_backslash}, {"kpminus", KBD_kpminus}, {"kpplus", KBD_kpplus},
++	        {"kpenter", KBD_kpenter}, {"insert", KBD_insert}, {"delete", KBD_delete}};
+ 	const auto it = named.find(n);
+ 	if (it != named.end()) return it->second;
+ 	static const char *letters = "qwertyuiopasdfghjklzxcvbnm";
+@@ -513,6 +544,11 @@
+ 		if (eq == std::string::npos || !ParseTarget(spec.substr(0, eq), t))
+ 			E_Exit("SWOTL: bad key spec '%s'", spec.c_str());
+ 		t.name = spec.substr(eq + 1);
++		if (const auto star = t.name.find('*'); star != std::string::npos) {
++			t.hold = strtoull(t.name.c_str() + star + 1, nullptr, 10);
++			if (!t.hold) E_Exit("WC2: bad key hold in '%s'", spec.c_str());
++			t.name = t.name.substr(0, star);
++		}
+ 		t.key = KeyByName(t.name, t.modifiers);
+         const auto joy = Wc2ParseJoystick(t.name);
+         if (joy.kind && !joystick_ports) E_Exit("SWOTL: joystick input requires WC2_JOYSTICK=1");
+@@ -546,10 +582,19 @@
+ 	if (!read_data) E_Exit("SWOTL: cannot open reads.bin");
+ 	events = fopen(Path("events.csv").c_str(), "w");
+ 	if (events) fputs("icount,kind,module,offset,detail\n", events);
++	vroomm = fopen(Path("vroomm.csv").c_str(), "w");
++	if (vroomm) fputs("icount,kind,stub,entry,linear,detail\n", vroomm);
+ 	if (const char *v = getenv("WC2_OPL"); v && *v && strcmp(v, "0") != 0) {
+ 		opl = fopen(Path("opl.csv").c_str(), "w");
+ 		if (opl) fputs("ms,reg,value\n", opl);
++		sound = fopen(Path("sound.csv").c_str(), "w");
++		if (sound) fputs("ms,direction,port,value,module,offset\n", sound);
+ 	}
++	if (const char *v = getenv("WC2_REPLAY_PORTS"); v && *v && strcmp(v, "0") != 0) {
++		replay_ports = fopen(Path("replay-ports.csv").c_str(), "w");
++		if (!replay_ports) E_Exit("WC2: cannot open replay-ports.csv");
++		fputs("service,port,value,count\n", replay_ports);
++	}
+ 	for (const auto &spec : Split(getenv("WC2_PROBES"), ',')) {
+ 		const auto plus = spec.find('+'), colon = spec.find(':'), eq = spec.find('=');
+ 		if (plus == std::string::npos || colon == std::string::npos || eq == std::string::npos)
+@@ -564,7 +609,7 @@
+ 	}
+ 	if (!probes.empty()) {
+ 		probe_log = fopen(Path("probe.csv").c_str(), "w");
+-		if (probe_log) fputs("ms,name,args\n", probe_log);
++		if (probe_log) fputs("ms,name,return,args\n", probe_log);
+ 	}
+ 	std::atexit(WriteOutputs);
+ }
+@@ -620,7 +665,7 @@
+ 
+ void Arm() {
+ 	load_seg = (uint16_t)(SegValue(cs) - ROOT_ENTRY_CS);
+-	const uint16_t root = ModuleId("SWOTL.EXE");
++	const uint16_t root = ModuleId(ROOT_NAME);
+ 	modules[root].loads++;
+ 	const char *ticks = getenv("WC2_BIOS_TICKS");
+ 	mem_writed(0x46c, ticks ? (uint32_t)strtoul(ticks, nullptr, 0) : 0);
+@@ -630,6 +675,20 @@
+ 	dos.date.month = 1;
+ 	dos.date.day = 1;
+ 	MapRange((uint32_t)load_seg << 4, ROOT_IMAGE_BYTES, root, 0);
++	const uint32_t base = (uint32_t)load_seg << 4;
++	for (uint32_t off = 0; off + 32 <= ROOT_IMAGE_BYTES; off += 16) {
++		if (mem_readd(base + off) != 0x00003fcdu) continue;
++		bool zero = true;
++		for (uint32_t k = 16; k < 32; ++k) zero &= mem_readb(base + off + k) == 0;
++		const uint16_t n = mem_readw(base + off + 12);
++		if (!zero || !n || n >= 512 || off + 32 + 5u * n > ROOT_IMAGE_BYTES) continue;
++		bool ok = true;
++		for (uint32_t i = 0; i < n && ok; ++i) {
++			const uint32_t e = base + off + 32 + 5 * i;
++			ok = mem_readw(e) == 0x3fcd && mem_readb(e + 4) == 0;
++		}
++		if (ok) stubs.push_back(Stub{off, 32 + 5u * n});
++	}
+     if (joystick_ports) {
+         JOYSTICK_Enable(0, true);
+         JOYSTICK_Move_X(0, 0.0f);
+@@ -638,59 +697,68 @@
+         JOYSTICK_Button(0, 1, false);
+     }
+ 	swotl_active = true;
+-	Event("arm", "load_seg=0x%04x psp=0x%04x bios_ticks=0x%08x dos_date=1991-01-01",
+-	      load_seg, dos.psp(), mem_readd(0x46c));
++	Event("arm", "load_seg=0x%04x psp=0x%04x bios_ticks=0x%08x dos_date=1991-01-01 stubs=%zu",
++	      load_seg, dos.psp(), mem_readd(0x46c), stubs.size());
+ 	LOG_MSG("SWOTL: armed, root load segment %04x", load_seg);
+ }
+ 
+-std::string OverlayName(const uint16_t id) {
+-	const uint32_t table = ((uint32_t)load_seg << 4) + PLINK_TABLE;
+-	uint32_t name = table - 8 + mem_readw(table + 16 * (id - 1) + 6);
+-	std::string s;
+-	for (uint8_t c; (c = mem_readb(name)) != 0 && s.size() < 16; ++name) s += (char)c;
+-	return s;
++/* Index of the stub segment holding root offset `offset`, or -1. */
++int StubAt(const uint32_t offset) {
++	auto it = std::upper_bound(stubs.begin(), stubs.end(), offset,
++	                           [](uint32_t o, const Stub &st) { return o < st.offset; });
++	if (it == stubs.begin()) return -1;
++	--it;
++	return offset < it->offset + it->size ? (int)(it - stubs.begin()) : -1;
+ }
+ 
+-bool OverlayResident(const uint16_t id) {
+-	const uint32_t rec = ((uint32_t)load_seg << 4) + PLINK_TABLE + 16 * (id - 1);
+-	/* The startup relocation makes the table's segment words absolute. */
+-	const uint32_t first = mem_readw(rec + 2), paras = mem_readw(rec + 12);
+-	const int32_t hdr = (int32_t)((mem_readw(rec) * 4 + 15) & ~15u);
+-	const uint16_t m = ModuleId(OverlayName(id));
+-	for (uint32_t p = first; p < first + paras && p < PARAGRAPHS; ++p)
+-		if (para_module[p] != m || para_offset[p] != hdr + (int32_t)(p - first) * 16) return false;
+-	return true;
++void VroommRow(const char *kind, uint32_t stub, uint32_t entry, uint32_t linear, const char *fmt, ...) {
++	if (!vroomm) return;
++	fprintf(vroomm, "%llu,%s,0x%05x,0x%04x,0x%05x,", (unsigned long long)icount, kind, stub, entry,
++	        linear);
++	va_list args;
++	va_start(args, fmt);
++	vfprintf(vroomm, fmt, args);
++	va_end(args);
++	fputc('\n', vroomm);
+ }
+ 
+-void PlinkProbe(const uint32_t linear, const Location &here) {
+-	if (plink.active && linear == plink.ret_linear) {
+-		const bool loaded = overlay_reads != plink.reads;
+-		const auto now = Locate(plink.caller_linear);
+-		const bool caller_ok = now.module == plink.caller.module && now.offset == plink.caller.offset;
+-		++plink_calls[std::make_tuple(modules[plink.caller.module].name, plink.id, plink.via_thunk,
+-		                              plink.resident, loaded, caller_ok)];
+-		if (loaded || !caller_ok || plink.resident == loaded)
+-			Event("plink", "%s id=%u caller=%s+0x%05x thunk=%d resident=%d loaded=%d caller_ok=%d",
+-			      OverlayName(plink.id).c_str(), plink.id, modules[plink.caller.module].name.c_str(),
+-			      plink.caller.offset, plink.via_thunk, plink.resident, loaded, caller_ok);
+-		plink.active = false;
+-	}
+-	static const uint16_t root = ModuleId("SWOTL.EXE");
+-	if (here.module != root || here.offset != PLINK_LOAD) return;
+-	const uint32_t sp = SegPhys(ss) + reg_sp;
+-	plink.active = true;
+-	plink.id = reg_cx;
+-	plink.ret_linear = ((uint32_t)mem_readw(sp + 2) << 4) + mem_readw(sp);
+-	plink.via_thunk = Locate(plink.ret_linear).module == root &&
+-	                  Locate(plink.ret_linear).offset == PLINK_MANAGER_RET;
+-	/* Thunk path: manager frame (10 words) above the far return; the thunk's caller beyond. */
+-	const uint32_t frame = plink.via_thunk ? sp + 4 + 0x18 : sp;
+-	plink.caller_linear = ((uint32_t)mem_readw(frame + 2) << 4) + mem_readw(frame);
+-	plink.caller = Locate(plink.caller_linear);
+-	plink.resident = OverlayResident(plink.id);
+-	plink.reads = overlay_reads;
++void MoveOwnership(const uint32_t src, const uint32_t dst, const uint32_t bytes) {
++	const uint32_t paras = (bytes + 15) >> 4, s0 = src >> 4, d0 = dst >> 4;
++	if (s0 + paras > PARAGRAPHS || d0 + paras > PARAGRAPHS) return;
++	const std::vector<uint16_t> mod(para_module.begin() + s0, para_module.begin() + s0 + paras);
++	const std::vector<int32_t> off(para_offset.begin() + s0, para_offset.begin() + s0 + paras);
++	const std::vector<uint8_t> ex(para_executed.begin() + s0, para_executed.begin() + s0 + paras);
++	const std::vector<uint64_t> wr(last_writer.begin() + src, last_writer.begin() + src + paras * 16);
++	std::copy(mod.begin(), mod.end(), para_module.begin() + d0);
++	std::copy(off.begin(), off.end(), para_offset.begin() + d0);
++	std::copy(ex.begin(), ex.end(), para_executed.begin() + d0);
++	std::copy(wr.begin(), wr.end(), last_writer.begin() + dst);
+ }
+ 
++void VroommMove(const Location &here) {
++	static const uint16_t root = ModuleId(ROOT_NAME);
++	if (here.module != root) return;
++	if (here.offset == VROOMM_MOVE_SETUP) { move_armed = true; return; }
++	if (here.offset != VROOMM_MOVE || !move_armed) return;
++	move_armed = false;
++	const uint32_t src = SegPhys(ds), dst = SegPhys(es), bytes = (uint32_t)(uint16_t)reg_cx * 2;
++	MoveOwnership(src, dst, bytes);
++	const uint32_t stub = ((uint32_t)mem_readw(SegPhys(ss) + (uint16_t)reg_sp) << 4) - ((uint32_t)load_seg << 4);
++	VroommRow("move", stub, 0, dst, "from=0x%05x bytes=%u", src, bytes);
++}
++
++/* A trap ends at the first instruction outside the root image: the overlay
++ * entry it made resident. DOSBox callbacks (F000h) do not end it. */
++void VroommProbe(const Location &here, const uint32_t linear) {
++	if (!trap.active) return;
++	static const uint16_t root = ModuleId(ROOT_NAME);
++	if (here.module == root && here.offset < ROOT_IMAGE_BYTES) return;
++	if (here.module == 0 && linear >= 0xf0000u) return;
++	trap.active = false;
++	VroommRow("enter", trap.stub, trap.entry, linear, "%s+0x%05x", modules[here.module].name.c_str(),
++	          here.offset);
++}
++
+ bool IsPoll(const Location &here) {
+ 	if (!here.module) return false;
+ 	if (poll_cache.size() <= here.module) poll_cache.resize(modules.size(), nullptr);
+@@ -733,12 +801,15 @@
+ 	if (prev_valid) edges.insert((prev_packed << 32) | packed);
+ 	prev_packed = packed;
+ 	prev_valid = true;
+-	PlinkProbe(linear, here);
++	VroommProbe(here, linear);
++	VroommMove(here);
+ 	if (probe_log && here.module && probe_offsets.count(here.offset))
+ 		for (const auto &pr : probes) {
+ 			if (pr.offset != here.offset || modules[here.module].name != pr.module) continue;
+ 			fprintf(probe_log, "%.6f,%s,", (double)PIC_FullIndex(), pr.name.c_str());
+ 			const uint32_t sp = SegPhys(ss) + (uint16_t)reg_esp;
++			const auto ret = Locate(((uint32_t)mem_readw(sp + 2) << 4) + mem_readw(sp));
++			fprintf(probe_log, "%s+0x%05x,", modules[ret.module].name.c_str(), ret.offset);
+ 			for (unsigned i = 0; i < pr.nargs; i++)
+ 				fprintf(probe_log, "%s%04x", i ? " " : "", (unsigned)mem_readw(sp + 4 + 2 * i));
+ 			fputc('\n', probe_log);
+@@ -800,7 +871,7 @@
+ 		KEYBOARD_AddKey(t.key, true);
+ 		key_held = t.key;
+ 		held_trigger_hits = 0;
+-		key_release_at = icount + key_hold;
++		key_release_at = icount + (t.hold ? t.hold : key_hold);
+ 		Event("key_down", "%s", t.name.c_str());
+ 	}
+ }
+@@ -810,7 +881,22 @@
+ 	const bool is_vga = address >= 0xa0000u && address < 0xc0000u;
+ 	const uint32_t para = address >> 4;
+ 	const bool code = write && para < PARAGRAPHS && para_executed[para];
+-	if (write && para < PARAGRAPHS && para_module[para]) {
++	if (write && vroomm && para < PARAGRAPHS && para_module[para]) {
++		static const uint16_t root = ModuleId(ROOT_NAME);
++		const auto at = Locate(address);
++		const int k = at.module == root ? StubAt(at.offset) : -1;
++		if (k >= 0)
++			VroommRow("stub_write", stubs[k].offset, at.offset - stubs[k].offset, address, "w%u", width);
++	}
++	/* Writes into the frames of the trap's callers (at or above SS:SP when
++	 * INT 3Fh was raised: the far return into the stub, then older frames):
++	 * the return addresses VROOMM patches. */
++	if (write && vroomm && trap.active && address >= trap.sp_linear &&
++	    address < trap.ss_linear + 0x10000u)
++		VroommRow("frame_write", trap.stub, trap.entry, address, "w%u above=0x%04x", width,
++		          address - trap.sp_linear);
++	static const uint64_t move_site = Pack(Location{ModuleId(ROOT_NAME), VROOMM_MOVE});
++	if (write && para < PARAGRAPHS && para_module[para] && Pack(CurrentLocation()) != move_site) {
+ 		const uint64_t w = WRITTEN | Pack(CurrentLocation());
+ 		for (uint32_t a = address; a < address + width && a < PARAGRAPHS * 16; ++a) last_writer[a] = w;
+ 	}
+@@ -852,7 +938,7 @@
+ 	if (software) last_int_source = source;
+ 	const uint16_t ax = software ? (uint16_t)reg_ax : 0;
+ 	++interrupts[std::make_tuple((uint8_t)num, (uint8_t)type, ax, source, Locate(target))];
+-	if (software && (num == 0x10 || num == 0x67 || num == 0x33 ||
++	if (software && (num == 0x10 || num == 0x67 || num == 0x33 || num == 0x3f ||
+ 	                 (num == 0x21 && (reg_ah == 0x25 || reg_ah == 0x35 || reg_ah == 0x48 ||
+ 	                                  reg_ah == 0x49 || reg_ah == 0x4a || reg_ah == 0x4b ||
+ 	                                  reg_ah == 0x4c || reg_ah == 0x44))))
+@@ -860,6 +946,19 @@
+ 		      reg_cx, reg_dx, SegValue(ds), SegValue(es));
+ 	if (!software && (num == 0x00 || num == 0x06))
+ 		Event("fault", "%02x", num);
++	if (software && num == 0x3f) {
++		static const uint16_t root = ModuleId(ROOT_NAME);
++		const int k = source.module == root ? StubAt(source.offset) : -1;
++		trap.active = true;
++		trap.stub = k >= 0 ? stubs[k].offset : 0;
++		trap.entry = k >= 0 ? source.offset - stubs[k].offset : source.offset;
++		/* the hook runs before the CPU pushes the interrupt frame */
++		trap.ss_linear = SegPhys(ss);
++		trap.sp_linear = SegPhys(ss) + (uint16_t)reg_sp;
++		VroommRow(k >= 0 ? "trap" : "trap_unknown", trap.stub, trap.entry,
++		          SegPhys(cs) + (uint16_t)oldeip, "%s+0x%05x", modules[source.module].name.c_str(),
++		          source.offset);
++	}
+ 	if (software && log_services && source.module) {
+ 		services.push_back(PendingService{SegPhys(cs) + (uint16_t)oldeip, (uint16_t)SegValue(ss),
+ 		                                  (uint16_t)reg_sp, (uint8_t)num});
+@@ -884,11 +983,25 @@
+         ++joystick_run.count;
+     }
+ 	if (opl && write && width == 1) {
+-		if (port == 0x388) opl_index = (uint8_t)value;
+-		else if (port == 0x389)
++		if (port == 0x388 || port == 0x220 || port == 0x228) opl_index = (uint8_t)value;
++		else if (port == 0x389 || port == 0x221 || port == 0x229)
+ 			fprintf(opl, "%.6f,0x%02x,0x%02x\n", (double)PIC_FullIndex(), opl_index,
+ 			        (unsigned)(value & 0xff));
+ 	}
++	if (sound && ((port >= 0x222 && port <= 0x227) || (port >= 0x22a && port <= 0x22f) ||
++	              port <= 0x0f || port == 0x83)) {
++		const auto at = CurrentLocation();
++		fprintf(sound, "%.6f,%s,0x%03x,0x%02x,%s,0x%05x\n", (double)PIC_FullIndex(),
++		        write ? "out" : "in", port, (unsigned)(value & 0xff), modules[at.module].name.c_str(),
++		        at.offset);
++	}
++	if (replay_ports && !write && ((port >= 0x40 && port <= 0x42) || port == 0x3da)) {
++		if (port_run.count && (port_run.service != service_events || port_run.port != port ||
++		                       port_run.value != value))
++			FlushPortRun();
++		if (!port_run.count) port_run = PortRun{service_events, (uint16_t)port, value, 0};
++		++port_run.count;
++	}
+ }
+ 
+ void WC2_DosOpen(const char *name, const bool ok, const uint16_t handle, const uint8_t mode) {
+@@ -910,8 +1023,19 @@
+ 	if (!swotl_active) return;
+ 	const auto it = files.find(handle);
+ 	const std::string name = it == files.end() ? "?" : it->second.name;
+-	if (IsCodeFile(name)) {
++	if (name == ROOT_NAME && file_pos < ROOT_HEADER_BYTES) {
++		/* the MZ header: data, not image bytes */
++		MapRange(buffer, actual, 0, 0);
++	} else if (name == ROOT_NAME) {
++		/* The root's own file: overlay code at its load-image offset. */
+ 		const uint16_t id = ModuleId(name);
++		const int32_t image_off = (int32_t)file_pos - (int32_t)ROOT_HEADER_BYTES;
++		++overlay_reads;
++		MapRange(buffer, actual, id, image_off);
++		VroommRow("read", trap.active ? trap.stub : 0, trap.active ? trap.entry : 0, buffer,
++		          "image=0x%05x got=%u trap=%d", (uint32_t)image_off, actual, trap.active);
++	} else if (IsCodeFile(name)) {
++		const uint16_t id = ModuleId(name);
+ 		if (file_pos == 0) modules[id].loads++;
+ 		++overlay_reads;
+ 		MapRange(buffer, actual, id, (int32_t)file_pos);
+@@ -942,7 +1066,7 @@
+ }
+ 
+ /* -time-limit (pic.cpp): the outputs while guest memory is still mapped; at
+- * exit it is gone (OverlayName reads the PLINK table). */
++ * exit it is gone. */
+ void WC2_TimeLimit() {
+ 	WriteOutputs();
+ }
