@@ -51,9 +51,9 @@ import wc2_model as M
 
 OUT = M.REPO / "tmp/sweep"
 UNKNOWN, START, BODY, TABLE, STUB = 0, 1, 2, 5, 6
-ROOT_CODE_END = M.SEG_TABLE - 0xC0      # 16B80h: the manager's data segment follows the code
-DRIVERS = {"TM.DRV": 0, "SUPERTM.DRV": 0, "STRAX.DRV": 1}  # file -> loaded container entry
-DRIVER_TABLE = {"TM.DRV": 22, "SUPERTM.DRV": 5, "STRAX.DRV": 12}  # entry-table words
+ROOT_CODE_END = M.ROOT_CODE_END
+DRIVERS = M.DRIVER_ENTRY
+DRIVER_TABLE = M.DRIVER_TABLE
 STARTUP = (0x244DC, 0x244F4)            # _INIT_ and _EXIT_ records (6 bytes; 0x244F4 is _EXIT_)
 PROLOGUES = (b"\x55\x8b\xec", b"\xc8")
 
@@ -70,31 +70,18 @@ class Unit:
         return self.lo <= off < self.hi
 
 
-def records(image: bytes) -> list[tuple[int, int, int]]:
-    """(link segment, size, flags) of every root segment record."""
-    return [struct.unpack_from("<HHH", image, a) for a in range(M.SEG_TABLE, M.SEG_TABLE_END, 8)]
-
-
-def driver_entry(data: bytes, index: int) -> tuple[int, int]:
-    """Origin container: dword file size, then dword offsets (high byte flags)."""
-    first = struct.unpack_from("<I", data, 4)[0] & 0xFFFFFF
-    n = first // 4 - 1
-    offs = [struct.unpack_from("<I", data, 4 + 4 * i)[0] & 0xFFFFFF for i in range(n)] + [len(data)]
-    return offs[index], offs[index + 1]
+records = M.records
+driver_entry = M.driver_entry
 
 
 class Program:
     def __init__(self) -> None:
         image = M.image_file()
         self.ovls = M.overlays()
-        stubs = {o.stub: o for o in self.ovls}
-        data = bytearray(image)
-        for o in self.ovls:
-            data[o.code:o.code + o.size] = M.overlay_code(o, 0, image=image, stubs=stubs)
-        self.data = {M.ROOT: bytes(data)}
-        self.stubs = stubs
+        self.data = {M.ROOT: M.program_image(ovls=self.ovls)}
+        self.stubs = {o.stub: o for o in self.ovls}
         self.recs = records(image)
-        self.code_segs = sorted({s for s, _, fl in self.recs if fl == 1 and s * 16 < ROOT_CODE_END})
+        self.code_segs = M.root_code_segs(image)
         _, rels, _ = M.mz(M.REF / M.ROOT)
         self.fixups = {M.ROOT: {s * 16 + o for o, s in rels} | {o.code + f for o in self.ovls for f in o.relocs}}
         self.units = {M.ROOT: Unit(M.ROOT, M.ROOT, 0, ROOT_CODE_END, "root")}
@@ -175,6 +162,12 @@ class Sweep:
         self.searches: dict[tuple[str, int], tuple[int, int, int]] = {}
         self.data_ptrs: set[tuple[int, str, int]] = set()
         self.retf_funcs: set[tuple[str, int]] = set()
+        self.entries: dict[tuple[str, int], str] = {}  # annotations/entries.csv rows
+
+    def entry(self, u: Unit, off: int, why: str, cs: int | None = None) -> None:
+        """A seed the translator's descent (translator/cfg.py) does not find by itself."""
+        self.entries.setdefault((u.file, off), why)
+        self.seed(u, off, why, cs)
 
     def seed(self, u: Unit, off: int, why: str, cs: int | None = None) -> None:
         self.work.append((u, off, self.p.cs_of(u, off) if cs is None else cs, why))
@@ -238,7 +231,7 @@ class Sweep:
                     self.pending.append((u, off, cs, i))
                 if i.mnemonic == "loop":
                     self.search_loop(u, off, cs, i)
-                if i.mnemonic == "jmp":
+                if i.mnemonic in ("jmp", "ljmp"):  # an indirect far jump ends the flow too
                     return
             elif i.mnemonic == "int" and ops and ops[0].imm == 0x3F:
                 self.conflicts.append((f, off, f"INT 3Fh in code ({why})"))
@@ -363,7 +356,7 @@ class Sweep:
                 if t.kind == "root" and not any(self.p.data[t.file].startswith(p, to) for p in PROLOGUES):
                     continue
                 self.code_ptrs.add((f, at - 3, t.file, to))
-                self.seed(t, to, f"far pointer {f}+{at - 3:X}", cs)
+                self.entry(t, to, f"far pointer {f}+{at - 3:X}", cs)
                 new = True
         return new
 
@@ -381,7 +374,7 @@ class Sweep:
                     continue
                 if (f, nxt) not in self.retf_funcs:
                     self.retf_funcs.add((f, nxt))
-                    self.seed(u, nxt, f"after retf {f}+{at:X}")
+                    self.entry(u, nxt, f"after retf {f}+{at:X}")
                     new = True
         return new
 
@@ -402,7 +395,7 @@ def static_seeds(sw: Sweep, prog: Program) -> None:
         else:
             t, to, tcs = root, off, 0
         if t:
-            sw.seed(t, to, f"startup table {a:X}", tcs)
+            sw.entry(t, to, f"startup table {a:X}", tcs)
     # far pointers in the root's data: a relocated segment word after an offset word
     _, rels, _ = M.mz(M.REF / M.ROOT)
     for o, sg in rels:
@@ -415,14 +408,14 @@ def static_seeds(sw: Sweep, prog: Program) -> None:
         if t is None or (t.kind == "root" and not any(data.startswith(p, to) for p in PROLOGUES)):
             continue
         sw.data_ptrs.add((a - 2, t.file, to))
-        sw.seed(t, to, f"far pointer in data {a - 2:X}", tcs)
+        sw.entry(t, to, f"far pointer in data {a - 2:X}", tcs)
     for f, n in DRIVER_TABLE.items():
         u = prog.units[f]
         d = prog.data[f]
         for k in range(1, n):
             w, = struct.unpack_from("<H", d, u.lo + 2 * k)
             if w and u.has(u.lo + w):
-                sw.seed(u, u.lo + w, f"{f} entry table {k}", 0)
+                sw.entry(u, u.lo + w, f"{f} entry table {k}", 0)
 
 
 def main() -> int:
@@ -446,7 +439,7 @@ def main() -> int:
     for tm, to in sorted(handlers):
         u = prog.unit_at(tm, to)
         if u:
-            sw.seed(u, to, "interrupt handler")
+            sw.entry(u, to, "interrupt handler")
     sw.run()
     targets: dict[tuple[str, int], set[tuple[str, int]]] = defaultdict(set)
     while True:
@@ -524,6 +517,13 @@ def main() -> int:
                      " ".join(f"{mod}+0x{t:05x}" for t in sorted(set(table))),
                      " ".join(f"{tm}+0x{to:05x}" + (" (isr)" if (tm, to) in hw else "")
                               for tm, to in ts)])
+    paths = [OUT / "entries.csv"] + ([M.REPO / "annotations/entries.csv"] if args.annotations else [])
+    for path in paths:
+        with path.open("w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["module", "offset", "reason"])
+            for (mod, off), why in sorted(sw.entries.items()):
+                w.writerow([mod, f"0x{off:05x}", why])
     paths = [OUT / "indirect.csv"] + ([M.REPO / "annotations/indirect.csv"] if args.annotations else [])
     for path in paths:
         with path.open("w", newline="") as fh:

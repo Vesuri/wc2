@@ -12,7 +12,8 @@ sys.path.insert(0, str(REPO / "tools"))
 import wc2_model as M  # noqa: E402
 
 ANNOTATIONS = REPO / "annotations"
-SCOPE = M.SCOPE
+SCOPE = M.SCOPE            # generated as 68020 code
+X86_SCOPE = M.X86_SCOPE    # decoded and lifted (gate 3)
 
 
 def load(ref: Path = M.REF) -> dict[str, M.Module]:
@@ -42,12 +43,13 @@ def smc_forms() -> dict[tuple[str, int, int], list[str]]:
     return out
 
 
-def runtime_bytes(traces: list[Path]) -> dict[str, bytes]:
+def runtime_bytes(traces: list[Path], scope: list[str] | None = None) -> dict[str, bytes]:
     """Module images as found in the first snapshot holding each self-modified region."""
+    scope = SCOPE if scope is None else scope
     out = {}
     mods = load()
     for name, spans in smc_regions().items():
-        if name not in SCOPE:       # its regions wait until the module is in scope
+        if name not in scope:       # its regions wait until the module is in scope
             continue
         for t in traces:
             for snap in sorted(t.glob("snap-*")):

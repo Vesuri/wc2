@@ -132,7 +132,7 @@ Mouse event handlers (INT 33h AX=000Ch/0014h/0018h): none.
 | out | 3C9h | TM.DRV+02DE2×123570, TM.DRV+02DE7×123570, TM.DRV+02DEC×123570, WC2.EXE+11202×3072, WC2.EXE+11207×3072 (+1) |
 | in | 3DAh | WC2.EXE+14868×36852, WC2.EXE+1486D×159111830 |
 
-Static in/out sites 62 (DERIVED), traced 44; never traced: WC2.EXE+02F63 in dx, WC2.EXE+02F68 in dx, WC2.EXE+02F74 in dx, WC2.EXE+02F79 in dx, WC2.EXE+02F82 in dx, WC2.EXE+02F87 in dx, WC2.EXE+0FE1D in 60h, WC2.EXE+0FE21 in 61h, WC2.EXE+0FE27 out 61h, WC2.EXE+0FE2B out 61h, WC2.EXE+0FE8A out 20h, WC2.EXE+14FE4 out dx, WC2.EXE+14FE5 in dx, WC2.EXE+14FF5 in dx, WC2.EXE+14FFD out dx, WC2.EXE+15002 in dx, WC2.EXE+1500E in dx, WC2.EXE+561A2 out dx.
+Static in/out sites 57 (DERIVED), traced 44; never traced: WC2.EXE+02F63 in dx, WC2.EXE+02F68 in dx, WC2.EXE+02F74 in dx, WC2.EXE+02F79 in dx, WC2.EXE+02F82 in dx, WC2.EXE+02F87 in dx, WC2.EXE+14FE4 out dx, WC2.EXE+14FE5 in dx, WC2.EXE+14FF5 in dx, WC2.EXE+14FFD out dx, WC2.EXE+15002 in dx, WC2.EXE+1500E in dx, WC2.EXE+561A2 out dx.
 
 ## Timer (MEASURED)
 
@@ -283,7 +283,7 @@ Entries are the entry-table indices whose address a far call from outside the dr
 
 | Module | Starts | Executed | Mnemonics | 80186+ starts (executed) | Rejected by translator/decode.py (executed) |
 |---|---|---|---|---|---|
-| WC2.EXE | 106756 | 55015 | 83 | 6175 (3052) | 6175 (3052) |
+| WC2.EXE | 106687 | 55015 | 83 | 6175 (3052) | 0 (0) |
 | TM.DRV | 2378 | 1180 | 53 | 0 (0) | 0 (0) |
 | SUPERTM.DRV | 6743 | 5738 | 53 | 0 (0) | 0 (0) |
 | STRAX.DRV | 1391 | 1252 | 45 | 0 (0) | 0 (0) |
@@ -296,4 +296,4 @@ Entries are the entry-table indices whose address a far call from outside the dr
 | WC2.EXE | C1h | shift r/m16, imm8 | 541 | 323 |
 | WC2.EXE | C9h | leave | 472 | 325 |
 
-Decoder rejections by reason, starts (executed): opcode 6A: 3058 (1437); opcode 68: 2098 (961); opcode C1: 541 (323); opcode C9: 472 (325); opcode C0: 6 (6).
+Decoder rejections by reason, starts (executed): none.

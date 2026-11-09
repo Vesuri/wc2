@@ -44,7 +44,7 @@ from translator.sem import lift  # noqa: E402
 RAM = 0x120000
 REGS = ("ax", "bx", "cx", "dx", "sp", "bp", "si", "di")
 SEGS = ("es", "cs", "ss", "ds")
-UNSUPPORTED = {0x0F, *range(0x60, 0x70), 0x9B, 0xC0, 0xC1, 0xC8, 0xC9, 0xD6, *range(0xD8, 0xE0),
+UNSUPPORTED = {0x0F, *range(0x60, 0x68), 0x6C, 0x6D, 0x6E, 0x6F, 0x9B, 0xD6, *range(0xD8, 0xE0),
                0xF0, 0xF1, 0xF4}  # + HLT: Unicorn stops on it
 
 
@@ -547,6 +547,50 @@ def boundary(h: Harness) -> None:
     stack_run_cases(h)
     long_conditional_cases(h)
     far_return_cases(h)
+    i186_cases(h)
+
+
+def i186_cases(h):
+    """The 80186 forms of translator/decode.py (X-Wing `3dea12a`; WC2 uses push imm, shifts
+    by an immediate and leave, docs/external-surface.md): shifts and rotates by an
+    immediate (counts around the widths and the 5-bit mask, register and memory), push
+    imm, three-operand imul at the sign and overflow edges, enter over sizes, nesting
+    levels (masked to 5 bits) and SP/BP wrap, leave at BP wrap."""
+    rng = h.rng
+    for w, opc in ((8, 0xC0), (16, 0xC1)):
+        for reg in range(8):
+            if reg == 6:
+                continue
+            for n in (0, 1, 2, 7, 8, 9, 15, 16, 17, 18, 31, 32, 33, 255):
+                for modrm in (0xC0 | reg << 3 | 3, reg << 3 | 7):
+                    for _ in range(2):
+                        h.case(bytes([opc, modrm, n]), f"b:shiftimm{w}/{reg}")
+    edges = (0, 1, 0x7F, 0x80, 0xFF, 0x100, 0x7FFF, 0x8000, 0x8001, 0xFFFF)
+    for x in edges:
+        for imm in (0, 1, 2, 0x7F, 0x80, 0xFF, 0x7FFF, 0x8000, 0xFFFF):
+            if imm <= 0xFF:
+                h.case(bytes([0x6B, 0xC3, imm]), "b:imul3/6b", overrides={"regs": {"bx": x}})
+                h.case(bytes([0x6B, 0xDB, imm]), "b:imul3/6b-same", overrides={"regs": {"bx": x}})
+            h.case(bytes([0x69, 0xC3]) + imm.to_bytes(2, "little"), "b:imul3/69",
+                   overrides={"regs": {"bx": x}})
+            h.case(bytes([0x69, 0x07]) + imm.to_bytes(2, "little"), "b:imul3/69-mem",
+                   overrides={"regs": {"bx": 0x100, "ds": 0x5000},
+                              "mem": [(0x50100, x.to_bytes(2, "little"))]})
+    for code in (b"\x6a\x00", b"\x6a\x7f", b"\x6a\x80", b"\x6a\xff", b"\x68\x34\x12",
+                 b"\x68\x00\x80"):
+        for sp in (0, 1, 2, 3, 0x100, 0xFFFE, 0xFFFF):
+            h.case(code, f"b:pushimm{code.hex()}", overrides={"regs": {"sp": sp}})
+    for size in (0, 2, 0x11, 0x100, 0xFFFF):
+        for level in (0, 1, 2, 3, 31, 32, 33, 0xFF):
+            for sp in (0, 1, 2, 0x40, 0x1000, 0xFFFE, 0xFFFF):
+                for bp in (0, 1, 0x20, 0x1000, 0xFFFE, 0xFFFF):
+                    if level > 3 and rng.random() < 0.8:
+                        continue
+                    h.case(bytes([0xC8]) + size.to_bytes(2, "little") + bytes([level]),
+                           "b:enter", overrides={"regs": {"sp": sp, "bp": bp}})
+    for bp in (0, 1, 2, 0x100, 0xFFFD, 0xFFFE, 0xFFFF):
+        for _ in range(4):
+            h.case(b"\xc9", "b:leave", overrides={"regs": {"bp": bp}})
 
 
 def string_compare_cases(h):
@@ -1764,7 +1808,7 @@ def run(argv: list[str] | None = None, quiet: bool = False, harness=None) -> Har
     only = set(args.only.split(",")) if args.only else {"forms", "space", "boundary", "blocks"}
     h = (harness or Harness)(args.seed)
     mods = image.load()
-    units = cfg.build(mods)
+    units = cfg.build(mods, image.X86_SCOPE)
     if "forms" in only:
         forms = defaultdict(list)
         for name, u in units.items():

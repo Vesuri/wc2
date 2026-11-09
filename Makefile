@@ -33,7 +33,7 @@ help:
 	@echo "  make gen                translate the in-scope modules -> build/gen (none before P1.4)"
 	@echo "  make gen-check          G1: headers, digests and byte-identical regeneration of build/gen"
 	@echo "  make lint               G2: no guest-address names in hand-written code"
-	@echo "  make test               lint, decoder, x86/68020 differentials (space, boundary), guards, gen-check"
+	@echo "  make test               lint, decoder, x86 (forms, blocks, space, boundary) and 68020 (space, boundary) differentials, guards, gen-check"
 	@echo "  make test-sabotage      planted faults must fail the x86 and 68020 differentials"
 	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/swotl.elf"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
@@ -114,10 +114,12 @@ lint:
 test-decode:
 	$(PYTHON) tests/test_decode.py
 
-# The "forms" and "blocks" corpora come from the game's code: empty until P2.
+# The "forms" and "blocks" corpora come from the game's code (image.X86_SCOPE, gate 3);
+# the 68020 side has no module in scope until P4.
+X86_CORPORA ?= forms,space,boundary,blocks
 CORPORA ?= space,boundary
 test-x86:
-	$(PYTHON) tests/x86_diff.py --only $(CORPORA)
+	$(PYTHON) tests/x86_diff.py --only $(X86_CORPORA)
 
 test-m68k:
 	$(PYTHON) tests/m68k_diff.py --only $(CORPORA)
@@ -130,6 +132,8 @@ test-guards: gen
 JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc)
 RUN = @mkdir -p tmp/test; if $(2) > tmp/test/$(1).log 2>&1; then echo "ok    $(1)"; \
 	else echo "FAIL  $(1) (tmp/test/$(1).log)"; tail -n 15 tmp/test/$(1).log; exit 1; fi
+X86_SHARDS = forms.0/8 forms.1/8 forms.2/8 forms.3/8 forms.4/8 forms.5/8 forms.6/8 forms.7/8 \
+	blocks.0/2 blocks.1/2 space.0/1 boundary.0/1
 SHARDS = space.0/1 boundary.0/1
 # Unit tests (docs/upstream.md lists the deferred ones); test_load_image needs ref/.
 UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_boundary \
@@ -141,7 +145,7 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_jump_fusion test_key_release test_m68k_assembly test_next_branch \
 	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
 	test_rep_replay test_replay_chords test_replay_events test_smc_flow
-TESTS = t-lint t-decode t-guards $(subst /,-of-,$(SHARDS:%=t-x86-%)) $(subst /,-of-,$(SHARDS:%=t-m68k-%)) \
+TESTS = t-lint t-decode t-guards $(subst /,-of-,$(X86_SHARDS:%=t-x86-%)) $(subst /,-of-,$(SHARDS:%=t-m68k-%)) \
 	$(UNIT_TESTS:%=t-unit-%)
 
 test: gen-check

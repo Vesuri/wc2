@@ -20,7 +20,7 @@ strings, D15 memory, D16 self-modified code, D10 sound at the end); speed-plan
 |---|---|
 | `translator/image.py` | proved root/overlay images (`tools/swotl_model.py`), annotations, run-time bytes of self-modified regions |
 | `translator/decode.py` | own table-driven 8086 decoder; 186+/FPU opcodes raise (none in SWOTL) |
-| `translator/cfg.py` | recursive descent from `annotations/` seeds; CS along flow; PLINK manager calls and parent chain; self-modified regions recorded, not decoded |
+| `translator/cfg.py` | recursive descent from `annotations/` seeds over a scope of modules; CS along flow; self-modified regions recorded, not decoded, each listed form's successors followed. WC2 (port-plan P3): code ranges root, overlays and driver entries, stub entries as seeds and as far targets, `noreturn.csv`; `image.X86_SCOPE` is decoded and lifted, `image.SCOPE` generated |
 | `translator/ir.py`, `sem.py` | IR ops; lifting of every decoded instruction |
 | `translator/interp.py` | host IR interpreter (the semantics under test) |
 | `translator/gen.py` | `make gen`: `build/gen/<module>.ir` with hash header; coverage report (G6); sizes the R8 alignment pads by assembling the program (vasm) |

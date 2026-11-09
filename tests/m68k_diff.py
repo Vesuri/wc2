@@ -321,6 +321,19 @@ def unruns(rs: list) -> dict:
     return {a + k: v for a, d in rs for k, v in enumerate(d)}
 
 
+I186 = {0x68, 0x69, 0x6A, 0x6B, 0xC0, 0xC1, 0xC8, 0xC9}
+
+
+def i186_form(i) -> bool:
+    """An 80186 form of translator/decode.py (X-Wing 3dea12a). SWOTL's lowering has none:
+    it lowers some of them wrongly instead of stopping (a shift by an immediate as a shift
+    by one), so the 68020 side compares none until port-plan P4 brings X-Wing's ec4a238."""
+    k = 0
+    while i.raw[k] in (0x26, 0x2E, 0x36, 0x3E, 0xF2, 0xF3):
+        k += 1
+    return i.raw[k] in I186
+
+
 class Harness(X.Harness):
     recording = False   # --record
     keep_failing = True     # keep the source and image of a batch with mismatches
@@ -387,6 +400,9 @@ class Harness(X.Harness):
             insns.append(i)
             k += i.size
             at = i.next_ip
+        if any(map(i186_form, insns)):
+            self.skipped["80186 form (lowered in port-plan P4)"] += 1
+            return
         tag = f"c{len(self.pending)}"
         try:
             text, st = lower_case(insns, cs, tag, insns[-1].next_ip)

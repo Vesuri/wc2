@@ -1,1 +1,175 @@
 module,offset,reason
+STRAX.DRV,0x00764,STRAX.DRV entry table 1
+STRAX.DRV,0x0076a,STRAX.DRV entry table 2
+STRAX.DRV,0x007bc,STRAX.DRV entry table 9
+STRAX.DRV,0x007ca,STRAX.DRV entry table 10
+STRAX.DRV,0x007d1,STRAX.DRV entry table 11
+STRAX.DRV,0x00826,after retf STRAX.DRV+823
+STRAX.DRV,0x00856,STRAX.DRV entry table 3
+STRAX.DRV,0x00c2a,STRAX.DRV entry table 5
+STRAX.DRV,0x00f52,STRAX.DRV entry table 7
+STRAX.DRV,0x0103e,STRAX.DRV entry table 6
+STRAX.DRV,0x01189,STRAX.DRV entry table 8
+STRAX.DRV,0x012ba,STRAX.DRV entry table 4
+SUPERTM.DRV,0x014f8,SUPERTM.DRV entry table 3
+SUPERTM.DRV,0x0153e,SUPERTM.DRV entry table 2
+SUPERTM.DRV,0x015f5,SUPERTM.DRV entry table 1
+SUPERTM.DRV,0x07460,SUPERTM.DRV entry table 4
+TM.DRV,0x00e92,TM.DRV entry table 16
+TM.DRV,0x00e93,TM.DRV entry table 7
+TM.DRV,0x014ad,TM.DRV entry table 8
+TM.DRV,0x01643,TM.DRV entry table 9
+TM.DRV,0x017d9,TM.DRV entry table 10
+TM.DRV,0x0193c,TM.DRV entry table 12
+TM.DRV,0x0199c,TM.DRV entry table 11
+TM.DRV,0x01a44,TM.DRV entry table 13
+TM.DRV,0x01a96,TM.DRV entry table 14
+TM.DRV,0x01ad4,TM.DRV entry table 18
+TM.DRV,0x01b78,TM.DRV entry table 19
+TM.DRV,0x01cf4,TM.DRV entry table 15
+TM.DRV,0x022ff,TM.DRV entry table 20
+TM.DRV,0x02701,TM.DRV entry table 21
+TM.DRV,0x02c07,TM.DRV entry table 1
+TM.DRV,0x02d21,TM.DRV entry table 3
+TM.DRV,0x02d48,TM.DRV entry table 2
+TM.DRV,0x02d7b,TM.DRV entry table 4
+TM.DRV,0x02dcf,TM.DRV entry table 6
+TM.DRV,0x02df5,TM.DRV entry table 5
+WC2.EXE,0x00275,after retf WC2.EXE+274
+WC2.EXE,0x002ac,after retf WC2.EXE+2AB
+WC2.EXE,0x00357,after retf WC2.EXE+356
+WC2.EXE,0x00968,after retf WC2.EXE+967
+WC2.EXE,0x0098c,after retf WC2.EXE+98B
+WC2.EXE,0x00ac0,after retf WC2.EXE+ABF
+WC2.EXE,0x00b96,after retf WC2.EXE+B95
+WC2.EXE,0x00c53,after retf WC2.EXE+C52
+WC2.EXE,0x00d70,after retf WC2.EXE+D6F
+WC2.EXE,0x00d85,after retf WC2.EXE+D84
+WC2.EXE,0x00f0a,after retf WC2.EXE+F09
+WC2.EXE,0x01190,startup table 244E2
+WC2.EXE,0x012d9,after retf WC2.EXE+12D8
+WC2.EXE,0x0133a,after retf WC2.EXE+1339
+WC2.EXE,0x015ea,after retf WC2.EXE+15E9
+WC2.EXE,0x015f7,after retf WC2.EXE+15F6
+WC2.EXE,0x017a4,startup table 244E8
+WC2.EXE,0x01936,after retf WC2.EXE+1935
+WC2.EXE,0x01bc7,after retf WC2.EXE+1BC6
+WC2.EXE,0x01c8b,after retf WC2.EXE+1C8A
+WC2.EXE,0x01cb0,after retf WC2.EXE+1CAF
+WC2.EXE,0x01cd4,after retf WC2.EXE+1CD3
+WC2.EXE,0x01cef,after retf WC2.EXE+1CEE
+WC2.EXE,0x01d01,after retf WC2.EXE+1D00
+WC2.EXE,0x01d1c,after retf WC2.EXE+1D1B
+WC2.EXE,0x01d2e,after retf WC2.EXE+1D2D
+WC2.EXE,0x01d40,after retf WC2.EXE+1D3F
+WC2.EXE,0x01d52,after retf WC2.EXE+1D51
+WC2.EXE,0x01d64,after retf WC2.EXE+1D63
+WC2.EXE,0x01fb4,after retf WC2.EXE+1FB3
+WC2.EXE,0x03b46,startup table 244EE
+WC2.EXE,0x03ca6,after retf WC2.EXE+3CA5
+WC2.EXE,0x03dee,after retf WC2.EXE+3DED
+WC2.EXE,0x03e04,after retf WC2.EXE+3E03
+WC2.EXE,0x042fa,after retf WC2.EXE+42F9
+WC2.EXE,0x05b66,far pointer in data 16C4E
+WC2.EXE,0x063d1,after retf WC2.EXE+63D0
+WC2.EXE,0x066af,after retf WC2.EXE+66AE
+WC2.EXE,0x066d0,after retf WC2.EXE+66CF
+WC2.EXE,0x0672d,after retf WC2.EXE+672C
+WC2.EXE,0x06f0d,after retf WC2.EXE+6F0C
+WC2.EXE,0x06f29,after retf WC2.EXE+6F28
+WC2.EXE,0x06f3f,interrupt handler
+WC2.EXE,0x0792e,after retf WC2.EXE+792D
+WC2.EXE,0x07f08,after retf WC2.EXE+7F07
+WC2.EXE,0x0c234,after retf WC2.EXE+C233
+WC2.EXE,0x0c5b5,after retf WC2.EXE+C5B4
+WC2.EXE,0x0f2ac,startup table 244F4
+WC2.EXE,0x0f606,far pointer in data 16B82
+WC2.EXE,0x0f9fd,startup table 244DC
+WC2.EXE,0x0fd09,far pointer in data 23A72
+WC2.EXE,0x0fd10,interrupt handler
+WC2.EXE,0x0fd93,interrupt handler
+WC2.EXE,0x10100,far pointer in data 16CF6
+WC2.EXE,0x1036b,after retf WC2.EXE+1036A
+WC2.EXE,0x10470,far pointer in data 16D16
+WC2.EXE,0x10597,after retf WC2.EXE+10596
+WC2.EXE,0x1066c,far pointer in data 16D46
+WC2.EXE,0x10785,after retf WC2.EXE+10782
+WC2.EXE,0x10851,after retf WC2.EXE+10850
+WC2.EXE,0x10a25,after retf WC2.EXE+10A22
+WC2.EXE,0x10a9e,after retf WC2.EXE+10A9B
+WC2.EXE,0x10e64,after retf WC2.EXE+10E61
+WC2.EXE,0x110fe,after retf WC2.EXE+110FD
+WC2.EXE,0x11257,after retf WC2.EXE+11254
+WC2.EXE,0x1129e,after retf WC2.EXE+1129D
+WC2.EXE,0x112a3,after retf WC2.EXE+112A2
+WC2.EXE,0x112d4,after retf WC2.EXE+112D3
+WC2.EXE,0x116ca,far pointer in data 16DDE
+WC2.EXE,0x11832,far pointer in data 16DF6
+WC2.EXE,0x123f4,after retf WC2.EXE+123F3
+WC2.EXE,0x126d5,after retf WC2.EXE+126D4
+WC2.EXE,0x12ab4,after retf WC2.EXE+12AB3
+WC2.EXE,0x12b75,after retf WC2.EXE+12B74
+WC2.EXE,0x12c14,after retf WC2.EXE+12C13
+WC2.EXE,0x13aad,after retf WC2.EXE+13AAC
+WC2.EXE,0x13bb6,far pointer in data 16E3E
+WC2.EXE,0x13c26,far pointer in data 23FC7
+WC2.EXE,0x13eb0,far pointer in data 16E66
+WC2.EXE,0x142f7,after retf WC2.EXE+142F6
+WC2.EXE,0x14364,after retf WC2.EXE+14363
+WC2.EXE,0x14429,after retf WC2.EXE+14428
+WC2.EXE,0x14874,far pointer in data 16EBE
+WC2.EXE,0x148e0,interrupt handler
+WC2.EXE,0x149cc,after retf WC2.EXE+149CB
+WC2.EXE,0x14cf3,after retf WC2.EXE+14CF2
+WC2.EXE,0x150eb,after retf WC2.EXE+150E8
+WC2.EXE,0x1665f,after retf WC2.EXE+1665E
+WC2.EXE,0x168ac,after retf WC2.EXE+168AB
+WC2.EXE,0x16a51,after retf WC2.EXE+16A50
+WC2.EXE,0x40117,far pointer in data 226BA
+WC2.EXE,0x4016b,far pointer in data 22646
+WC2.EXE,0x40216,far pointer in data 2269E
+WC2.EXE,0x4022a,far pointer in data 22622
+WC2.EXE,0x4023e,far pointer in data 226BE
+WC2.EXE,0x40252,far pointer in data 2266A
+WC2.EXE,0x40266,far pointer in data 22626
+WC2.EXE,0x4027a,far pointer in data 22632
+WC2.EXE,0x402f9,far pointer in data 22636
+WC2.EXE,0x40392,far pointer in data 2263A
+WC2.EXE,0x40530,far pointer in data 2263E
+WC2.EXE,0x405d0,far pointer in data 22642
+WC2.EXE,0x4062c,far pointer in data 2265E
+WC2.EXE,0x40662,far pointer in data 22662
+WC2.EXE,0x40706,far pointer in data 2264A
+WC2.EXE,0x40753,far pointer in data 2264E
+WC2.EXE,0x407a3,far pointer in data 22652
+WC2.EXE,0x40884,far pointer in data 226AE
+WC2.EXE,0x4091a,far pointer in data 22656
+WC2.EXE,0x4097a,far pointer in data 2266E
+WC2.EXE,0x409da,far pointer in data 22676
+WC2.EXE,0x40a8b,far pointer in data 2267A
+WC2.EXE,0x40ad5,far pointer in data 226B2
+WC2.EXE,0x40b63,far pointer in data 226CE
+WC2.EXE,0x40b9e,far pointer in data 22682
+WC2.EXE,0x40bb2,far pointer in data 226CA
+WC2.EXE,0x40c35,far pointer in data 2262A
+WC2.EXE,0x40c7b,far pointer in data 226B6
+WC2.EXE,0x40cf6,far pointer in data 22686
+WC2.EXE,0x40d66,far pointer in data 226D2
+WC2.EXE,0x40d8d,far pointer in data 226A2
+WC2.EXE,0x40e11,far pointer in data 2265A
+WC2.EXE,0x40e55,far pointer in data 2268E
+WC2.EXE,0x40e81,far pointer in data 22692
+WC2.EXE,0x40f0d,far pointer in data 22696
+WC2.EXE,0x40f2c,far pointer in data 226A6
+WC2.EXE,0x4106f,far pointer in data 22672
+WC2.EXE,0x41083,far pointer in data 2269A
+WC2.EXE,0x41097,far pointer in data 226AA
+WC2.EXE,0x41121,far pointer in data 2261A
+WC2.EXE,0x411f5,far pointer in data 226C2
+WC2.EXE,0x4120b,far pointer in data 2267E
+WC2.EXE,0x4121f,far pointer in data 22666
+WC2.EXE,0x4122e,far pointer in data 2261E
+WC2.EXE,0x41242,far pointer in data 226C6
+WC2.EXE,0x41287,far pointer in data 22616
+WC2.EXE,0x4128c,far pointer in data 226D6
+WC2.EXE,0x49130,far pointer in data 22B3C

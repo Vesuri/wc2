@@ -3,8 +3,10 @@
 Adapted from Secret Weapons of Luftwaffe's tools/swotl_model.py (docs/upstream.md). The
 generic parts (Module, MZ reader, trace readers) are SWOTL's. Port-plan P1.4 proves the
 image (WC2.EXE, its VROOMM overlays and drivers, from tools/bc_exe.py) with the loader
-model below. The scope stays empty until P2 brings modules; until then the translator
-has no module to translate and the differentials run on their synthetic corpora only.
+model below. Two scopes: X86_SCOPE, the modules the decoder and the IR are proved on
+(gate 3: tests/test_decode.py against the sweep, tests/x86_diff.py's forms and blocks),
+and SCOPE, the modules generated as 68020 code (empty until P4 lowers the 80186 forms and
+WC2's start-up self-modification).
 
 Module address = module offset: root = MZ load-image offset. Link linear address =
 link segment * 16 + offset, before relocation by the load segment.
@@ -23,7 +25,8 @@ RUNS = REPO / "tmp/pc-runs"
 ROOT = "WC2.EXE"
 OVL_TABLE = 0  # SWOTL's PLINK table; WC2's VROOMM model replaces it (P2.1, P4.2)
 MANAGER = (None, None)  # SWOTL's PLINK manager entry; no WC2 equivalent
-SCOPE: list[str] = []  # P3: the decoder needs the 80186 forms first (P2 maps only)
+SCOPE: list[str] = []  # 68020 generation: P4 (port-plan)
+X86_SCOPE = [ROOT, "TM.DRV", "SUPERTM.DRV", "STRAX.DRV"]  # decode and IR: P3
 OUT_OF_SCOPE: list[str] = []
 
 
@@ -163,6 +166,10 @@ SEG_TABLE = MGR_DATA + 0xC0  # root: 8-byte segment records, word 0 = link segme
 SEG_TABLE_END = MGR_DATA + 0x840
 OVRBUFFER = 0x19760 + 0xAC   # root data (link segment 1976h): the buffer size in paragraphs
 DRIVERS = ("TM.DRV", "SUPERTM.DRV", "STRAX.DRV")  # GAMEDAT; read whole, not relocated
+DRIVER_ENTRY = {"TM.DRV": 0, "SUPERTM.DRV": 0, "STRAX.DRV": 1}  # the loaded container entry
+DRIVER_TABLE = {"TM.DRV": 22, "SUPERTM.DRV": 5, "STRAX.DRV": 12}  # entry-table words
+ROOT_CODE_END = MGR_DATA  # 16B80h: the manager's data segment follows the root code
+STUBS = (0x173D0, 0x19760)  # image range of the stub segments (link 173Dh..1975h)
 
 
 @dataclass
@@ -260,11 +267,78 @@ def far_pointer_form(code: bytes, f: int) -> bool:
             code[f + 3] == 0xB8 | r and code[f + 6] == 0x50 | r)
 
 
+def records(image: bytes) -> list[tuple[int, int, int]]:
+    """(link segment, size, flags) of every root segment record."""
+    return [struct.unpack_from("<HHH", image, a) for a in range(SEG_TABLE, SEG_TABLE_END, 8)]
+
+
+def root_code_segs(image: bytes) -> list[int]:
+    """Link segments of the root's code (segment records with flags 1 below the
+    manager's data); a root instruction runs with the highest one at or below it."""
+    return sorted({s for s, _, fl in records(image) if fl == 1 and s * 16 < ROOT_CODE_END})
+
+
+def driver_entry(data: bytes, index: int) -> tuple[int, int]:
+    """Origin container: dword file size, then dword offsets (high byte flags)."""
+    first = struct.unpack_from("<I", data, 4)[0] & 0xFFFFFF
+    n = first // 4 - 1
+    offs = [struct.unpack_from("<I", data, 4 + 4 * i)[0] & 0xFFFFFF for i in range(n)] + [len(data)]
+    return offs[index], offs[index + 1]
+
+
+def program_image(ref: Path = REF, ovls: list[Overlay] | None = None) -> bytes:
+    """WC2.EXE's image with every overlay's code relocated at load segment 0: segment
+    words are link segments (the sweep's and the translator's bytes)."""
+    image = image_file(ref)
+    ovls = ovls if ovls is not None else overlays(ref)
+    stubs = {o.stub: o for o in ovls}
+    data = bytearray(image)
+    for o in ovls:
+        data[o.code:o.code + o.size] = overlay_code(o, 0, image=image, stubs=stubs)
+    return bytes(data)
+
+
+@dataclass
+class CodeRange:
+    """Bytes that run with one CS rule: the root (CS = the highest root code segment
+    at or below), an overlay or a driver entry (CS = `base`, IP 0 at `lo`)."""
+    name: str                   # WC2.EXE, O173D (the overlay's stub segment), TM.DRV
+    module: str
+    lo: int
+    hi: int
+    base: int | None            # CS link paragraph; None for the root's segment rule
+
+    def has(self, off: int) -> bool:
+        return self.lo <= off < self.hi
+
+
+def code_ranges(ref: Path = REF, ovls: list[Overlay] | None = None) -> list[CodeRange]:
+    """The root, the 124 overlays and the three loaded driver entries. An overlay runs
+    at a run-time buffer segment (docs/vroomm.md); its CS here is the paragraph of its
+    image offset (all are paragraph-aligned, MEASURED), so IP 0 is its first byte."""
+    ovls = ovls if ovls is not None else overlays(ref)
+    out = [CodeRange(ROOT, ROOT, 0, ROOT_CODE_END, None)]
+    for o in ovls:
+        assert o.code % 16 == 0, f"overlay {o.stub:05X} code not paragraph-aligned"
+        out.append(CodeRange(f"O{o.stub // 16:04X}", ROOT, o.code, o.code + o.size, o.code >> 4))
+    for f, index in DRIVER_ENTRY.items():
+        lo, hi = driver_entry((ref / "GAMEDAT" / f).read_bytes(), index)
+        out.append(CodeRange(f, f, lo, hi, 0))
+    return out
+
+
 def load_modules(ref: Path = REF) -> dict[str, Module]:
-    """The in-scope modules for the translator: none until the sweep (port-plan
-    P2.3); the loader model above is the image proof's (P1.4)."""
-    assert not SCOPE, "WC2 translator modules come with port-plan P2"
-    return {}
+    """WC2.EXE (root and overlays in one image, overlays relocated at load segment 0;
+    link address = image offset) and the drivers (the whole file; link address =
+    offset - the loaded entry's start, so CS 0 runs IP 0 at the entry)."""
+    ovls = overlays(ref)
+    _, rels, _ = mz(ref / ROOT)
+    out = {ROOT: Module(ROOT, program_image(ref, ovls), 0, 0,
+                        sorted({s * 16 + o for o, s in rels} | {o.code + f for o in ovls for f in o.relocs}))}
+    for f, index in DRIVER_ENTRY.items():
+        raw = (ref / "GAMEDAT" / f).read_bytes()
+        out[f] = Module(f, raw, driver_entry(raw, index)[0], 0)
+    return out
 
 
 def entry(ref: Path = REF) -> int:

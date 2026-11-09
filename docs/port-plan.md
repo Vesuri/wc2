@@ -218,45 +218,42 @@ can run beside stream A (reference and map, P1–P2) once P0 is in.
 
 ### P3. x86 semantics for 80186 (gate 3)
 
-Start from X-Wing's translator, not from SWOTL's again (owner's direction, 2026-11-09):
-X-Wing took SWOTL's translator through P3–P6 for its own Borland 80186 code (`3dea12a` P3,
-80186 forms in `decode.py` and `sem.py`, boundary cases and sabotage plants; `ec4a238` P4,
-the 68020 lowering of those forms; far dispatch for overlays sharing a target, driver
-tables). Bring its `translator/` and tests over, log them in `docs/upstream.md` as
-from X-Wing, and redo here only what WC2's VROOMM overlays and drivers need. Neither
-translator lowers WC2's start-up self-modification (`annotations/self-modifying.csv`: an
-`imm8` operand and a `ja`/`jb` pair at `WC2.EXE+1DC`, `+1ED`): it is new work here, and
-`make gen` stops on it once `WC2.EXE` is in scope.
+Done from X-Wing's translator, not from SWOTL's again (owner's direction, 2026-11-09):
+X-Wing `3dea12a` added the 80186 forms to SWOTL's `decode.py` and `sem.py`, with
+boundary cases and sabotage plants; `docs/upstream.md` lists what came over.
 
-1. `decode.py`: `60`/`61` (`pusha`/`popa`), `62` (`bound`), `68`/`6A`, `69`/`6B` (a three-operand form),
-   `6C`–`6F`, `C0`/`C1`, `C8`/`C9`. 286+ (`0F`) and FPU opcodes still raise, unless P2 proves a
-   startup probe.
-2. `sem.py`, `interp.py`:
-   - shifts by an immediate count masked to 5 bits, with count 0 a no-op (the 386
-     reference);
-   - three-operand `imul` (truncated product, CF = OF on overflow);
-   - `enter` (nesting levels) and `leave`;
-   - `pusha`/`popa`;
-   - `bound` (INT 5);
-   - `ins`/`outs` with REP.
-3. Corpora:
-   - "forms" from WC2's sweep, drivers included;
-   - boundary cases for counts 0, 1, above the width and ≥ 32, and for `enter` levels;
-   - shrink the `UNSUPPORTED` sets in `tests/x86_diff.py` and `tests/test_decode.py`.
-
-   Where Unicorn and DOSBox's 386 core disagree on a defined result, the reference decides
-   (`docs/x86-notes.md`).
-4. Gate checks: the decoder agrees with Capstone over the whole sweep, and the IR agrees
-   with Unicorn x86-16, sabotage included.
+1. `decode.py` and `sem.py`: `push imm` (68h, 6Ah), `imul r16,r/m16,imm` (69h, 6Bh),
+   shifts and rotates by an immediate (C0h, C1h; count masked to 5 bits, 0 a no-op),
+   `enter` (C8h; level masked to 5 bits) and `leave` (C9h). WC2's sweep has 68h, 6Ah,
+   C0h, C1h and C9h only; no `pusha`/`popa`, `bound`, `ins`/`outs`, `enter` or
+   three-operand `imul` (MEASURED, `docs/external-surface.md`). Those and 0Fh still raise.
+2. Two scopes in `tools/wc2_model.py`: `X86_SCOPE` (`WC2.EXE` with its overlays and
+   the three drivers) is decoded and lifted; `SCOPE`, the modules generated as 68020
+   code, stays empty until P4. `cfg.py` takes WC2's code ranges (root, overlays, driver
+   entries) and seeds from the stub entries and `entries.csv` (written by
+   `tools/sweep.py --annotations`).
+3. Corpora: "forms" and "blocks" from WC2's code, drivers included; i186 boundary cases
+   (counts 0, 1, around the widths and ≥ 32, `enter` levels); five sabotage plants on
+   the new forms.
+4. Gate checks (`make test`): the decoder's starts are the sweep's, one for one, and
+   agree with Capstone (`tests/test_decode.py`); the IR agrees with Unicorn x86-16 over
+   forms, blocks, space and boundary; `make test-sabotage` catches every plant.
 
 ### P4. 68020 backend for WC2 (gate 4)
 
-1. Lowerings in `lower.py`:
+1. Lowerings in `lower.py` (X-Wing `ec4a238` has them for SWOTL's lowering; bring them
+   over as P3 brought the decoder):
    - `push imm`;
    - `imul` with an immediate (no longer assumes AX);
    - shifts by an immediate above 8 through a register;
    - `enter`/`leave` and `pusha`/`popa` on the mirrored SP/BP;
-   - entries in `reads`/`writes`, the flags plain set and `irq.py`.
+   - entries in `reads`/`writes`, the flags plain set and `irq.py`;
+   - WC2's start-up self-modification (`annotations/self-modifying.csv`: the `imm8`
+     operand at `WC2.EXE+1DC` and the `ja`/`jb` pair at `+1ED`): neither SWOTL's nor
+     X-Wing's `smc.py` lowers it, and `make gen` stops on it once `WC2.EXE` is in `SCOPE`;
+   - the 68020 differential then takes the 80186 forms: `tests/m68k_diff.py` skips every
+     case holding one until this step, because SWOTL's lowering takes some of them
+     without an error and wrongly (a shift by an immediate as a shift by one, MEASURED).
 2. Dynamic-CS modules (new contract, written into `docs/translator-design.md` first):
    - **Keys.** Overlay and dynamic driver code is translated once, keyed by
      (module, offset).

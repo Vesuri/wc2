@@ -95,6 +95,8 @@ headless → `ref/`, hash-checked), `make hash` / `make check-ref`, `make prepar
 (`ref/` → disposable `tmp/pc-root`), `make reference-staging` (play it), `make compare`
 (PC WC1 vs WC2), `make reference-emulator` (instrumented DOSBox-X), `make reference`
 (gate 1), `make map` (gate 2: VROOMM check, sweep, code writes, surface).
-Translator and Amiga: `make gen`, `make gen-check`, `make lint`, `make test` (lint,
-decoder, x86 and 68020 differentials on the synthetic corpora, guards, unit tests),
+Translator and Amiga: `make gen`, `make gen-check`, `make lint`, `make test` (gate 3
+with `make test-sabotage`: lint, decoder against the sweep and Capstone, the x86
+differential on WC2's code and the synthetic corpora; the 68020 differential on the
+synthetic corpora, guards, unit tests; needs `make map`'s `tmp/sweep/`),
 `make test-sabotage`, `make host`, `make amiga`, `make smoke`, `make size`.

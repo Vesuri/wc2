@@ -2,11 +2,15 @@
 """Decoder cross-check against Capstone (plan step 3.2).
 
 1. Every instruction the translator decodes (translator/cfg.py from
-   annotations/) matches Capstone in length, mnemonic and operands.
-2. Every traced executed instruction start is a decoded start; inside
+   annotations/, over image.X86_SCOPE) matches Capstone in length, mnemonic and operands.
+2. The decoded starts are the sweep's (tools/sweep.py, tmp/sweep/<module>.cls, from
+   `make map`), outside the self-modified regions: no start more, none fewer.
+3. Every traced executed instruction start is a decoded start; inside
    annotations/self-modifying.csv the executed starts are decoded from the
-   run-time bytes of a snapshot instead (the static bytes are rewritten).
-3. Opcode space: every first byte with random ModRM/tail bytes either raises
+   run-time bytes of a snapshot instead (the static bytes are rewritten), and in a VROOMM
+   stub's cells (docs/vroomm.md) both of the cell's forms are decoded: `INT 3Fh` and,
+   for an entry, `JMP FAR` to the overlay's entry.
+4. Opcode space: every first byte with random ModRM/tail bytes either raises
    DecodeError (outside the supported 8086 set) or matches Capstone.
 Exit 1 on any mismatch; prints counts (zero comparisons fail).
 """
@@ -27,8 +31,9 @@ from translator.decode import CC, DecodeError, Far, Imm, Insn, Mem, Reg, Rel, de
 
 CS_NAME = {"cdq": "cwd", "cwde": "cbw", "lcall": "callf", "ljmp": "jmpf", "xlatb": "xlat",
            "iret": "iret", "salc": None}
-# 186+/286 opcodes, FPU escapes, WAIT, LOCK, INT1, SALC: not in the classified code.
-UNSUPPORTED = {0x0F, *range(0x60, 0x70), 0x9B, 0xC0, 0xC1, 0xC8, 0xC9, 0xD6, *range(0xD8, 0xE0),
+# 186+/286 opcodes outside the forms of translator/decode.py (pusha/popa, bound, ins/outs,
+# 0Fh), FPU escapes, WAIT, LOCK, INT1, SALC: not in the swept code.
+UNSUPPORTED = {0x0F, *range(0x60, 0x68), 0x6C, 0x6D, 0x6E, 0x6F, 0x9B, 0xD6, *range(0xD8, 0xE0),
                0xF0, 0xF1}
 STRING = {"movs", "cmps", "stos", "lods", "scas"}
 MD = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
@@ -97,6 +102,8 @@ def compare(code: bytes, ip: int, n: Insn) -> str | None:
         return None
     if mn in ("in", "out", "int"):  # capstone keeps imm port/vector as 8-bit
         ops = [(t[0], t[1] & 0xFF) if t[0] == "imm" else t for t in ops]
+    if mn == "enter":  # capstone sign-extends the level byte
+        ops = [ops[0], (ops[1][0], ops[1][1] & 0xFF)]
     if mn in ("les", "lds"):  # capstone sizes the m16:16 operand as the register
         ops = [t[:1] + (4,) + t[2:] if t[0] == "mem" else t for t in ops]
     # Capstone names a default segment only when the prefix is present.
@@ -107,7 +114,7 @@ def compare(code: bytes, ip: int, n: Insn) -> str | None:
 
 def main() -> int:
     mods = image.load()
-    code = cfg.build(mods)
+    code = cfg.build(mods, image.X86_SCOPE)
     bad, counts, seen = [], Counter(), Counter()
     for name, unit in code.items():
         data = mods[name].data
@@ -117,14 +124,33 @@ def main() -> int:
             seen[n.op] += 1
             if why:
                 bad.append(f"{name}+{off:05X}: {why}")
+    # The sweep's starts (Capstone's descent, gate 2) against the translator's.
+    smc = image.smc_regions()
+    for name, unit in code.items():
+        path = image.REPO / "tmp/sweep" / f"{name}.cls"
+        if not path.exists():
+            bad.append(f"{name}: no {path.relative_to(image.REPO)}: run make map")
+            continue
+        sweep = {o for o, c in enumerate(path.read_bytes()) if c in (1, 3)
+                 and not any(lo <= o <= hi for lo, hi in smc.get(name, ()))}
+        for o in sorted(sweep - set(unit.insns))[:10]:
+            bad.append(f"{name}+{o:05X}: a sweep start the translator does not decode")
+        for o in sorted(set(unit.insns) - sweep)[:10]:
+            bad.append(f"{name}+{o:05X}: a decoded start the sweep does not reach")
+        counts["sweep starts"] += len(sweep & set(unit.insns))
     # Executed starts: decoded statically, or (self-modified region) from a
     # snapshot: the first holding the region, else one of a run that executed
     # the start (snapshots are taken at run end; the cell layout differs per run).
     traces = image.M.runs()
     executed = image.M.executed(traces)
-    smc = image.smc_regions()
-    runtime = image.runtime_bytes(traces)
-    own = {t: (image.runtime_bytes([t]), image.M.executed([t])) for t in traces}
+    runtime = image.runtime_bytes(traces, image.X86_SCOPE)
+    cells = {}  # stub cell -> its forms (the overlay's buffer segment stands in as 1234h)
+    for o in image.M.overlays():
+        cells[o.stub] = [bytes.fromhex("cd3f")]
+        for k, e in enumerate(o.entries):
+            cells[o.stub + 0x20 + 5 * k] = [bytes.fromhex("cd3f") + e.to_bytes(2, "little") + b"\0",
+                                            b"\xea" + e.to_bytes(2, "little") + b"\x34\x12"]
+    own = {t: (image.runtime_bytes([t], image.X86_SCOPE), image.M.executed([t])) for t in traces}
     for name, starts in executed.items():
         if name not in code:
             continue
@@ -152,6 +178,12 @@ def main() -> int:
                 counts["self-modified executed"] += 1
             elif off in code[name].insns:
                 counts["executed"] += 1
+            elif name == image.M.ROOT and off in cells:
+                for raw in cells[off]:
+                    why = compare(raw, 0, decode(raw, 0))
+                    if why:
+                        bad.append(f"{name}+{off:05X} (stub cell {raw.hex()}): {why}")
+                counts["stub cells executed"] += 1
             else:
                 bad.append(f"{name}+{off:05X}: executed start not decoded")
     # Opcode space.
@@ -179,10 +211,8 @@ def main() -> int:
         print(b)
     if bad:
         print(f"{len(bad)} mismatches")
-    if not image.SCOPE:  # WC2 before port-plan P1.4: the opcode space is the whole check
-        print("static, executed: no module in scope yet")
-        return 1 if bad or not counts["space"] else 0
-    return 1 if bad or not counts["static"] or not counts["executed"] else 0
+    need = ("static", "sweep starts", "executed", "self-modified executed", "space")
+    return 1 if bad or not all(counts[k] for k in need) else 0
 
 
 if __name__ == "__main__":

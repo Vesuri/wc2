@@ -42,7 +42,7 @@ MANAGER = {0xF81F: "move", 0xF567: "relocation", 0xF5D0: "relocation",
            0xF4CE: "header", 0xF6DE: "header", 0xF826: "header",
            0xF7B9: "stub", 0xF7BC: "stub", 0xF7BF: "stub", 0xF7EC: "stub", 0xF7EF: "stub",
            0xF7F2: "stub", 0xF840: "stub"}
-STUBS = (0x173D0, 0x19760)  # image range of the stub segments (link 173Dh..1975h)
+STUBS = M.STUBS
 CODE = (1, 2, 3, 4)
 STUB_CELL = 6
 

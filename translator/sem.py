@@ -1,4 +1,9 @@
-"""Lift a decoded 8086 instruction to IR (translator/ir.py).
+"""Lift a decoded real-mode instruction to IR (translator/ir.py).
+
+Secret Weapons of Luftwaffe's lifter with X-Wing's 80186 forms (X-Wing `3dea12a`,
+docs/upstream.md): `push imm`, `imul r16,r/m16,imm` (CF=OF = product not representable
+in 16 bits), shifts and rotates by an immediate count (masked to 5 bits; count 0 changes
+nothing), `enter size,level` (level masked to 5 bits) and `leave`.
 
 Real-mode semantics as executed by a 386 in real mode (the reference
 DOSBox-X cputype): shift and rotate counts masked to 5 bits, `push sp`
@@ -158,6 +163,12 @@ def lift(i: Insn) -> list[Op]:
         b.write(ops[0], r)
     elif op == "not":
         b.write(ops[0], b.v("not", w, b.read(ops[0])))
+    elif op == "imul" and len(ops) == 3:
+        x = b.read(ops[1])
+        y = ops[2].value
+        p = b.v("mul", 32, b.v("sext", 32, x), (y - 0x10000 if y & 0x8000 else y) & 0xFFFFFFFF)
+        b.e("put", ops[0].name, b.v("trunc", 16, p))
+        b.e("flags", "imul", 16, x, y, p)
     elif op in ("mul", "imul"):
         ext = "zext" if op == "mul" else "sext"
         x = b.get(acc)
@@ -200,10 +211,12 @@ def lift(i: Insn) -> list[Op]:
         b.e("fault", 0)
         b.at(end)
     elif op in ("rol", "ror", "rcl", "rcr", "shl", "shr", "sar"):
+        if isinstance(ops[1], Imm) and not ops[1].value & 0x1F:
+            return b.ops  # 186+: the count is masked to 5 bits; 0 changes nothing
         x = b.read(ops[0])
         end = None
         if isinstance(ops[1], Imm):
-            n = ops[1].value
+            n = ops[1].value & 0x1F
         else:
             n = b.v("and", 8, b.get("cl"), 0x1F)
             end = b.label()
@@ -237,6 +250,21 @@ def lift(i: Insn) -> list[Op]:
         b.push(b.read(ops[0]))
     elif op == "pop":
         b.write(ops[0], b.pop())
+    elif op == "enter":
+        size, level = ops[0].value, ops[1].value & 0x1F
+        bp = b.get("bp")
+        b.push(bp)
+        frame = b.get("sp")
+        for _ in range(1, level):
+            bp = b.v("sub", 16, bp, 2)
+            b.push(b.v("load", 16, b.get("ss"), bp))
+        if level:
+            b.push(frame)
+        b.e("put", "bp", frame)
+        b.e("put", "sp", b.v("sub", 16, b.get("sp"), size))
+    elif op == "leave":
+        b.e("put", "sp", b.get("bp"))
+        b.e("put", "bp", b.pop())
     elif op == "cbw":
         b.e("put", "ax", b.v("sext", 16, b.get("al")))
     elif op == "cwd":

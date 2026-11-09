@@ -58,6 +58,52 @@ def sp_no_wrap(ops, s, ip, next_ip):
     return ex
 
 
+def _swap(n, ops):
+    return D.Insn(n.ip, n.size, n.raw, n.op, n.width, ops, n.cc, n.rep, n.seg)
+
+
+def first_byte(raw):
+    k = 0
+    while raw[k] in (0x26, 0x2E, 0x36, 0x3E, 0xF2, 0xF3):
+        k += 1
+    return raw[k]
+
+
+def imul_imm8_unsigned(code, ip, pos=0):
+    n = real_decode(code, ip, pos)
+    if n.op == "imul" and len(n.operands) == 3 and first_byte(n.raw) == 0x6B:
+        return _swap(n, n.operands[:2] + (D.Imm(n.operands[2].value & 0xFF, 16),))
+    return n
+
+
+def push_imm8_unsigned(code, ip, pos=0):
+    n = real_decode(code, ip, pos)
+    if n.op == "push" and first_byte(n.raw) == 0x6A:
+        return _swap(n, (D.Imm(n.operands[0].value & 0xFF, 16),))
+    return n
+
+
+def shift_imm_as_one(code, ip, pos=0):
+    n = real_decode(code, ip, pos)
+    if first_byte(n.raw) in (0xC0, 0xC1):
+        return _swap(n, (n.operands[0], D.Imm(1, 8)))
+    return n
+
+
+def enter_level_ignored(code, ip, pos=0):
+    n = real_decode(code, ip, pos)
+    if n.op == "enter":
+        return _swap(n, (n.operands[0], D.Imm(0, 8)))
+    return n
+
+
+def leave_keeps_bp(code, ip, pos=0):
+    n = real_decode(code, ip, pos)
+    if n.op == "leave":
+        return D.Insn(n.ip, n.size, n.raw, "mov", 16, (D.Reg("sp"), D.Reg("bp")))
+    return n
+
+
 SABOTAGE = [
     ("adc ignores carry", "status", adc_ignores_carry, "boundary"),
     ("sub OF = CF", "status", of_from_carry, "forms,boundary"),
@@ -65,6 +111,11 @@ SABOTAGE = [
     ("disp8 not sign-extended", "decode", disp8_unsigned, "forms,boundary"),
     ("DF ignored", "execute", df_ignored, "boundary"),
     ("SP not 16-bit", "execute", sp_no_wrap, "boundary"),
+    ("imul imm8 not sign-extended", "decode", imul_imm8_unsigned, "boundary"),
+    ("push imm8 not sign-extended", "decode", push_imm8_unsigned, "boundary"),
+    ("shift imm count read as 1", "decode", shift_imm_as_one, "boundary"),
+    ("enter level ignored", "decode", enter_level_ignored, "boundary"),
+    ("leave keeps BP", "decode", leave_keeps_bp, "boundary"),
 ]
 
 

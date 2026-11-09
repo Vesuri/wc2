@@ -21,6 +21,19 @@ otherwise.
 | `Makefile` | targets merged into the existing one |
 | `docs/`: `translator-design`, `translation-lessons`, `x86-notes`, `amiga-arch`, `amiga-lessons`, `native-compute`, `irq-plan`, `sound-plan`, `speed-plan`, `pointer-plan`, `perf-method`, `headless-fsuae`, `toolchain`, `phases`, `method-lessons` | copied with a banner: the rules apply, the facts are SWOTL's until re-derived |
 
+## From X-Wing
+
+X-Wing took the same SWOTL commit through its own P3–P6 for Borland 80186 code. Port-plan P3
+brings its x86 front end here (owner's direction, 2026-11-09); its 68020 lowering
+(`ec4a238`) is P4's. Rows name X-Wing's commit; a fix to these files can move to both.
+
+| Path | From X-Wing | Treatment |
+|---|---|---|
+| `translator/decode.py`, `translator/sem.py` | `3dea12a` | the 80186 forms (`push imm`, `imul r16,r/m16,imm`, shifts and rotates by an immediate, `enter`, `leave`); header text says where they came from |
+| `tests/x86_diff.py` | `3dea12a` | `i186_cases` in the boundary corpus; `UNSUPPORTED` without the new opcodes |
+| `tests/x86_sabotage.py` | `3dea12a` | five plants: `imul imm8 not sign-extended`, `push imm8 not sign-extended`, `shift imm count read as 1`, `enter level ignored`, `leave keeps BP` |
+| `tests/test_decode.py` | `3dea12a` | `UNSUPPORTED` without the new opcodes; Capstone's sign-extended `enter` level |
+
 ## Not imported
 
 | SWOTL path | Why |
@@ -76,3 +89,9 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | VROOMM model in `wc2_model`: manager data and segment table constants, overlay entries and paragraph needs, relocation by `w & FFF8h` and the far-pointer form (`far_pointer_form`) | `tools/wc2_model.py` | wc2 |
 | `make map` (gate 2: `vroomm_check` with its sabotage, `sweep`, `code_writes`, `surface`); `sweep.py` and `code_writes.py` are WC2's own (SWOTL's not imported) | `Makefile` | wc2 |
 | The self-modified forms are checked and lowered, and their run-time bytes read, only for modules in scope (WC2's start-up forms are in `self-modifying.csv` before `WC2.EXE` is) | `translator/{emit,image}.py` | up |
+| P3: x86 semantics over WC2's code. Two scopes: `X86_SCOPE` (decode and IR) and `SCOPE` (68020 generation, empty until P4); `cfg.build` and `image.runtime_bytes` take a scope. `cfg.py` rewritten for WC2's code ranges (root segment rule, overlays at their image paragraph, driver entries at CS 0), seeds from the stub entries and `entries.csv`, stub far targets to overlay entries, `noreturn.csv` calls, the successors of each listed self-modified form | `translator/{cfg,image}.py` | wc2; the form successors up |
+| `test_decode`: the decoded starts equal the sweep's (`tmp/sweep/*.cls`); executed VROOMM stub cells decode in both forms; every count must be nonzero | `tests/test_decode.py` | wc2 |
+| `x86_diff` forms and blocks over `X86_SCOPE`; `make test` runs them in shards (forms 8, blocks 2) | `tests/x86_diff.py`, `Makefile` | wc2 |
+| Model: `load_modules` (WC2.EXE with its overlays relocated at load segment 0, the drivers), `code_ranges`, `program_image`, `records`, `root_code_segs`, `driver_entry` and the driver constants moved from `sweep.py`; `STUBS` from `code_writes.py` | `tools/{wc2_model,sweep,code_writes}.py` | wc2 |
+| `sweep.py --annotations` writes `annotations/entries.csv` (the seeds `cfg.py` cannot derive); an indirect far jump (`ljmp [mem]`) ends a flow, as in X-Wing's sweep (it fell through into 148 bytes after `WC2.EXE+FE09`, never executed) | `tools/sweep.py` | wc2 |
+| `m68k_diff`: a case with an 80186 form is skipped and counted (`not compared`) until P4 lowers the forms; SWOTL's lowering takes some of them silently and wrongly (`C1 E0 10` as a shift by one, MEASURED in the boundary corpus's `compact-dirty` cases) | `tests/m68k_diff.py` | wc2 |
