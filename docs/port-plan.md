@@ -61,7 +61,7 @@ from WC2 profiles by the same tools.
 
 | Item | SWOTL | WC2 | Work |
 |---|---|---|---|
-| Code | MS C 5, medium model, 8086 only | Borland C++ 1991, large model, 80186: in a linear decode 4,633 `push imm`, 454 `leave`, 467 `shl r,imm` (MEASURED, an upper bound); no INT 34h–3Dh FPU emulator calls (MEASURED) | 186 opcodes (P3, P4); Borland runtime names (P2) |
+| Code | MS C 5, medium model, 8086 only | Borland C++ 1991, medium model (the runtime takes near data pointers: `strlen`, `strcpy`, `malloc`, `annotations/runtime.csv`; DERIVED), 80186: in a linear decode 4,633 `push imm`, 454 `leave`, 467 `shl r,imm` (MEASURED, an upper bound); no INT 34h–3Dh FPU emulator calls (MEASURED) | 186 opcodes (P3, P4); Borland runtime names (P2) |
 | Overlays | PLINK: 12 files at fixed load segments; a load never replaces the caller | VROOMM: 124 overlays inside `WC2.EXE`, 184,673 B of code, read into a buffer at run-time segments; stub entries `CD 3F` patched to `JMP FAR` (format MEASURED, `tools/bc_exe.py`; behaviour INFERRED) | VROOMM model (P2), dynamic-CS modules (P4) |
 | Drivers | RTSVGA and SPAZ are overlays | no video driver: the renderer is in the EXE. Sound drivers `STRAX.DRV` 6,462 B, `TM.DRV` 28,337 B, `SUPERTM.DRV` 87,198 B are files read at run time (sizes MEASURED, roles INFERRED) | drivers become modules (P2, P4) |
 | Video | mode 13h and DAC through INT 10h only; only RTSVGA writes VRAM | 45 `in al,dx` and 9 `out dx,al` sites in the EXE (MEASURED, linear): likely DAC and status ports | DAC and 3DAh models, VRAM writer set, WC2's frame boundary (P2, P6) |
@@ -217,6 +217,16 @@ can run beside stream A (reference and map, P1–P2) once P0 is in.
    - `make map` is reproducible.
 
 ### P3. x86 semantics for 80186 (gate 3)
+
+Start from X-Wing's translator, not from SWOTL's again (owner's direction, 2026-11-09):
+X-Wing took SWOTL's translator through P3–P6 for its own Borland 80186 code (`3dea12a` P3,
+80186 forms in `decode.py` and `sem.py`, boundary cases and sabotage plants; `ec4a238` P4,
+the 68020 lowering of those forms; far dispatch for overlays sharing a target, driver
+tables). Bring its `translator/` and tests over, log them in `docs/upstream.md` as
+from X-Wing, and redo here only what WC2's VROOMM overlays and drivers need. Neither
+translator lowers WC2's start-up self-modification (`annotations/self-modifying.csv`: an
+`imm8` operand and a `ja`/`jb` pair at `WC2.EXE+1DC`, `+1ED`): it is new work here, and
+`make gen` stops on it once `WC2.EXE` is in scope.
 
 1. `decode.py`: `60`/`61` (`pusha`/`popa`), `62` (`bound`), `68`/`6A`, `69`/`6B` (a three-operand form),
    `6C`–`6F`, `C0`/`C1`, `C8`/`C9`. 286+ (`0F`) and FPU opcodes still raise, unless P2 proves a

@@ -1,1 +1,67 @@
 module,offset,seg_ip,name,class,executed,evidence
+WC2.EXE,0x00000,0000:0000,_start,startup,1,"INFERRED name; DERIVED body: MZ entry (c0): DGROUP 1976h into cs:[23Ch], AH=30h, saves PSP, env, calls the vector save at 016B, runs the _INIT_ table"
+WC2.EXE,0x00113,0000:0113,_exit_path,exit,0,"INFERRED name; DERIVED body: walks the _EXIT_ records (DS:AD94..AD9A) through 01DB, then three far cleanup hooks [AA3C], [AA40], [AA44], falls into __terminate"
+WC2.EXE,0x00133,0000:0133,__terminate,exit,0,"INFERRED name; DERIVED body: restores the saved vectors (01AE), checksums DS:0..2Fh against 0D5Ch and prints 'Null pointer assignment', AH=4Ch; never returns (annotations/noreturn.csv)"
+WC2.EXE,0x0016b,0000:016B,__savevectors,startup,1,"INFERRED name; DERIVED body: AH=35h for INT 0, 4, 5, 6 into DS:74..; AH=25h installs the divide handler"
+WC2.EXE,0x001ae,0000:01AE,__restorezero,exit,0,"INFERRED name; DERIVED body: AH=25h restores INT 0, 4, 5, 6 from DS:74.."
+WC2.EXE,0x001db,0000:01DB,__run_table,startup,1,INFERRED name; DERIVED body: walks 6-byte startup/exit records by priority (byte FFh = done); used for _INIT_ (+244DC) and _EXIT_ (+244F4)
+WC2.EXE,0x0021e,0000:021E,__errordisplay,exit,0,"INFERRED name; DERIVED body: AH=40h to handle 2 (stderr), CX bytes at DS:DX"
+WC2.EXE,0x00226,0000:0226,abort,exit,0,"INFERRED name; DERIVED body: prints 'Abnormal program termination' (30 bytes at 1976:0056), exit code 3"
+WC2.EXE,0x00257,0000:0257,__ovrerror,exit,0,INFERRED name; DERIVED body: prints 'Runtime overlay error' (23 bytes at cs:240h) to stderr and exits; the VROOMM trap's odd-BP path (docs/vroomm.md)
+WC2.EXE,0x01607,0000:1607,__brk,memory,1,"INFERRED name; DERIVED body: near heap top [9Ch] := arg if below SP-200h, else errno 8 (ENOMEM)"
+WC2.EXE,0x01629,0000:1629,__sbrk,memory,1,"INFERRED name; DERIVED body: near heap top [9Ch] += long arg if below SP-200h, else errno 8"
+WC2.EXE,0x01676,0000:1676,chdir,DOS wrapper,1,INFERRED name; DERIVED body: AH=3Bh on DS:arg
+WC2.EXE,0x0168c,0000:168C,getdisk,DOS wrapper,0,"INFERRED name; DERIVED body: AH=19h, cbw"
+WC2.EXE,0x01692,0000:1692,setdisk,DOS wrapper,0,"INFERRED name; DERIVED body: AH=0Eh, DL=arg"
+WC2.EXE,0x0169f,0000:169F,_chmod,DOS wrapper,1,"INFERRED name; DERIVED body: AH=43h, AL=func, CX=attr"
+WC2.EXE,0x016ba,0000:16BA,_close,file I/O,1,"INFERRED name; DERIVED body: AH=3Eh, BX=handle"
+WC2.EXE,0x016d8,0000:16D8,coreleft,memory,1,"INFERRED name; DERIVED body: SP - [9Ch] - 220h, rounded down to 16"
+WC2.EXE,0x01720,0000:1720,__videoint,conio,1,INFERRED name; DERIVED body: INT 10h with BIOS data area (40h) access; the conio video service
+WC2.EXE,0x01903,0000:1903,findfirst,DOS wrapper,1,"INFERRED name; DERIVED body: AH=2Fh, 1Ah (set DTA to arg), 4Eh, restores DTA"
+WC2.EXE,0x01af0,0000:1AF0,getch,conio,1,INFERRED name; DERIVED body: ungetch byte [ABE8h] else AH=07h
+WC2.EXE,0x01b4c,0000:1B4C,getvect,DOS wrapper,1,"INFERRED name; DERIVED body: AH=35h, AL=arg; returns ES:BX"
+WC2.EXE,0x01b5b,0000:1B5B,setvect,DOS wrapper,1,"INFERRED name; DERIVED body: AH=25h, AL=arg, DS:DX = far arg"
+WC2.EXE,0x01c15,0000:1C15,ioctl,DOS wrapper,1,"INFERRED name; DERIVED body: AH=44h, AL=func, BX=handle"
+WC2.EXE,0x01c3c,0000:1C3C,__IOerror,file I/O,1,"INFERRED name; DERIVED body: maps a DOS error (negative arg: errno) to errno and _doserrno, returns -1; near, called by 18 wrappers"
+WC2.EXE,0x01e18,0000:1E18,isatty,DOS wrapper,1,"INFERRED name; DERIVED body: AX=4400h, returns DX bit 7"
+WC2.EXE,0x01e29,0000:1E29,kbhit,conio,1,INFERRED name; DERIVED body: AH=0Bh
+WC2.EXE,0x01e2f,0000:1E2F,lseek,file I/O,1,"INFERRED name; DERIVED body: clears the handle's EOF flag in _openfd, AH=42h"
+WC2.EXE,0x02153,0000:2153,_open,file I/O,1,"INFERRED name; DERIVED body: AH=3Dh, AL=mode, sets _openfd"
+WC2.EXE,0x0225a,0000:225A,_read,file I/O,1,"INFERRED name; DERIVED body: AH=3Fh, BX=handle, CX=count, DS:DX=buffer"
+WC2.EXE,0x028ad,0000:28AD,setblock,DOS wrapper,1,"INFERRED name; DERIVED body: AH=4Ah, ES=segment, BX=paragraphs"
+WC2.EXE,0x028c9,0000:28C9,strcat,string,1,"INFERRED name; DERIVED body: scans the end of arg 1, copies arg 2 with its 0"
+WC2.EXE,0x02967,0000:2967,strcpy,string,1,"INFERRED name; DERIVED body: length of arg 2 with its 0, copied to arg 1"
+WC2.EXE,0x0298b,0000:298B,strlen,string,1,"INFERRED name; DERIVED body: repne scasb, not, dec"
+WC2.EXE,0x02a10,0000:2A10,unlink,DOS wrapper,1,INFERRED name; DERIVED body: AH=41h on DS:arg
+WC2.EXE,0x02f9c,0000:2F9C,_write,file I/O,1,INFERRED name; DERIVED body: AH=40h; with the handle's O_APPEND flag (_openfd) seeks to the end first
+WC2.EXE,0x03228,0000:3228,farmalloc,memory,1,"INFERRED name; DERIVED body: dword size + 13h to paragraphs, from the far heap above the near heap; the VROOMM buffer and the drivers' blocks (docs/vroomm.md, docs/drivers.md)"
+WC2.EXE,0x033ef,0000:33EF,LXMUL@,math helper,1,INFERRED name; DERIVED body: 32-bit multiply DX:AX * CX:BX (three MULs); far
+WC2.EXE,0x03406,0000:3406,PCMP@,math helper,1,INFERRED name; DERIVED body: huge pointer compare: both normalised to segment:offset 0..Fh
+WC2.EXE,0x0342a,0000:342A,LDIV@,math helper,1,"INFERRED name; DERIVED body: CX=0 (signed quotient) into the common long divide at 3444h; far, callee pops 8"
+WC2.EXE,0x03431,0000:3431,LUDIV@,math helper,1,INFERRED name; DERIVED body: CX=1 (unsigned quotient) into 3444h
+WC2.EXE,0x03439,0000:3439,LMOD@,math helper,1,INFERRED name; DERIVED body: CX=2 (signed remainder) into 3444h
+WC2.EXE,0x03441,0000:3441,LUMOD@,math helper,1,INFERRED name; DERIVED body: CX=3 (unsigned remainder) into 3444h
+WC2.EXE,0x034d8,0000:34D8,LXLSH@,math helper,1,INFERRED name; DERIVED body: DX:AX <<= CL
+WC2.EXE,0x034f9,0000:34F9,LXRSH@,math helper,1,"INFERRED name; DERIVED body: DX:AX >>= CL, arithmetic"
+WC2.EXE,0x03519,0000:3519,LXURSH@,math helper,1,"INFERRED name; DERIVED body: DX:AX >>= CL, logical"
+WC2.EXE,0x0353a,0000:353A,PADA@,math helper,1,INFERRED name; DERIVED body: huge pointer += CX:BX at ES:BX (carry adds 1000h to the segment)
+WC2.EXE,0x035c2,0000:35C2,PADD@,math helper,1,INFERRED name; DERIVED body: huge pointer DX:AX + CX:BX (carry adds 1000h to the segment)
+WC2.EXE,0x03622,0000:3622,PSBP@,math helper,1,INFERRED name; DERIVED body: huge pointer difference DX:AX - CX:BX as a long
+WC2.EXE,0x0364a,0000:364A,SCOPY@,memory,1,"INFERRED name; DERIVED body: struct copy far src to far dst, CX bytes; retf 8"
+WC2.EXE,0x0366c,0000:366C,SPUSH@,memory,1,INFERRED name; DERIVED body: struct by value: copies CX bytes from DX:AX onto the caller's stack
+WC2.EXE,0x0368d,0000:368D,free,memory,1,INFERRED name; DERIVED body: near heap block at arg - 4; last block (== [AD62h]) shrinks the heap
+WC2.EXE,0x0375c,0000:375C,malloc,memory,1,"INFERRED name; DERIVED body: near heap: size + 5 rounded to even, at least 8; first fit or grow"
+WC2.EXE,0x0f12b,0F12:000B,__ovr_list,overlay manager,1,INFERRED name; DERIVED body: start-up: links the stubs and sets their loader and file offsets (docs/vroomm.md)
+WC2.EXE,0x0f25b,0F12:013B,__ovr_hook,overlay manager,1,INFERRED name; DERIVED body: AH=35h/25h: saves and installs INT 3Fh
+WC2.EXE,0x0f2ac,0F12:018C,__ovr_exit,overlay manager,0,"INFERRED name; DERIVED body: _EXIT_ record: restores INT 3Fh, closes the file; never executed"
+WC2.EXE,0x0f3ad,0F12:028D,__ovr_buffer,overlay manager,1,"INFERRED name; DERIVED body: start-up: allocates the buffer (farmalloc) and sets [B4], [B6], [A8]"
+WC2.EXE,0x0f42d,0F12:030D,__ovr_preload,overlay manager,1,INFERRED name; DERIVED body: start-up: the sequential preload of the first overlays
+WC2.EXE,0x0f606,0F12:04E6,__ovr_trap,overlay manager,1,INFERRED name; DERIVED body: the INT 3Fh handler
+WC2.EXE,0x0f66c,0F12:054C,__ovr_make_room,overlay manager,1,INFERRED name; DERIVED body: evicts or re-queues the queue head until n paragraphs are free
+WC2.EXE,0x0f6b6,0F12:0596,__ovr_load,overlay manager,1,"INFERRED name; DERIVED body: load or re-arm one overlay, patch its entries, probation sweep"
+WC2.EXE,0x0f749,0F12:0629,__ovr_wrap,overlay manager,1,INFERRED name; DERIVED body: moves every queued overlay to the top of the buffer
+WC2.EXE,0x0f784,0F12:0664,__ovr_arm,overlay manager,1,INFERRED name; DERIVED body: entries to far jumps; restores trapped return frames
+WC2.EXE,0x0f7c3,0F12:06A3,__ovr_disarm,overlay manager,1,INFERRED name; DERIVED body: entries to INT 3Fh; redirects returning frames to the stub
+WC2.EXE,0x0f7f6,0F12:06D6,__ovr_move,overlay manager,1,INFERRED name; DERIVED body: moves an overlay's code (rep movsw at +F81F) and fixes its jumps and frames
+WC2.EXE,0x0f9fd,0F12:08DD,__ovr_init,overlay manager,1,INFERRED name; DERIVED body: _INIT_ record: runs the start-up steps
+WC2.EXE,0x0fa58,0F12:0938,__ovr_evict_hook,overlay manager,1,"INFERRED name; DERIVED body: the eviction hook [10]: a RET, so no EMS cache"

@@ -1,1 +1,4 @@
 module,first,last,kind,writers,form,note
+WC2.EXE,0x001dc,0x001dc,operand,+000F6,,"Borland startup: the table walker's mov ah,imm8 is FFh for the _INIT_ walk; +000F6 writes 00h once after it, for the _EXIT_ walk (MEASURED: every trace, by reading)"
+WC2.EXE,0x001ed,0x001ee,form,+000F0,7705,"ja +5: the _INIT_ walk (lowest priority first) (MEASURED)"
+WC2.EXE,0x001ed,0x001ee,form,+000F0,7205,"jb +5: +000F0 writes 72h once after the _INIT_ walk, for the _EXIT_ walk (highest priority first) (MEASURED)"

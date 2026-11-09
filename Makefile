@@ -1,7 +1,7 @@
 ## Wing Commander II — repository-level targets.
 
 .PHONY: all help extract install hash check-ref prepare-reference reference-staging compare \
-	reference-emulator reference gen gen-check lint test test-decode test-x86 test-m68k test-sabotage \
+	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-sabotage \
 	test-guards host amiga smoke size clean
 
 REFERENCE_ROOT ?= tmp/pc-root
@@ -26,6 +26,8 @@ help:
 	@echo "  make compare            PC WC1 vs WC2 code and data comparison -> tmp/compare/"
 	@echo "  make reference-emulator build instrumented DOSBox-X (tools/patches/ORDER)"
 	@echo "  make reference          gate 1: every milestone twice, image proof, identical state"
+	@echo "  make map                gate 2 over the traces: VROOMM model and sabotage, sweep,"
+	@echo "                          code writes, annotations/indirect.csv, docs/external-surface.md"
 	@echo
 	@echo "  Translator and Amiga build (Secret Weapons of Luftwaffe's; docs/upstream.md):"
 	@echo "  make gen                translate the in-scope modules -> build/gen (none before P1.4)"
@@ -86,6 +88,17 @@ reference-emulator:
 # Gate 1 (docs/pc-reference-loop.md): reference/milestones.csv, two runs each.
 reference: check-ref
 	. amiga/env.sh && $(PYTHON) tools/reference.py
+
+# Gate 2 (docs/port-plan.md P2): the static and live map over the milestone traces.
+MAP_SABOTAGE := second-chance wrap sweep position
+map:
+	cd tools && $(PYTHON) vroomm_check.py
+	cd tools && for s in $(MAP_SABOTAGE); do \
+		out=$$($(PYTHON) vroomm_check.py --sabotage $$s); rc=$$?; echo "$$out" | tail -1; \
+		[ $$rc -eq 0 ] || exit 1; done
+	cd tools && $(PYTHON) sweep.py --annotations
+	cd tools && $(PYTHON) code_writes.py
+	cd tools && $(PYTHON) surface.py --write ../docs/external-surface.md
 
 # --- Translator, tests and builds (Secret Weapons of Luftwaffe 658fc60, docs/upstream.md) ---
 

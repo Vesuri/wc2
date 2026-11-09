@@ -5,18 +5,15 @@ Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
 
 ## The original
 
-3. Map the game executable: Borland C++ 1991 large model, 80186+, VROOMM overlays
-   (`tools/bc_exe.py`; the runtime image at entry and after overlay loads is proven by
+3. Map the game executable: Borland C++ 1991 medium model, 80186+, VROOMM overlays
+   (`tools/bc_exe.py`, the P2 map: `make map`; the runtime image at entry and after overlay loads is proven by
    `tools/load_image.py`, [pc-reference-loop.md](pc-reference-loop.md)). Open: the
    `WC2.LZC` packing method, a `make inspect` target (playbook §3; port-plan P8.2).
    Acceptance: an independent `WC2.LZC` unpack equals the installed `WC2.EXE`.
-5. Memory and external surface, first pass: conventional and EMS use, interrupts, ports,
-   video modes, DOS file opens, timer rate, from the DOSBox-X log or an instrumented build
-   (Secret Weapons of Luftwaffe `tools/patches/`; port-plan P2.5). Acceptance:
-   `docs/external-surface.md` with each row MEASURED or DERIVED.
 6. Feasibility report for the owner ([feasibility.md](feasibility.md): the quiet flight
-   frame and FM channel use are in). Open: code size, overlay or EMS paging scheme,
-   drivers, the engine's relation to WC1 (supplied disks in `tmp/wc1/`), a combat frame's
+   frame and FM channel use are in; P2 measured the overlay and EMS paging and the drivers:
+   [vroomm.md](vroomm.md), [drivers.md](drivers.md), [external-surface.md](external-surface.md)).
+   Open: code size, those inputs written into the report, the engine's relation to WC1 (supplied disks in `tmp/wc1/`), a combat frame's
    cost, the translated cost (port-plan P5.4). Acceptance: the doc with measured inputs,
    checked against D1 (68030 minimum).
 7. `SPEECH.S00` codec (in scope, D3): disk entries flagged `E0` grow to twice their

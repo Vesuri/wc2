@@ -1,0 +1,2 @@
+module,offset,name,evidence
+WC2.EXE,0x00133,__terminate,"Borland exit: INT 21h AH=4Ch at WC2.EXE+160, no return (MEASURED by reading)"

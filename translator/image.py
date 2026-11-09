@@ -47,6 +47,8 @@ def runtime_bytes(traces: list[Path]) -> dict[str, bytes]:
     out = {}
     mods = load()
     for name, spans in smc_regions().items():
+        if name not in SCOPE:       # its regions wait until the module is in scope
+            continue
         for t in traces:
             for snap in sorted(t.glob("snap-*")):
                 res = M.residency(snap / "residency.csv")

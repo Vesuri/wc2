@@ -48,7 +48,14 @@ offsets. Outputs beside SWOTL's (`events.csv`, `interrupts.csv`, snapshots with
 `residency.csv` and `writes.csv`, `probe.csv` with the caller's return address):
 
 - `vroomm.csv` (`icount,kind,stub,entry,linear,detail`): INT 3Fh traps, overlay reads,
-  first entry into a loaded overlay, stub and trap-frame writes, and buffer moves.
+  first entry into a loaded overlay (the first instruction in the overlay area after the
+  trap; the timer handler and DOS run inside a trap), stub and trap-frame writes with the
+  value written (`v=`), and buffer moves ([vroomm.md](vroomm.md)).
+- `code-writes.csv` (`writer_module,writer_offset,target_linear,width,count,target_module,target_offset`):
+  every write into an executed paragraph, with the module offset the target held at
+  write time (`tools/code_writes.py`).
+- `events.csv` file events: `open`, `create`, `read`, `write`, `delete`, `seek`, `close`
+  by file name.
 - `WC2_OPL`: OPL at 388h/389h, 220h/221h and 228h/229h (`opl.csv`); DSP, mixer and DMA
   ports in `sound.csv`.
 - `WC2_REPLAY_PORTS` (`--replay-ports`): PIT (40h–42h) and 3DAh reads, run-length coded,

@@ -429,7 +429,8 @@ class Program:
         int0 = [r for r in image.rows("runtime.csv") if r["name"] == "__cintDIV"]
         self.int0 = (int0[0]["module"], int(int0[0]["offset"], 16)) if int0 else None
         # D16: self-modified regions, each lowered as one cell walk
-        self.smc_forms = image.smc_forms()
+        # only modules in scope are lowered; the others' forms wait for theirs
+        self.smc_forms = {k: v for k, v in image.smc_forms().items() if k[0] in image.SCOPE}
         self.walk_preserves_flags = all(smc.preserves_flags(forms)
                                         for forms in self.smc_forms.values())
         self.cell_regions()

@@ -76,6 +76,7 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 | [docs/source-inventory.md](docs/source-inventory.md) | facts and hashes of the original files |
 | [docs/pc-reference-loop.md](docs/pc-reference-loop.md) | running the installer or the game under DOSBox |
 | [docs/wc1-wc2-comparison.md](docs/wc1-wc2-comparison.md) | WC1/WC2 code and data sharing; the WC1 reuse plan |
+| [docs/vroomm.md](docs/vroomm.md), [docs/drivers.md](docs/drivers.md), [docs/external-surface.md](docs/external-surface.md) | the overlay manager, the drivers, the game's DOS, BIOS, EMS and port use (the P2 map) |
 
 ## Shared environment and knowledge
 
@@ -92,7 +93,8 @@ Luftwaffe is the model for the translator, reference loop and Makefile.
 `make extract` (archives → `tmp/union`, hash-checked), `make install` (original installer,
 headless → `ref/`, hash-checked), `make hash` / `make check-ref`, `make prepare-reference`
 (`ref/` → disposable `tmp/pc-root`), `make reference-staging` (play it), `make compare`
-(PC WC1 vs WC2), `make reference-emulator` (instrumented DOSBox-X).
+(PC WC1 vs WC2), `make reference-emulator` (instrumented DOSBox-X), `make reference`
+(gate 1), `make map` (gate 2: VROOMM check, sweep, code writes, surface).
 Translator and Amiga: `make gen`, `make gen-check`, `make lint`, `make test` (lint,
 decoder, x86 and 68020 differentials on the synthetic corpora, guards, unit tests),
 `make test-sabotage`, `make host`, `make amiga`, `make smoke`, `make size`.

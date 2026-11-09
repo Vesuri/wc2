@@ -23,7 +23,7 @@ RUNS = REPO / "tmp/pc-runs"
 ROOT = "WC2.EXE"
 OVL_TABLE = 0  # SWOTL's PLINK table; WC2's VROOMM model replaces it (P2.1, P4.2)
 MANAGER = (None, None)  # SWOTL's PLINK manager entry; no WC2 equivalent
-SCOPE: list[str] = []  # P2 (P1.4 proves the loader model only)
+SCOPE: list[str] = []  # P3: the decoder needs the 80186 forms first (P2 maps only)
 OUT_OF_SCOPE: list[str] = []
 
 
@@ -158,7 +158,10 @@ def cpu_writes(traces: list[Path]) -> dict[str, dict[int, set[str]]]:
 # Image offsets number the root and its overlays alike: the MZ load image is
 # offsets 0..ROOT_IMAGE-1, and the FBOV area that follows it in the file keeps
 # going at file offset - MZ header (the trace patch attributes overlay reads so).
-SEG_TABLE = 0x16C40  # root: 8-byte segment records, word 0 = link segment (MEASURED)
+MGR_DATA = 0x16B80   # the overlay manager's data (link segment 16B8h, docs/vroomm.md)
+SEG_TABLE = MGR_DATA + 0xC0  # root: 8-byte segment records, word 0 = link segment (MEASURED)
+SEG_TABLE_END = MGR_DATA + 0x840
+OVRBUFFER = 0x19760 + 0xAC   # root data (link segment 1976h): the buffer size in paragraphs
 DRIVERS = ("TM.DRV", "SUPERTM.DRV", "STRAX.DRV")  # GAMEDAT; read whole, not relocated
 
 
@@ -168,11 +171,22 @@ class Overlay:
     code: int                   # image offset of its first code byte (FBOV area)
     size: int                   # code bytes
     relocs: list[int]           # code offsets of segment words (table byte offsets)
+    entries: list[int] = field(default_factory=list)  # code offsets of the stub's entries
 
     @property
     def end(self) -> int:
         """Image offset after the code and its relocation records."""
         return self.code + self.size + 2 * len(self.relocs)
+
+    @property
+    def paras(self) -> int:
+        """Buffer paragraphs it occupies: the code and the stub back-pointer word."""
+        return (self.size + 0x11) >> 4
+
+    @property
+    def need(self) -> int:
+        """Paragraphs the load needs free: the code and its relocation records."""
+        return self.paras + ((2 * len(self.relocs) + 0xF) >> 4)
 
 
 def overlays(ref: Path = REF) -> list[Overlay]:
@@ -185,7 +199,8 @@ def overlays(ref: Path = REF) -> list[Overlay]:
         code = base + o.file_off
         rel = x.data[x.header + code + o.code_size: x.header + code + o.code_size + o.reloc_size]
         out.append(Overlay(o.stub_off, code, o.code_size,
-                           [struct.unpack_from("<H", rel, 2 * i)[0] for i in range(o.reloc_size // 2)]))
+                           [struct.unpack_from("<H", rel, 2 * i)[0] for i in range(o.reloc_size // 2)],
+                           list(o.entries)))
     return sorted(out, key=lambda o: o.code)
 
 
@@ -213,17 +228,36 @@ def root_image(load: int, ref: Path = REF) -> bytearray:
     return out
 
 
-def overlay_code(o: Overlay, load: int, ref: Path = REF, image: bytes | None = None) -> bytearray:
-    """An overlay's code as VROOMM leaves it after the load: each segment word w
-    becomes load + the link segment in segment record w / 8 (MEASURED: 1487 of
-    1487 words in the resident overlays of a flight snapshot)."""
+def overlay_code(o: Overlay, load: int, ref: Path = REF, image: bytes | None = None,
+                 stubs: dict[int, Overlay] | None = None) -> bytearray:
+    """An overlay's code as VROOMM leaves it after the load (docs/vroomm.md,
+    "Relocation"): each segment word w becomes load + the link segment in segment
+    record w & FFF8h. If bit 0 of w is set and the word is the segment of
+    `mov r,seg; push r; mov r,off; push r` into an overlay stub, an `off` equal to
+    one of that stub's entries becomes the entry's stub offset."""
     image = image if image is not None else image_file(ref)
     code = bytearray(image[o.code:o.code + o.size])
     for f in o.relocs:
         w = struct.unpack_from("<H", code, f)[0]
-        seg = struct.unpack_from("<H", image, SEG_TABLE + w)[0]
+        seg = struct.unpack_from("<H", image, SEG_TABLE + (w & 0xFFF8))[0]
         struct.pack_into("<H", code, f, (seg + load) & 0xFFFF)
+        if w & 1 and far_pointer_form(code, f):
+            stubs = stubs if stubs is not None else {s.stub: s for s in overlays(ref)}
+            t = stubs.get(seg * 16)
+            off = struct.unpack_from("<H", code, f + 4)[0]
+            if t is not None and off in t.entries:
+                struct.pack_into("<H", code, f + 4, 0x20 + 5 * t.entries.index(off))
     return code
+
+
+def far_pointer_form(code: bytes, f: int) -> bool:
+    """`mov r,imm; push r; mov r,imm; push r` with one register r around the
+    segment word at f (the manager's test, WC2.EXE+F578)."""
+    if f < 1 or f + 7 > len(code):
+        return False
+    r = code[f - 1] & 7
+    return (code[f - 1] & 0xF8 == 0xB8 and code[f + 2] == 0x50 | r and
+            code[f + 3] == 0xB8 | r and code[f + 6] == 0x50 | r)
 
 
 def load_modules(ref: Path = REF) -> dict[str, Module]:
