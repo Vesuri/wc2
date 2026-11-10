@@ -47,6 +47,8 @@ void rt_stop(const char *what, uint32_t a, uint32_t b)
 { (void)what; (void)a; (void)b; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
 volatile uint8_t rt_irq0_running;
 uint8_t rt_irq_saved[RT_STATE_BYTES + sizeof(struct rt_regs)];
+void rt_ems_touch(uint32_t a, uint32_t n)      /* no EMS frame here: a frame access stops */
+{ (void)a; (void)n; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
 int main(void) {
     G_IF = 1;
     if (test_case == 3 || test_case == 4) {

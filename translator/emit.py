@@ -48,7 +48,7 @@ RET, UNKNOWN, SMC = "ret", "unknown", "smc"
 TERMINAL = {"jmp", "jmpf", "ret", "retf", "iret", "hlt"}
 RUNTIME = ("rt_int", "rt_irq", "rt_fault", "rt_halt", "rt_trap", "rt_in8", "rt_in16", "rt_out8", "rt_out16",
            "rt_ret_mismatch", "rt_ret_far_mismatch", "rt_dispatch_near", "rt_dispatch_far", "rt_stop_unknown",
-           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending")
+           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg")
 # G3 native replacements (annotations/hle.csv): runtime service rt_hle_<service>
 # at a range's first instruction; NE skips the range to the instruction after
 # `last`, EQ runs the guest code. `args`: up to two guest word registers, in
@@ -1083,7 +1083,7 @@ class Program:
                                             for lo, hi in smc_t)),
                    code_regions=() if slot else self.code_regions(cs), seg_limit=self.smc_limit,
                    seg_repeat=label(mod, off) in self.seg_repeat,
-                   program=True, vram=mod in VRAM_MODULES,
+                   program=True, vram=mod in VRAM_MODULES, ems=True,
                    far_return=i.op == "call" and (mod, off) in self.far_calls,
                    jump_return=(mod, off) in self.jump_returns,
                    push_call=(mod, off) in self.push_calls,

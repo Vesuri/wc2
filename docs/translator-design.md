@@ -221,20 +221,32 @@ diffs directly); relocated words in instructions are emitted as
     the stub word, cells in every form, both start-up regions) and the 68020
     differential's `cs-slot` variants (a run whose lowering reads CS, again with CS
     from guest RAM).
-- WC2 EMS model (port-plan P4.5, C3; design, not built). WC2 maps 4 physical pages
-  of a 164-page handle with INT 67h AH=44h, about 5–15 maps per timer tick, 218,641
-  maps to m6 ([external-surface.md](external-surface.md) "EMS", MEASURED). The logical
-  pages' own storage (reversed, as guest RAM) is the truth and a map is a table
-  update. A segment base that addresses the frame (E000h–EFFFh) is, behind a guard
-  on the access's offset range (as R6 guards BP) and on the frame not being
-  materialized, a base into the mapped page's storage, so an access that cannot
-  leave that 16 KB page touches the page itself. Every other frame access takes the
-  exact path: the runtime materializes the four mapped pages into the frame in guest
-  RAM (F1's long copies) and the access runs there; the next map, or the next guarded
-  access, writes the frame back first (identical-remap skip kept). DOS reads into the
-  frame and the runtime's own frame accesses take the exact path. The x86 and 68020
-  differentials and a sabotage plant cover the guard edges when it is built
-  (open-work).
+- WC2 EMS model (port-plan P4.5, C3). WC2 maps 4 physical pages of a 164-page handle
+  with INT 67h AH=44h, about 5–15 maps per timer tick, 218,641 maps to m6
+  ([external-surface.md](external-surface.md) "EMS", MEASURED). To m1b generated code
+  reads the frame 5,455 times (10,910 bytes), all through ES = E000h, page 0, in the
+  EMS heap routines (+15183..+159CF); copying every mapped page in and out moved
+  82 MB (MEASURED, `tools/ems_frame_profile.py`). Built (lazy pages): the logical
+  pages' storage after the state block (reversed, as guest RAM) is the truth and a
+  frame page holds its mapped page's bytes only while it is live (`ems.c`). A map
+  writes a live page back and leaves the new one in the store; the page is copied in
+  on its first access:
+  - before every instruction that accesses memory through ES (`lower.py ems_guard`):
+    `cmp.w #$d001,G_ES(a6)` / `bcc` out of line, where `rt_ems_es` copies in the
+    pages the access meets (d7 offset, d6 bytes; 0 for a string instruction: the
+    whole ES window); X kept, the CCR saved where flags enter in it;
+  - DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
+    service's return and an interrupt's (`rt_ems_segments`) copy in the pages their
+    windows meet, and a map copies in at once a page DS or SS addresses;
+  - the runtime's accessors (`runtime.h` `rt_frame`: DOS reads into the frame).
+  Captures show a page not yet copied in from its store page (`host_run.frame_view`).
+  To m1b the model copies 20.9 MB (MEASURED, same tool); the lockstep passes. The 68020
+  differential runs every one-instruction case that accesses through ES or loads DS
+  or SS a second time with the guards (`ems` variant), ES (or the loaded register)
+  at one of the compare's edges (D000h, D001h, DFFFh, E000h, EFFFh, F000h, FFFFh) on
+  both sides, and checks the runtime calls (`m68k_diff.ems_diffs`); plants "EMS guard
+  misses ES D001h" and "EMS DS/SS load check misses D001h". Open (open-work 10): a
+  guarded access that runs on the store page itself, without a copy.
 - Memory (D15 = b): Fast RAM required (1.36 MB code at R34 + 1.06 MiB guest RAM);
   the A1200 model runs with 8 MiB Fast; development runs set `--cpu=68030`
   (`AMIGA_CPU`, ~3× the 68020: logo at 80 vs 252 frames); timing runs

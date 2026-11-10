@@ -6,12 +6,16 @@
 #define EMS_HANDLES 16
 #define EMS_PHYS 4
 
-/* Store pages live after the state block (RT_EMS_BYTES); a mapped page is
- * copied into the frame and back out when its frame page is remapped, as host
- * bytes of a frame page span (runtime.h). A page mapped at two frame pages is
- * two copies (writes through one are not seen through the other): the game's
- * only map site (SWOTL+04918) slides a 4-page window, which aliases one page
- * only until the next call. Handles take store pages as DOSBox-X's
+/* Store pages live after the state block (RT_EMS_PAGES): they are the truth.
+ * A frame page holds its mapped page's bytes only while it is live (EMS model,
+ * docs/translator-design.md): a map writes a live page back and leaves the new
+ * one in the store; it is copied in on the first access to it, which the
+ * runtime's own accessors (rt_ems_touch, runtime.h) and the translator's guard
+ * before every ES access (rt_ems_es) report, or at once while DS or SS
+ * addresses it (their accesses are not guarded: rt_ems_segments). A page mapped
+ * at two frame pages is two copies (writes through one are not seen through
+ * the other): the game's only map site slides a 4-page window, which aliases
+ * one page only until the next call. Handles take store pages as DOSBox-X's
  * MEM_AllocatePages does, so after a release a handle's pages can be split
  * across free runs; a release leaves the frame mapped (tests/test_ems.py). */
 #if RT_EMS_PAGES > 256
@@ -20,7 +24,10 @@
 static uint16_t ems_free = RT_EMS_PAGES;
 static uint16_t pages[EMS_HANDLES];   /* 0: free; handle 0 is the operating system's */
 static uint8_t page_of[EMS_HANDLES][RT_EMS_PAGES], used[RT_EMS_PAGES];
-static uint16_t mapped[EMS_PHYS];     /* store page + 1, 0: none */
+uint16_t rt_ems_mapped[EMS_PHYS];     /* store page + 1, 0: none */
+uint8_t rt_ems_live[EMS_PHYS];        /* the frame page holds the mapped page's bytes */
+#define mapped rt_ems_mapped
+#define live rt_ems_live
 /* AH=47h/48h: a handle's saved frame mappings (DOSBox-X EMM_SavePageMap) */
 static uint16_t saved_map[EMS_HANDLES][EMS_PHYS];
 static uint8_t saved[EMS_HANDLES];
@@ -54,9 +61,10 @@ static uint16_t free_run(uint16_t *largest)
     return at;
 }
 
+/* (rt_span itself: the frame is reached here without rt_ems_touch) */
 static uint8_t *frame_page(uint8_t phys)
 {
-    return rt_span(lin(EMS_FRAME, 0) + phys * RT_EMS_PAGE, RT_EMS_PAGE);
+    return rt_guest - (lin(EMS_FRAME, 0) + (uint32_t)(phys + 1) * RT_EMS_PAGE) + 1;
 }
 
 /* One page. Frame pages and the store share their address mod 4 (both are
@@ -99,10 +107,26 @@ static uint8_t map(uint8_t phys, uint16_t page, uint16_t handle)
     return map_slot(phys, page == 0xffff ? 0 : page_of[handle][page] + 1);
 }
 
+/* The frame page shows its mapped page's bytes from now on. */
+static void expose(uint8_t phys)
+{
+    if (live[phys] || !mapped[phys]) {
+        return;
+    }
+    rt_wrote(lin(EMS_FRAME, 0) + phys * RT_EMS_PAGE, RT_EMS_PAGE);
+    copy(frame_page(phys), store(mapped[phys]));
+    live[phys] = 1;
+}
+
+static int addresses(uint16_t seg, uint8_t phys)
+{
+    uint32_t first = lin(EMS_FRAME, 0) + phys * RT_EMS_PAGE;
+    return lin(seg, 0) <= first + RT_EMS_PAGE - 1 && first <= lin(seg, 0xffff);
+}
+
 /* Frame page phys shows store slot (0: unmapped). */
 static uint8_t map_slot(uint8_t phys, uint16_t slot)
 {
-    uint8_t *frame = frame_page(phys);
     if (slot && mapped[phys] == slot) {
         /* Write-back then reload of the same page leaves the frame unchanged
          * (every remap writes back before the store is read), unless another
@@ -116,21 +140,76 @@ static uint8_t map_slot(uint8_t phys, uint16_t slot)
         }
     }
     if (mapped[phys]) {
-        copy(store(mapped[phys]), frame);
+        /* an unmapped frame page keeps the bytes it showed */
+        if (!slot) {
+            expose(phys);
+        }
+        if (live[phys]) {
+            copy(store(mapped[phys]), frame_page(phys));
+        }
         mapped[phys] = 0;
     }
+    live[phys] = 0;
     if (!slot) {
         return 0;
     }
     for (int k = 0; k < EMS_PHYS; ++k) {
-        if (mapped[k] == slot) {
-            copy(store(slot), frame_page(k));
+        if (mapped[k] == slot && live[k]) {
+            copy(store(slot), frame_page(k));   /* an alias's writes reach the new mapping */
         }
     }
-    rt_wrote(lin(EMS_FRAME, 0) + phys * RT_EMS_PAGE, RT_EMS_PAGE);
-    copy(frame, store(slot));
     mapped[phys] = slot;
+    for (int k = 0; k < EMS_PHYS; ++k) {
+        if (mapped[k] == slot && (addresses(G_DS, (uint8_t)k) || addresses(G_SS, (uint8_t)k))) {
+            expose((uint8_t)k);
+        }
+    }
     return 0;
+}
+
+/* The runtime is about to touch guest a..a+n-1 (n >= 1), which meets the frame. */
+void rt_ems_touch(uint32_t a, uint32_t n)
+{
+    uint32_t first = lin(EMS_FRAME, 0), last = first + EMS_PHYS * RT_EMS_PAGE - 1;
+    uint32_t lo = a < first ? first : a, hi = a + n - 1 > last ? last : a + n - 1;
+    for (uint32_t p = (lo - first) / RT_EMS_PAGE; p <= (hi - first) / RT_EMS_PAGE; ++p) {
+        expose((uint8_t)p);
+    }
+}
+
+/* Translator guard (lower.py ems_guard): ES >= D001h before an access of `bytes`
+ * at ES:offset; bytes 0: a string instruction, the whole ES window. */
+void rt_ems_es_c(uint32_t offset, uint32_t bytes)
+{
+    uint32_t base = lin(G_ES, 0);
+    offset &= 0xffff;
+    if (!bytes) {
+        rt_ems_touch(base, 0x10000);
+    } else if (offset + bytes > 0x10000) {        /* the word at FFFFh wraps to 0 */
+        rt_ems_touch(base + offset, 0x10000 - offset);
+        rt_ems_touch(base, offset + bytes - 0x10000);
+    } else {
+        rt_ems_touch(base + offset, bytes);
+    }
+}
+
+/* DS or SS may address the frame (a load of D001h or above, a service, an
+ * interrupt's return): their pages are live while they do. */
+void rt_ems_segments(void)
+{
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        if (addresses(G_DS, k) || addresses(G_SS, k)) {
+            expose(k);
+        }
+    }
+}
+
+/* Every frame page shows its mapped page (a capture). */
+void rt_ems_sync(void)
+{
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        expose(k);
+    }
 }
 
 void rt_int67(void)

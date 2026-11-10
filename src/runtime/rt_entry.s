@@ -36,6 +36,8 @@ G_DS	equ	1
 	xdef	rt_stop_unknown
 	xdef	rt_run_guest
 	xdef	rt_vram_mark
+	xdef	rt_ems_es
+	xdef	rt_ems_seg
 	xdef	rt_vdrv_return
 
 	xref	rt_r
@@ -59,6 +61,8 @@ G_DS	equ	1
 	xref	rt_ret_mismatch_c
 	xref	rt_stop_unknown_c
 	xref	rt_vram_rows
+	xref	rt_ems_es_c
+	xref	rt_ems_segments
 	xref	rt_vram_top
 	xref	rt_vram_bottom
 	xref	rt_vdrv_depth
@@ -452,6 +456,27 @@ port_out:
 	lea	12(a7),a7
 	subq.b	#1,rt_irq_mask
 	movem.l	(a7)+,d0-d1/a1
+	rts
+
+; EMS model (ems.c, lower.py ems_guard): the frame pages an ES access meets
+; (d7.w offset, d6.l bytes, 0: the whole ES window) or a DS or SS load's window
+; meets are copied in. Every register kept (the callers keep the CCR).
+rt_ems_es:
+	movem.l	d0-d1/a0-a1,-(a7)
+	addq.b	#1,rt_irq_mask		; an interrupt's maps wait
+	move.l	d6,-(a7)
+	move.l	d7,-(a7)
+	jsr	rt_ems_es_c
+	addq.l	#8,a7
+	subq.b	#1,rt_irq_mask
+	movem.l	(a7)+,d0-d1/a0-a1
+	rts
+rt_ems_seg:
+	movem.l	d0-d1/a0-a1,-(a7)
+	addq.b	#1,rt_irq_mask
+	jsr	rt_ems_segments
+	subq.b	#1,rt_irq_mask
+	movem.l	(a7)+,d0-d1/a0-a1
 	rts
 
 ; Indirect transfer outside the compiled compare chain: d6 CS, d7 IP. Jumps to

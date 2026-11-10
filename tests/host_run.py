@@ -1345,6 +1345,26 @@ def reference_clocks(trace):
     return calendar, clock
 
 
+EMS_FRAME, EMS_PAGE = 0xE0000, 0x4000
+
+
+def host_ems_pages(h) -> dict:
+    """The EMS model's frame pages not yet copied in (ems.c: rt_ems_live 0), as
+    their mapped store pages show them, guest order."""
+    mapped = struct.unpack(">4H", h.mem(h.syms["rt_ems_mapped"], 8))
+    live = h.mem(h.syms["rt_ems_live"], 4)
+    return {k: h.mem(STATE + 16 + (mapped[k] - 1) * EMS_PAGE, EMS_PAGE)[::-1]
+            for k in range(4) if mapped[k] and not live[k]}
+
+
+def frame_view(ram: bytes, pages: dict) -> bytes:
+    """Guest RAM as the guest sees it: frame pages not copied in show their store page."""
+    ram = bytearray(ram)
+    for k, page in pages.items():
+        ram[EMS_FRAME + k * EMS_PAGE:EMS_FRAME + (k + 1) * EMS_PAGE] = page
+    return bytes(ram)
+
+
 def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None,
           trace: Path | None = None, elf: Path | None = None) -> list[str]:
     script = milestone_script(milestone)
@@ -1411,7 +1431,7 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
         ref_regs = dict(kv.split("=") for kv in (snap / "regs.txt").read_text().split())
         ref = (snap / "ram.bin").read_bytes()
         g = h.guest_regs(0)
-        problems += check_capture("host", g, h.mem(STATE, 16), h.gmem(0, 0x100000),
+        problems += check_capture("host", g, h.mem(STATE, 16), frame_view(h.gmem(0, 0x100000), host_ems_pages(h)),
                                   h.mem(h.syms["rt_dac"], 768) if frame else None,
                                   ref_regs, ref, snap, h, h.irq_stack[-1] if h.irq_stack else None)
         if amiga:
@@ -1420,7 +1440,9 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
             if frame:
                 problems += compare_shown(amiga, int(regs["bpr"]), snap)
             problems += check_capture("amiga", ga, (amiga / "state.bin").read_bytes(),
-                                      (amiga / "ram.bin").read_bytes()[::-1],  # reversed
+                                      frame_view((amiga / "ram.bin").read_bytes()[::-1],  # reversed
+                                                 {k: (amiga / f"ems-page{k}.bin").read_bytes()[::-1]
+                                                  for k in range(4) if (amiga / f"ems-page{k}.bin").exists()}),
                                       (amiga / "dac.bin").read_bytes() if frame else None,
                                       ref_regs, ref, snap, h, amiga_irq(amiga))
     return problems

@@ -164,6 +164,9 @@ def runtime(operations, plant=None):
         T.machine.call(h, 'rt_int67')
         assert not h.halted, h.log
 
+    def touch(addr, n):     # a guest access: the translator's guard reports it first
+        T.machine.call(h, 'rt_ems_touch', addr, n)
+
     last, loaded = {}, {}   # per frame page: mapped page, its bytes right after mapping
     for op in operations:
         kind = op[0]
@@ -194,18 +197,24 @@ def runtime(operations, plant=None):
             # reach the store; stale-remap: the same on an identical remap
             if phys in loaded and ((plant == 'lost-writeback' and not same) or
                                    (plant == 'stale-remap' and same)):
+                touch(frame, PAGE)
                 T.machine.write_guest(h, frame, loaded[phys])
             ems(0x4400 | phys, op[2], handles[op[3]] if kind == 'map' else op[3])
             words.append(reg(h, 'ax'))
             if phys < 4 and reg(h, 'ax') >> 8 == 0:
                 if plant == 'short-tail':
+                    touch(frame + PAGE - 3, 3)
                     T.machine.write_guest(h, frame + PAGE - 3, bytes(3))
+                touch(frame, PAGE)
                 last[phys], loaded[phys] = op[2], h.gmem(frame, PAGE)
         elif kind == 'fill':
+            touch(FRAME + op[1] * PAGE, PAGE)
             T.machine.write_guest(h, FRAME + op[1] * PAGE, pattern(op[2], op[3]))
         elif kind == 'poke':
+            touch(FRAME + op[1] * PAGE + op[2], 1)
             T.machine.write_guest(h, FRAME + op[1] * PAGE + op[2], bytes([op[3]]))
         elif kind == 'dump':
+            touch(FRAME, 0x10000)
             frames.append(h.gmem(FRAME, 0x10000))
     return words, frames
 

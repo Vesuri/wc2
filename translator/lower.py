@@ -130,6 +130,7 @@ class Ctx:
     jump_return: bool = False                 # indirect near jmp that is a near return (jump-returns.csv)
     program: bool = False                     # program mode (return checks, runtime calls)
     vram: bool = False                        # graphics driver: stores to A000h mark rows (D9)
+    ems: bool = False                         # EMS model: ES accesses guarded, DS/SS loads checked
     driver_call: bool = False                 # D9: PLINK thunk jump or far call into the graphics driver
     ret_mismatch: str = "rt_ret_mismatch"     # a return check's mismatch branch (emit.py: local)
     far_ret_mismatch: str = "rt_ret_far_mismatch"
@@ -362,6 +363,16 @@ class Lowering:
             self.at(back)
             self.cold += [f"{cold}:", "\tjsr smc_expose", f"\tbra {back}"]
             self.stats["segment check (cell cache)"] += 1
+        if self.c.ems and s in ("ds", "ss"):
+            # EMS model: DS and SS accesses are not guarded, so a load whose
+            # window may meet the frame has its pages copied in (rt_ems_seg)
+            k = sum(1 for x in self.cold if x.startswith(f"{self.c.label}_es"))
+            cold, back = f"{self.c.label}_es{k}", f"{self.c.label}_et{k}"
+            self.e(f"cmp.w #$d001,{src}")
+            self.e(f"bcc {cold}")
+            self.at(back)
+            self.cold += [f"{cold}:", "\tjsr rt_ems_seg", f"\tbra {back}"]
+            self.stats["EMS segment check"] += 1
         self.e(f"lsl.l #4,{src}")
         self.e(f"lea -$7fff(a6),{SEGBASE[s]}")
         self.e(f"suba.l {src},{SEGBASE[s]}")
@@ -537,6 +548,8 @@ class Lowering:
                 raise LowerError(f"no lowering for {i}")
         if op not in ("mov", "push", "callf", "jmpf"):
             self.check_reloc(set())
+        if self.c.ems:
+            self.ems_guard()
         if self.c.vram and op not in STRING_OPS:
             for m in mem_dests(i):
                 self.vram_mark(m)
@@ -550,6 +563,49 @@ class Lowering:
         self.out, compact_stats = compact(self.out)
         self.stats.update(compact_stats)
         return self.out
+
+    # -- EMS model: the frame's pages are copied in on first access (ems.c) --
+    def ems_guard(self) -> None:
+        """Before an instruction that accesses memory through ES: when ES is
+        D001h or above (its window may meet the frame E0000h-EFFFFh), the
+        runtime copies in the frame pages the access meets (rt_ems_es: d7 =
+        offset, d6 = bytes; 0 for a string instruction, the whole window), out
+        of line. Keeps every register, X, and the CCR where flags enter in it.
+        DS and SS are checked at their loads instead (putseg)."""
+        i = self.i
+        if i.op in ("lea", "nop"):
+            return
+        mems = [o for o in i.operands if isinstance(o, Mem) and o.seg == "es"]
+        string = i.op in ("movs", "cmps", "stos", "scas")
+        if not mems and not string:
+            return
+        k = sum(1 for x in self.cold if x.startswith(f"{self.c.label}_ex"))
+        cold, back = f"{self.c.label}_ex{k}", f"{self.c.label}_er{k}"
+        keep = bool(self.c.ccr_in)
+        # cmp and bcc keep X; emitted directly (the X whitelist has no branches)
+        if keep:
+            self.out.append("\tmove.w ccr,-(sp)")
+        self.out.append("\tcmp.w #$d001,G_ES(a6)")
+        self.out.append(f"\tbcc {cold}")
+        self.out.append(f"{back}:")
+        if keep:
+            self.out.append("\tmove.w (sp)+,ccr")
+        hot, x_cf, self.out = self.out, self.x_cf, [f"{cold}:"]
+        self.e("move.w ccr,-(sp)")
+        self.e("movem.l d6-d7,-(sp)")
+        if string:
+            self.e("moveq #0,d6")
+        else:
+            m = mems[0]
+            self.offset_d7(m)
+            self.e(f"moveq #{max(1, m.width // 8)},d6")   # a far pointer: 4
+        self.e("jsr rt_ems_es")
+        self.e("movem.l (sp)+,d6-d7")
+        self.e("move.w (sp)+,ccr")
+        self.e(f"bra {back}")
+        self.cold += self.out
+        self.out, self.x_cf = hot, x_cf
+        self.stats["EMS guard"] += 1
 
     # -- D3 cell caches: CS stores that may reach a self-modified region -----
     def code_store(self, m: Mem) -> None:

@@ -14,9 +14,9 @@ def check(broken=False):
     original_run=h.m.run
     resumed=set()
     calls=[0]
-    def lower(insns,cs,tag,end_ip,**_extra):   # no cs-slot variant
+    def lower(insns,cs,tag,end_ip,**extra):     # the harness's Ctx fields (ems), plus the REP hook
         def context(k):
-            return Ctx(cs=hx(cs),label=f'{tag}_{k}',rep_hook=(0,f'{tag}_{k}'))
+            return Ctx(cs=hx(cs),label=f'{tag}_{k}',rep_hook=(0,f'{tag}_{k}'),**extra)
         lines=[f'{tag}:'];cold=[];stats=Counter()
         if tag=='c0':lines += [f'rt_replay_rep equ ${HOOK:x}']
         for k,lw in enumerate(D.F.plan(insns,D.F.seq_lives(insns),{0},context)):

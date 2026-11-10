@@ -136,3 +136,10 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | P5: the Amiga build's log, interrupt names and fault prefix say WC2, `$VER` Wing Commander 2 | `src/platform/amiga/{Wc2.cpp,amiga_platform.c,version.s}` | ren |
 | P5: VROOMM's INT 3Fh opens no service level in the replay (it never returns after the INT; MEASURED, the m1 and m1b references) | `tests/amiga_replay.c` | wc2 |
 | P5: the capture prints no sound-effect cache (WC2 has no SFX path) | `amiga/milestone.gdb.in` | wc2 |
+| P5: EMS model with lazy frame pages: a map is a table update and a write-back of a live page; first access copies in (`rt_ems_touch`, `rt_ems_es`, `rt_ems_segments`, `rt_ems_sync`); the runtime's accessors report frame accesses (`rt_frame`) | `src/runtime/{ems.c,runtime.h,machine.c,rt_entry.s}` | wc2 |
+| P5: `Ctx.ems`: a guard before every ES access, a check at DS and SS loads (`ems_guard`, `putseg`) | `translator/lower.py`, `translator/emit.py` | wc2 |
+| P5: the `ems` variant of the one-instruction cases at the guard's edges, the runtime calls checked; plants for both compares | `tests/{m68k_diff,m68k_sabotage}.py` | wc2 |
+| P5: captures show a frame page not yet copied in from its store page | `tests/host_run.py`, `amiga/milestone.gdb.in` | wc2 |
+| P5: the EMS test's guest reports each frame access to the model first (`rt_ems_touch`); an alias's writes reach a page mapped again (`map_slot`) | `tests/test_ems.py`, `src/runtime/ems.c` | wc2 |
+| P5: the REP test's lowering takes the harness's Ctx fields (`ems`) | `tests/test_rep_lowering.py` | wc2 |
+| P5: the replay harness stops on a frame access (`rt_ems_touch` stub) | `tests/test_replay_events.py` | wc2 |
