@@ -192,7 +192,7 @@ Wc2::Wc2() :
     if (!display) return;
     display->queue.pending = -1;
     if (!Pointer::begin()) {
-        plat_log("SWOTL no Chip RAM for the pointer sprites");
+        plat_log("WC2 no Chip RAM for the pointer sprites");
     }
     // Largest DMA allocations first; Exec AllocMem provides 8-byte alignment.
     for (uint16_t b = 0; b < 2; ++b) {
@@ -228,7 +228,7 @@ Wc2::Wc2() :
         display->copper[b][at] = 0xfffffffe;
     }
     if (!Audio::begin()) {
-        plat_log("SWOTL no Chip RAM for sound");
+        plat_log("WC2 no Chip RAM for sound");
     }
     amiga_bitmap = display->bm[0];
     for (unsigned k = 0; k < 1 + 256 * 3 + 1; ++k) {
@@ -306,12 +306,12 @@ void Wc2::takeOver()
     // or soft-interrupt queue (L10).
     vbiInterrupt.is_Node.ln_Type = NT_INTERRUPT;
     vbiInterrupt.is_Node.ln_Pri = 127;
-    vbiInterrupt.is_Node.ln_Name = (char*)"SWOTL VBI";
+    vbiInterrupt.is_Node.ln_Name = (char*)"WC2 VBI";
     vbiInterrupt.is_Data = 0;
     vbiInterrupt.is_Code = (void (*)())vbiHandler;
     fieldInterrupt.is_Node.ln_Type = NT_INTERRUPT;
     fieldInterrupt.is_Node.ln_Pri = 0;
-    fieldInterrupt.is_Node.ln_Name = (char*)"SWOTL field";
+    fieldInterrupt.is_Node.ln_Name = (char*)"WC2 field";
     fieldInterrupt.is_Data = 0;
     fieldInterrupt.is_Code = (void (*)())fieldHandler;
     Disable();
@@ -328,7 +328,7 @@ void Wc2::takeOver()
     Audio::takeOver();
     AmigaHardware::setInterrupts(TAKEOVER_INTERRUPTS, true);
     if (!Input::begin()) {
-        plat_log("SWOTL no ciaa.resource");
+        plat_log("WC2 no ciaa.resource");
     }
     // Nothing inside Wait()s except DOS calls, which run in I/O windows (L6, L7).
     Forbid();
@@ -459,7 +459,7 @@ void Wc2::beginIO()
     AmigaHardware::setInterrupts(oldEnabledInterrupts & INTF_ALL, true);
     ioKeyboardInterrupt.is_Node.ln_Type = NT_INTERRUPT;
     ioKeyboardInterrupt.is_Node.ln_Pri = 0;
-    ioKeyboardInterrupt.is_Node.ln_Name = (char*)"SWOTL keyboard";
+    ioKeyboardInterrupt.is_Node.ln_Name = (char*)"WC2 keyboard";
     ioKeyboardInterrupt.is_Data = 0;
     ioKeyboardInterrupt.is_Code = (void (*)())ioKeyboardServer;
     AddIntServer(INTB_VERTB, &ioKeyboardInterrupt);

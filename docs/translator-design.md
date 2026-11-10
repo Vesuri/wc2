@@ -168,14 +168,20 @@ diffs directly); relocated words in instructions are emitted as
   `rt_in8/16`, `rt_out8/16` (d7 port, d6 value), `rt_halt`,
   `rt_stop_unknown` (prints and halts; never resumes).
 - Returns: a `ret` continues at the return sites of the calls whose targets
-  reach it without entering a call (the divide-error edge is not flow);
+  reach it without entering a call (the divide-error edge is not flow); an
+  indirect near `jmp` in `annotations/jump-returns.csv` (a routine that pops
+  its return IP into memory and leaves through it, Borland's `_setargv`) is such
+  a return: `rts` with the target in d7, checked at the caller's return site. A
+  direct near call in `annotations/push-calls.csv` pushes a continuation its
+  callee consumes (`pop cx; add cx,3; jmp cx`, or a drop): push and jump, no
+  native frame, no return site;
   calls through the dispatcher return from any `ret` a table row reaches
   (far calls: a far row, R14e).
 - Generated files: `build/gen/<module>.s`, `support.s` and `program.s`
   (equates, runtime xrefs, includes, dispatch table, `load_segment`,
   `overlay_table`), header = SHA-256 of translator sources, annotations and
   input image (`make gen-check`). One assembly unit (`vasm -Felf`), linked
-  with the runtime: `make host` (`build/host/swotl.elf`), `make amiga`.
+  with the runtime: `make host` (`build/host/wc2.elf`), `make amiga`.
 - Overlays (D2 = a): every translated module resident in native code; the
   guest's own PLINK manager runs translated and loads the overlay bytes into
   guest RAM (data, CS-relative reads, RAM equal to the reference).
@@ -237,8 +243,9 @@ diffs directly); relocated words in instructions are emitted as
 ### Annotations (`annotations/`, CSV)
 
 `entries.csv`, `indirect.csv` (site -> targets; written by `make map`),
+`jump-returns.csv` and `push-calls.csv` (Returns, above),
 `tables.csv` (cs: word tables sized by evidence other than an MS C bounds
-check, read by the sweep), `runtime.csv` (MS C runtime entries: name,
+check, read by the sweep), `runtime.csv` (runtime entries: name, `seg_ip` the CS a seed without one takes,
 class, evidence), `self-modifying.csv` (D16 regions and cell forms),
 `flags.csv` (PUSHF/POPF pairs that only save and restore FLAGS),
 `hle.csv` (guest range, service, reason, oracle; below), `align.csv`
@@ -283,7 +290,7 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
 - File dates (`tests/test_file_dates.py`): live DOSBox-X find-first/next
   over synthetic files verifies Amiga DateStamp conversion and runtime
   DTA time/date, including leap centuries, pre-1980 wrapping and odd seconds.
-- Host run (`make test-host`, gate 5): `build/host/swotl.elf` on Unicorn
+- Host run (`make test-host`, gate 5): `build/host/wc2.elf` on Unicorn
   68020 from the MZ entry to milestones m1–m3 (`make test-host-all`: m1–m7,
   the Makefile's `HOST_COVERAGE` scenarios and `t-hle-music-skip`; files the
   guest writes are kept in memory); every software
@@ -317,7 +324,9 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   bytes; `rep stos/movs` once for the whole run), which widens per-row
   changed columns; a store with no driver call in progress stops. The `jmp
   far` of each PLINK thunk into the driver is a `jsr` counted in
-  `rt_vdrv_depth`; the outermost return publishes the frame
+  `rt_vdrv_depth` (WC2: each `call far [mem]` whose traced targets are in
+  `TM.DRV` or `SUPERTM.DRV`, `emit.driver_calls`; a dispatch into a driver from
+  another site stops at its first VRAM store); the outermost return publishes the frame
   (`rt_vdrv_return`). The game's mouse poll (INT 33h AX=3, after all of a
   frame's drawing) ends a frame (`rt_video_frame`): its changed rows go to
   `plat_present` as 32-pixel-aligned rectangles there if a vertical blank is

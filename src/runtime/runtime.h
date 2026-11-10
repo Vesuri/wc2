@@ -138,6 +138,8 @@ extern uint16_t rt_entry_cs, rt_entry_ip;
 void rt_int21(uint16_t cs, uint16_t ip);
 void rt_int10(void);
 extern uint8_t rt_dac[768];      /* video.c: 6-bit R, G, B */
+void rt_dac_out(uint16_t port, uint8_t v);  /* video.c: ports 3C7h-3C9h */
+uint8_t rt_dac_in(void);
 /* video.c: set to 1 (with RT_RAISE_IRQ) at each vertical blank by a platform
  * without a field task (rt_video_refresh at the next poll point; the host);
  * a published frame's changed rows are presented at the game's mouse poll,

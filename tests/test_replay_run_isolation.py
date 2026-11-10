@@ -41,27 +41,27 @@ def check():
 
             class Process:
                 def wait(self, timeout):
-                    assert timeout == 2400
+                    assert timeout == R.TIMEOUT
                     return result[0]
             return Process()
 
         def compare(name, timeout, capture, extra, trace):
             calls.append((name, timeout, capture, extra, trace))
-            assert name == 'test-isolation' and timeout == 2400 and extra is None
+            assert name == 'test-isolation' and timeout == R.TIMEOUT and extra is None
             assert trace == out / 'original-trace'
             return []
 
         with patch.object(R.subprocess, 'Popen', launch), patch.object(R.H, 'check', compare):
             try:
-                R.run('test-isolation', out, trace=out / 'original-trace')
-            except subprocess.CalledProcessError as error:
-                assert error.returncode == 1
+                R.run('test-isolation', out, out / 'original-trace', out / 'amiga')
+            except SystemExit as error:
+                assert 'no capture (exit 1)' in str(error), error
             else:
                 raise AssertionError('failed emulator accepted')
             assert not calls
             result[0] = 0
-            R.run('test-isolation', out, trace=out / 'original-trace')
-            R.run('test-isolation', out, trace=out / 'original-trace')
+            R.run('test-isolation', out, out / 'original-trace', out / 'amiga')
+            R.run('test-isolation', out, out / 'original-trace', out / 'amiga')
         assert len(used) == 3 and len(calls) == 2
         assert (old / 'A.CBA').read_bytes() == b'old failed run'
         assert all((p / 'dh1/A.CBA').read_bytes() == b'new game write' for p in used)

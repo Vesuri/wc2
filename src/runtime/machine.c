@@ -1,8 +1,9 @@
 /* Machine model: the guest memory and CPU state the reference machine
- * (DOSBox-X, reference/dosbox-x.conf) presents at the SWOTL.EXE entry, the
- * EXEC of SWOTL.EXE, interrupt/fault delivery and the dispatch lookup. Values
- * marked "reference" are DOSBox-X's and are checked by tests/host_run.py
- * against the m0/m1 snapshots and the service log. */
+ * (DOSBox-X, reference/dosbox-x.conf) presents at the WC2.EXE entry, the
+ * EXEC of WC2.EXE, interrupt/fault delivery and the dispatch lookup. Values
+ * marked "reference" are DOSBox-X's (MEASURED in the m0 host reference's entry
+ * snapshot, `tools/reference.py --host m0`) and are checked by tests/host_run.py
+ * against the m1 snapshot and the service log. */
 #include "runtime.h"
 #include "platform.h"
 
@@ -12,32 +13,60 @@ uint16_t rt_entry_cs, rt_entry_ip;
 uint16_t rt_deliver_cs, rt_deliver_ip;
 void *rt_deliver_code;      /* the handler's translated entry (rt_lookup, far) */
 
-/* Command tail of the reference launch (tools/pc_run.py LAUNCH); its
- * joystick argument is Y with rt_joystick. */
-static char command_tail[] = " V S 5 N Y Y 64";
-#define JOYSTICK_ARG 7
-/* Environment of the reference shell, then the program path. */
+/* The reference launch (`WC2` in C:\\WING2, tools/pc_run.py) has no
+ * arguments: an empty command tail and blank FCBs. Environment of the
+ * reference shell (its BLASTER line from reference/dosbox-x.conf), then the
+ * program path. */
 static const char environment[] =
     "PATH=Z:\\;Z:\\SYSTEM;Z:\\BIN;Z:\\DOS;Z:\\4DOS;Z:\\DEBUG;Z:\\TEXTUTIL;Z:\\PATCHING\0"
     "COMSPEC=Z:\\COMMAND.COM\0"
     "PROMPT=$P$G\0"
-    "\0\1\0C:\\SWOTL.EXE\0NT.COM";  /* reference: residue of the shell's own path */
+    "BLASTER=A220 I7 D1 P330 T3\0"
+    "\0\1\0C:\\WING2\\WC2.EXE\0OM";  /* reference: residue of the shell's own path */
 
-#define ENV_PARAS 0x47
+#define ENV_PARAS 0x49
 #define TOP_SEG 0x9fff          /* reference: first segment past DOS memory */
 #define PARENT_PSP 0x0701       /* reference: COMMAND.COM */
 
 /* Reference interrupt vectors the game reads (INT 21h AH=35h) or chains to. */
 #define MOUSE_INT74_SEG 0xf000
-#define MOUSE_INT74_OFF 0xd020
+#define MOUSE_INT74_OFF 0xcfa0
 
 static const struct { uint8_t vector; uint16_t seg, off; } vectors[] = {
-    {0x00, 0xf000, 0xca60}, {0x05, 0xf000, 0xff54}, {0x08, 0xf000, 0xfea5},
-    {0x09, 0xf000, 0xe987}, {0x10, 0xc000, 0x00ee}, {0x16, 0xf000, 0xcfc0},
-    {0x1c, 0xf000, 0xcc00}, {0x21, 0xf000, 0xd100}, {0x22, 0xf000, 0xdac8},
-    {0x23, 0x0701, 0x0128}, {0x24, 0x0701, 0x0110}, {0x32, 0xf000, 0xca60}, {0x33, 0xc402, 0x0010},
-    {0x67, 0xc401, 0x0004}, {0x74, MOUSE_INT74_SEG, MOUSE_INT74_OFF},
+    {0x00, 0xf000, 0xca60}, {0x04, 0x0070, 0x000e}, {0x05, 0xf000, 0xff54},
+    {0x06, 0xf000, 0xca60}, {0x08, 0xf000, 0xfea5}, {0x09, 0xf000, 0xe987},
+    {0x0f, 0x0070, 0x000e}, {0x10, 0xc000, 0x00ee}, {0x13, 0xf000, 0xcee0},
+    {0x15, 0xf000, 0xcba0}, {0x16, 0xf000, 0xcf40}, {0x1a, 0xf000, 0xcbe0},
+    {0x1b, 0xf000, 0xd140}, {0x1c, 0xf000, 0xcc00}, {0x21, 0xf000, 0xd080},
+    {0x22, 0xf000, 0xdac8}, {0x23, 0x0701, 0x0128}, {0x24, 0x0701, 0x0110},
+    {0x2f, 0xf000, 0xd1a0}, {0x33, 0xc402, 0x0010}, {0x34, 0xf000, 0xca60},
+    {0x3f, 0xf000, 0xca60}, {0x67, 0xc401, 0x0004}, {0x74, MOUSE_INT74_SEG, MOUSE_INT74_OFF},
 };
+
+/* The BIOS data area at the WC2.EXE entry, reference (MEASURED: the m0
+ * snapshot's 0040:0000-00FF, non-zero runs): ports, equipment, the keyboard
+ * buffer, the video mode and its CRTC base 03D4h, EGA/VGA fields. */
+static const struct { uint16_t at; uint8_t n; uint8_t bytes[19]; } bda[] = {
+    {0x400, 4, {0xf8, 0x03, 0xf8, 0x02}},
+    {0x408, 2, {0x78, 0x03}},
+    {0x410, 5, {0x67, 0x44, 0x00, 0x80, 0x02}},
+    {0x41a, 3, {0x1e, 0x00, 0x1e}},
+    {0x449, 2, {0x03, 0x50}},
+    {0x44d, 1, {0x10}},
+    {0x451, 1, {0x05}},
+    {0x460, 7, {0x07, 0x06, 0x00, 0xd4, 0x03, 0x29, 0x30}},
+    {0x475, 1, {0x02}},
+    {0x478, 19, {0x0a, 0x0a, 0x0a, 0x00, 0x0a, 0x0a, 0x01, 0x01, 0x1e, 0x00, 0x3e, 0x00,
+                 0x18, 0x10, 0x00, 0x60, 0xf9, 0x51, 0x0b}},
+    {0x496, 2, {0x10, 0x10}},
+    {0x4a8, 4, {0xff, 0x30, 0x00, 0xc0}},
+};
+
+/* INT 15h AH=C0h: the BIOS configuration table at F000:C930 (FC93:0000):
+ * size 8, model FCh, submodel 0, revision 1, features 70h 40h
+ * (MEASURED: host-m1b, INT 15h AX=C000h -> ES:BX FC93:0000, and its RAM). */
+#define CONFIG_SEG 0xfc93
+static const uint8_t config_table[] = {0x08, 0x00, 0xfc, 0x00, 0x01, 0x70, 0x40, 0x00, 0x00, 0x00};
 
 static void put_bytes(uint32_t a, const void *src, uint32_t n)
 {
@@ -77,42 +106,41 @@ static void psp(uint16_t seg)
     wr16(p + 0x38, 0xffff); wr16(p + 0x3a, 0xffff);
     wr16(p + 0x40, 0x0005);                   /* DOS version 5.0 */
     put_bytes(p + 0x50, "\xcd\x21\xcb", 3);
-    command_tail[JOYSTICK_ARG] = rt_joystick ? 'Y' : 'N';
-    /* FCBs 1 and 2 from the first two arguments ("V", "S") */
-    for (int f = 0; f < 2; ++f) {
+    for (int f = 0; f < 2; ++f) {       /* FCBs 1 and 2: no arguments */
         uint32_t fcb = p + 0x5c + 0x10 * f;
         for (int k = 1; k < 12; ++k) {
             wr8(fcb + k, ' ');
         }
-        wr8(fcb + 1, (uint8_t)command_tail[1 + 2 * f]);
     }
-    wr8(p + 0x80, sizeof command_tail - 1);
-    put_bytes(p + 0x81, command_tail, sizeof command_tail - 1);
-    wr8(p + 0x81 + sizeof command_tail - 1, '\r');
+    wr8(p + 0x80, 0);                   /* empty command tail */
+    wr8(p + 0x81, '\r');
 }
 
 static void fail_read(int32_t got, int32_t want)
 {
     if (got != want) {
-        rt_stop("SWOTL.EXE short read", (uint32_t)got, (uint32_t)want);
+        rt_stop("WC2.EXE short read", (uint32_t)got, (uint32_t)want);
     }
 }
 
-/* EXEC SWOTL.EXE at PSP + 10h (the reference load segment). */
+/* EXEC WC2.EXE at PSP + 10h (the reference load segment). */
 static void exec_root(uint16_t psp_seg)
 {
     uint8_t h[0x1c];
     uint16_t load = psp_seg + 0x10;
-    int32_t f = plat_open("SWOTL.EXE", 0);
+    int32_t f = plat_open("WC2.EXE", 0);
     if (f < 0) {
-        rt_stop("SWOTL.EXE not found", 0, 0);
+        rt_stop("WC2.EXE not found", 0, 0);
     }
     fail_read(plat_read(f, h, sizeof h), sizeof h);
 #define HW(o) ((uint16_t)(h[o] | h[(o) + 1] << 8))
     if (HW(0) != 0x5a4d) {
-        rt_stop("SWOTL.EXE is not MZ", HW(0), 0);
+        rt_stop("WC2.EXE is not MZ", HW(0), 0);
     }
-    uint32_t size = HW(4) * 512u - (HW(2) ? 512u - HW(2) : 0) - HW(8) * 16u;
+    /* DOSBox-X reads whole pages: the last-page count (1E0h) is not applied, so
+     * the 20h bytes after the load module (the FBOV header) are in RAM too
+     * (MEASURED: host-m0 and ref-m0-a RAM equal WC2.EXE to 2FA3Fh, 27800h bytes) */
+    uint32_t size = HW(4) * 512u - HW(8) * 16u;
     plat_seek(f, HW(8) * 16, 0);
     uint8_t *image = rt_span_w(lin(load, 0), size);
     fail_read(plat_read(f, image, size), (int32_t)size);
@@ -147,12 +175,14 @@ void rt_start(uint8_t *mem)
         wr16(vectors[k].vector * 4 + 2, vectors[k].seg);
     }
     put_bytes(lin(0xc401, 0x0a), "EMMXXXX0", 8);  /* EMS driver name at INT 67h:000Ah */
-    wr8(0x449, 0x03);                             /* BIOS: text mode 3, 80 columns */
-    wr16(0x44a, 80);
+    for (uint32_t k = 0; k < sizeof bda / sizeof bda[0]; ++k) {
+        put_bytes(bda[k].at, bda[k].bytes, bda[k].n);
+    }
+    put_bytes(lin(CONFIG_SEG, 0), config_table, sizeof config_table);
     uint16_t psp_seg = (uint16_t)load_segment - 0x10;
-    mcb(RT_ENV_SEG - 1, 'M', psp_seg, ENV_PARAS, "SWOTL\0\0\0");
+    mcb(RT_ENV_SEG - 1, 'M', psp_seg, ENV_PARAS, "WC2\0\0\0\0\0");
     put_bytes(lin(RT_ENV_SEG, 0), environment, sizeof environment);
-    mcb(psp_seg - 1, 'Z', psp_seg, TOP_SEG - psp_seg, "SWOTL\0\0\0");
+    mcb(psp_seg - 1, 'Z', psp_seg, TOP_SEG - psp_seg, "WC2\0\0\0\0\0");
     mcb(TOP_SEG, 'M', 0x0008, 0x2c00, "SC      ");  /* reference: link to upper memory */
     wr8(lin(MEDIA_SEG, MEDIA_OFF), 0xf8);          /* reference: drive C: media descriptor */
     psp(psp_seg);
@@ -238,6 +268,9 @@ static uint32_t deliver(uint8_t vector, uint16_t cs, uint16_t ip)
 
 static void bench_service(void);
 
+static void int15(uint16_t cs, uint16_t ip);
+static void int1a(uint16_t cs, uint16_t ip);
+
 uint32_t rt_int_c(uint32_t d6, uint32_t ip)
 {
     uint8_t vector = (uint8_t)d6;
@@ -260,6 +293,8 @@ uint32_t rt_int_c(uint32_t d6, uint32_t ip)
     case 0x10: rt_int10(); break;
     case 0x21: rt_int21(cs, (uint16_t)ip); break;
     case 0x16: rt_int16(); break;
+    case 0x15: int15(cs, (uint16_t)ip); break;
+    case 0x1a: int1a(cs, (uint16_t)ip); break;
     case 0x33: rt_int33(); break;
     case 0x67: rt_int67(); break;
     default: rt_unsupported("interrupt", vector, cs, (uint16_t)ip);
@@ -361,6 +396,31 @@ static void bios_tick(void)
         t = 0;
     }
     wr32(BIOS_TICKS, t);
+}
+
+/* INT 1Ah AH=00h: the BIOS tick count in CX:DX, AL the midnight flag, which
+ * the read clears. */
+static void int15(uint16_t cs, uint16_t ip)
+{
+    if (AH(rt_r.ax) != 0xc0) {
+        rt_unsupported("system function", 0x15, cs, ip);
+    }
+    rt_r.ax = 0;    /* AH=0: supported; DOSBox-X clears AL too (MEASURED: host-m1b) */
+    rt_r.bx = 0;
+    G_ES = CONFIG_SEG;
+    set_cf(0);
+}
+
+static void int1a(uint16_t cs, uint16_t ip)
+{
+    if (AH(rt_r.ax) != 0x00) {
+        rt_unsupported("time-of-day function", 0x1a, cs, ip);
+    }
+    uint32_t t = rd32(BIOS_TICKS);
+    rt_r.cx = (uint16_t)(t >> 16);
+    rt_r.dx = (uint16_t)t;
+    SET_AL(rt_r.ax, rd8(BIOS_MIDNIGHT));
+    wr8(BIOS_MIDNIGHT, 0);
 }
 
 /* IRQ0's handler runs (rt_irq_async / rt_irq_interrupt entry to

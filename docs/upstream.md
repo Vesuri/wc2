@@ -36,6 +36,8 @@ brings its x86 front end here (owner's direction, 2026-11-09); its 68020 lowerin
 | `translator/lower.py`, `flags.py`, `reglive.py` | `ec4a238` | the 80186 lowerings: shift and rotate immediates masked to 5 bits (0: no-op, up to 8 `#n`, else `moveq`), OF undefined unless the count is 1, `imul r,rm,imm`, `push imm` with its relocation check, `enter`/`leave` on the mirrored SP/BP; `writes()` of a masked count 0 is no flags |
 | `tests/m68k_sabotage.py` | `ec4a238` | `only`; plants `imul r,rm,imm flags of the unsigned product`, `enter copies one frame pointer`, `leave keeps BP`, `push imm pushes 0`, `shift by an immediate counts 1` |
 | `tests/m68k_blocks.py` | `ec4a238` | X-Wing's version as the base (per-module segments, no SWOTL-pinned regressions or native-routine cases) |
+| `tests/host_run.py`, `tests/rep_replay.py` | `49b792b` | P5: X-Wing's lockstep (poll-point interrupts, REP slices through the diagnostic image, VGA status replay, launch and key handling) merged by three-way merge against SWOTL `658fc60`; WC2: host references `tmp/pc-runs/host-<m>`, the PIT reads replayed beside 3DAh (`port_runs`, `trace/replay-ports.csv`), the overlay probe (each overlay alone at a buffer CS) and sabotage `overlay` for SWOTL's resident check, `pit`; `rep_replay`'s cache split (generation keyed by translator, annotations and labels; the link also by the runtime objects) |
+| `tests/amiga_replay.{py,c}` | `49b792b`, `2de0225` | P5: X-Wing's replay (REP stream, service-hash checkpoints, early-return stop, the replay machine's Zorro III board, 32 MB for WC2) merged; WC2: 3DAh and PIT streams, drivers at their load paragraphs, an overlay point's CS from its stub's word 10h, `fresh_run_directory` kept for `test_replay_run_isolation` |
 
 ## Not imported
 
@@ -55,7 +57,8 @@ P0: every one fails before it for the reason given). Enter each into `make test`
 
 | Tests | Need | Phase |
 |---|---|---|
-| `test_cell_cache`, `test_dos_sda`, `test_dos_search`, `test_ems`, `test_far_return_protocol`, `test_file_dates`, `test_host_launch`, `test_irq_in_service`, `test_mouse_irq`, `test_pointer_model`, `test_interrupt_frame_mask`, `test_key_chords`, `test_keyboard_prefix`, `test_host_replay_visits`, `test_replay_hooks`, `test_replay_run_isolation` | generated labels of SWOTL's guest code (`R_03E64` and others): re-pointed at WC2's | P5 |
+| `test_pointer_model` | WC2's pointer rows in `annotations/pointer.csv` (`pointer.c` is inactive without them) | P6 |
+| `test_cell_cache` | none applies: WC2's self-modified regions are switches and operand reads, with no cell cache (no `_walk_plant` in `build/gen`, MEASURED at P5) | — |
 | `test_irq_footprint` | an INT 08h handler row in `entries.csv` | P4.4 |
 | `test_profile_tools` | generated guest call targets | P4 |
 | `m68k_sabotage` plants on `program` and `walk` (37): `tests/m68k_blocks.py` needs generated blocks, and it imports SWOTL's compute and scene predecessor tests (`test_compute_contract` and others, not imported): drop those for WC2's | a module in scope (P1.4 brings the loader model only) | P2 |
@@ -112,3 +115,24 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | P4: a program or walk plant that leaves the generated text unchanged is deferred, not caught (WC2: the cell-walk and cache plants, the outline plants, the BP-exit plant); `SABOTAGE_JOBS` caps the workers | `tests/m68k_sabotage.py` | up |
 | P4: `m68k_blocks` checks every proved switch table (the `indirect.csv` rows with switch targets) from its jump, each target and the stop; fixture memory may depend on the case's CS | `tests/m68k_blocks.py` | up |
 | P4: `m68k_blocks --shard k/n`: the sampled blocks and the per-block and per-instruction sections split by index, the other sections in part 0; `make test` and `make test-blocks` run `BLOCK_SHARDS` (8) parts, `test-blocks` at most `BLOCK_JOBS` at once | `tests/m68k_blocks.py`, `Makefile` | up |
+| P5: an indirect near `jmp` that is a near return (`annotations/jump-returns.csv`) lowers as `rts` with its target in d7, the caller's return check applying; `is_ret` for the return analysis and the IRQ walk | `translator/emit.py`, `lower.py`, `irq.py` | up |
+| P5: a direct near call that pushes a continuation its callee consumes (`annotations/push-calls.csv`) lowers as push and jump, with no native frame and no return site | `translator/emit.py`, `lower.py` | up |
+| P5: a CFG seed without a CS takes its `runtime.csv` row's `seg_ip` CS | `translator/cfg.py` | up |
+| P5: a `call far` whose traced targets are in `VRAM_MODULES` is a graphics driver call (`rt_vdrv_depth`, `rt_vdrv_return` after it) | `translator/emit.py`, `lower.py`, `src/runtime/rt_entry.s` (comment) | wc2 |
+| P5: WC2's machine (MEASURED, host-m0): environment, PSP and MCB names, IVT, BIOS data, the INT 15h AH=C0h configuration table; INT 1Ah AH=00h; the loader reads whole pages as DOSBox-X does | `src/runtime/machine.c` | wc2 |
+| P5: the path model (game directory C:\WING2, AH=3Bh current directory, letter-only upper case); AH=4Ah growth into a following free block; AH=33h BREAK flag | `src/runtime/dos.c` | wc2 (path), up (resize, 33h) |
+| P5: EMS 46h, 47h, 48h (DOSBox-X's save and restore of the frame mappings) | `src/runtime/ems.c` | up |
+| P5: INT 33h AX=4 | `src/runtime/input.c` | up |
+| P5: the PIT counter latch (channel 0, `plat_pit_count`), the SB DSP probe, the DAC ports 3C7h-3C9h, 3DAh (`plat_vga_status`); INT 10h AH=08h and AH=12h BL=10h | `src/runtime/ports.c`, `video.c`, `runtime.h`, `platform.h`, `src/platform/host/host.s`, `src/platform/amiga/amiga_platform.c` | up |
+| P5: services and captures inside IRQ0's handler compare SS:SP:BP relocated from the private stack (design D8); sabotage `irq-offset` | `tests/host_run.py`, `tests/amiga_replay.c` | up |
+| P5: the replay and debug launchers copy the game directory `ref/WING2/`; the early-return stop | `amiga/debug.sh`, `amiga/run.sh`, `amiga/milestone.gdb.in` | wc2 (path), up (stop) |
+| P5: unit tests re-pointed at WC2: the mouse IRQ vector F000:CFA0 and m2's mouse surface, the oracle's PSP as the machine's, the MZ entry and +00275 as labels, a fixture BP region, `run()` with its work directory | `tests/test_mouse_irq.py`, `test_dos_sda.py`, `test_host_launch.py`, `test_interrupt_frame_mask.py`, `test_replay_hooks.py`, `test_replay_run_isolation.py` | wc2 |
+| P5: `swotl.elf` → `wc2.elf` | `Makefile`, `docs/translator-design.md`, `tests/test_pointer_model.py`, `tools/{ab_runs,align_targets,cost_meter,outline_sites}.py` | ren |
+| P5: `make test-host` (m1, m1b) and `make test-amiga` (m1b) | `Makefile` | wc2 |
+| P5: lint skips the Amiga build's outputs (`amiga/out`, `amiga/obj`: listings of generated code) | `translator/check.py` | up |
+| P5: `m68k_blocks` probes no return protocol after a push-call (no native frame) | `tests/m68k_blocks.py` | up |
+| P5: the replay harness stubs carry the merged replay data (point slot, VGA and PIT intervals, hash step, REP stream) and the IRQ-state symbols; the REP test builds its records with `rep_stream`; the joystick-step test checks a loud stop (WC2 records none); hash plant on both compares | `tests/{test_replay_events,test_rep_replay,test_joystick_events}.py` | wc2 (joystick), up |
+| P5: the VGA and PIT interval counts compare as objects (a fixture without reads builds under `-Wtype-limits`) | `tests/amiga_replay.c` | up |
+| P5: the Amiga build's log, interrupt names and fault prefix say WC2, `$VER` Wing Commander 2 | `src/platform/amiga/{Wc2.cpp,amiga_platform.c,version.s}` | ren |
+| P5: VROOMM's INT 3Fh opens no service level in the replay (it never returns after the INT; MEASURED, the m1 and m1b references) | `tests/amiga_replay.c` | wc2 |
+| P5: the capture prints no sound-effect cache (WC2 has no SFX path) | `amiga/milestone.gdb.in` | wc2 |

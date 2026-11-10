@@ -1,4 +1,10 @@
-"""Exact original REP decoder slices, used only by diagnostic replay builds."""
+"""Exact original REP decoder slices, used only by diagnostic replay builds.
+
+Copied from Secret Weapons of the Luftwaffe's tests/rep_replay.py (commit pinned in
+manifest/references.tsv) and adapted: no compute objects or joystick wrapper. DOSBox-X
+restarts a REP instruction when its cycle slice ends (dosbox-x-xwing-rep-chunks.patch,
+trace/rep.csv), so an interrupt taken inside one lands at a slice boundary; the host
+replays those boundaries at the REP's poll point (tests/host_run.py)."""
 import csv
 from dataclasses import dataclass
 import hashlib
@@ -103,57 +109,47 @@ class Replay:
             raise ValueError(f'REP slices incomplete: {self.index}/{len(self.chunks)}')
 
 
-def host_image(labels, joystick_header=None):
-    """Link generated diagnostic REP lowering with the unchanged host runtime."""
+def host_image(labels):
+    """Link generated diagnostic REP lowering with the unchanged host runtime.
+    The generated program is cached by the translator, annotations, generated
+    sources and labels; the link also by the runtime objects."""
     objects = [ROOT / 'build/host' / (p.stem + '.o') for p in sorted((ROOT / 'src/runtime').glob('*.c'))]
     objects += [ROOT / 'build/host' / n for n in ('host_s.o', 'host.o', 'rt_entry.o')]
-    tail_objects = [ROOT / 'build/host' / n for n in ('compute_projection.o', 'compute_normalise.o', 'compute_scenery.o')]
-    inputs = [Path(__file__)] + sorted((ROOT / 'src/runtime').glob('compute_*.s')) + sorted((ROOT / 'translator').glob('*.py')) + sorted((ROOT / 'build/gen').glob('*.s')) + objects + tail_objects
+    inputs = [Path(__file__)] + sorted((ROOT / 'translator').glob('*.py')) + \
+        sorted((ROOT / 'annotations').glob('*.csv')) + sorted((ROOT / 'build/gen').glob('*.s'))
     digest = hashlib.sha256(('\n'.join(labels)).encode())
-    if joystick_header is not None:
-        digest.update(joystick_header.encode())
-        digest.update((ROOT / 'tests/joystick_replay.c').read_bytes())
     for p in inputs:
         digest.update(p.name.encode()); digest.update(p.read_bytes())
     out = ROOT / 'tmp/rep-host' / digest.hexdigest()[:20]
-    elf = out / 'swotl.elf'
+    link = hashlib.sha256(digest.digest())
+    for p in objects:
+        link.update(p.name.encode()); link.update(p.read_bytes())
+    elf = out / f'wc2-{link.hexdigest()[:12]}.elf'
     if elf.exists():
         return elf
-    units = cfg.build()
-    nodes = {emit.label(mod, off): (mod, off) for mod, u in units.items() for off in u.insns}
-    hooks = {nodes[lab]: n for n, lab in enumerate(labels)}
-    for node in hooks:
-        if not units[node[0]].insns[node[1]].rep:
-            raise ValueError(f'REP metadata names a non-REP instruction: {node}')
-    program = emit.Program(units, diagnostic_reps=hooks)
-    if not set(hooks) <= program.loop_heads:
-        raise ValueError('REP metadata outside the original poll set')
-    gen.generate(out / 'gen', program=program)
     vasm = str(os.environ.get('VASM') or Path.home() / '.local/vasmm68k_mot')
-    subprocess.run([vasm, '-quiet', '-m68020', '-Felf', '-x', '-nowarn=62', '-DWC2_SYNC=1',
-                    '-o', str(out / 'program.o'), 'program.s'], cwd=out / 'gen', check=True)
-    subprocess.run([vasm, '-quiet', '-m68020', '-Felf', '-x', '-nowarn=62',
-                    '-I' + str(ROOT / 'src/runtime'), '-I' + str(out / 'gen'),
-                    '-o', str(out / 'compute_native.o'),
-                    str(ROOT / 'src/runtime/compute_native.s')], check=True)
-    tail_objects.append(out / 'compute_native.o')
+    if not (out / 'program.o').exists():
+        units = cfg.build()
+        nodes = {emit.label(mod, off): (mod, off) for mod, u in units.items() for off in u.insns}
+        hooks = {nodes[lab]: n for n, lab in enumerate(labels)}
+        for node in hooks:
+            if not units[node[0]].insns[node[1]].rep:
+                raise ValueError(f'REP metadata names a non-REP instruction: {node}')
+        program = emit.Program(units, diagnostic_reps=hooks)
+        if not set(hooks) <= program.loop_heads:
+            raise ValueError('REP metadata outside the original poll set')
+        gen.generate(out / 'gen', program=program)
+        subprocess.run([vasm, '-quiet', '-m68020', '-Felf', '-x', '-nowarn=62', '-DWC2_SYNC=1',
+                        '-o', str(out / 'program.part'), 'program.s'], cwd=out / 'gen', check=True)
+        (out / 'program.part').rename(out / 'program.o')
     # The host hook supplies the result in the argument slot; no guest work here.
     (out / 'rep.s').write_text(' section .text,code\n xdef rt_replay_rep\nrt_replay_rep:\n rts\n')
     subprocess.run([vasm, '-quiet', '-m68020', '-Felf', '-o', str(out / 'rep.o'),
                     str(out / 'rep.s')], check=True)
     toolchain = Path(os.environ.get('AMIGA_TOOLCHAIN') or Path.home() / '.local/opt')
-    extra = []
-    if joystick_header is not None:
-        (out / 'joystick_data.h').write_text(joystick_header)
-        # The host records software-service epochs; this value is set at wrapper entry.
-        (out / 'joystick_host.c').write_text(
-            '#include "runtime.h"\nvolatile uint32_t replay_services;\n'
-            '#include "joystick_replay.c"\n')
-        subprocess.run([str(toolchain / 'bin/m68k-amiga-elf-gcc'), '-m68020', '-msoft-float',
-                        '-O2', '-ffreestanding', '-Wall', '-Wextra', '-Werror',
-                        '-I' + str(ROOT / 'src/runtime'), '-I' + str(ROOT / 'tests'), '-I' + str(out),
-                        '-c', str(out / 'joystick_host.c'), '-o', str(out / 'joystick.o')], check=True)
-        extra = [str(out / 'joystick.o'), '--wrap=rt_port_in', '--wrap=rt_port_out']
+    for old in out.glob('wc2-*.elf'):
+        old.unlink()
     subprocess.run([str(toolchain / 'bin/m68k-amiga-elf-ld'), '-Ttext=0x10000', '-e', '_start',
-                    '-o', str(elf), *(str(p) for p in objects), str(out / 'program.o'), *(str(p) for p in tail_objects), str(out / 'rep.o'), *extra], check=True)
+                    '-o', str(elf), *(str(p) for p in objects), str(out / 'program.o'),
+                    str(out / 'rep.o')], check=True)
     return elf

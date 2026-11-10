@@ -8,7 +8,7 @@
   ab_runs.py meter  SESSION ARM... [--runs 3]
 
 An arm is a directory frozen from the current build by `freeze`: gen/
-(build/gen), swotl.elf (build/host), amiga/Wc2.elf and amiga/Wc2.exe
+(build/gen), wc2.elf (build/host), amiga/Wc2.elf and amiga/Wc2.exe
 (amiga/out) and, when built (`make amiga-sync`), amiga-sync/ (build/amiga-sync/
 out: the sync image the bench runs, docs/irq-plan.md I8; an arm without it,
 from before I8, polls in its production image). Build each arm's commit, then
@@ -78,7 +78,7 @@ def freeze(arm):
         sys.exit(f"{arm} exists; freeze into a new directory")
     (arm / "amiga").mkdir(parents=True)
     shutil.copytree(ROOT / "build/gen", arm / "gen")
-    shutil.copy2(ROOT / "build/host/swotl.elf", arm / "swotl.elf")
+    shutil.copy2(ROOT / "build/host/wc2.elf", arm / "wc2.elf")
     sync = ROOT / "build/amiga-sync/out"
     for name in ("Wc2.elf", "Wc2.exe"):
         shutil.copy2(AMIGA / "out" / name, arm / "amiga" / name)
@@ -88,7 +88,7 @@ def freeze(arm):
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"], capture_output=True, text=True).stdout
     sums = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in (arm / "swotl.elf", *sorted(arm.glob("amiga*/Wc2.*")))}
+            for p in (arm / "wc2.elf", *sorted(arm.glob("amiga*/Wc2.*")))}
     (arm / "arm.json").write_text(json.dumps(dict(head=head, dirty=bool(dirty), sha256=sums), indent=2) + "\n")
     print(f"froze {arm} at {head}{' (dirty tree)' if dirty else ''}")
 
@@ -224,7 +224,7 @@ def meter(a):
             if path.exists():
                 sys.exit(f"{path} already measured")
             path.parent.mkdir(parents=True, exist_ok=True)
-            tool("cost_meter.py", "--elf", Path(arm) / "swotl.elf", "--gen", Path(arm) / "gen", "--out", path)
+            tool("cost_meter.py", "--elf", Path(arm) / "wc2.elf", "--gen", Path(arm) / "gen", "--out", path)
             check_tools(a.session)
             out[Path(arm).name].append(str(path))
     return out
@@ -251,7 +251,7 @@ def main():
     a.session = a.session.resolve()
     a.arms = [str(Path(arm).resolve()) for arm in a.arms]
     for arm in a.arms:
-        need = [Path(arm) / p for p in ("gen", "swotl.elf", "amiga/Wc2.elf", "amiga/Wc2.exe")]
+        need = [Path(arm) / p for p in ("gen", "wc2.elf", "amiga/Wc2.elf", "amiga/Wc2.exe")]
         if not all(p.exists() for p in need):
             sys.exit(f"{arm}: not a frozen arm (ab_runs.py freeze)")
     result = dict(bench=bench, frames=frames, flyby=flyby, meter=meter)[a.kind](a)

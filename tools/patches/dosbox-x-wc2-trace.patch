@@ -107,7 +107,7 @@
 + * 220h/221h and 228h/229h (one OPL2 chip). */
 +FILE *sound = nullptr;
 +/* WC2_REPLAY_PORTS=1: reads of the PIT counter (40h-42h) and the VGA input
-+ * status (3DAh), run-length coded per service event (replay-ports.csv). */
++ * status (3DAh) by guest code (not the BIOS's own), run-length coded per service event. */
 +FILE *replay_ports = nullptr;
 +struct PortRun { uint64_t service = 0; uint16_t port = 0; uint32_t value = 0; uint64_t count = 0; };
 +PortRun port_run;
@@ -541,7 +541,7 @@
 +		        write ? "out" : "in", port, (unsigned)(value & 0xff), modules[at.module].name.c_str(),
 +		        at.offset);
 +	}
-+	if (replay_ports && !write && ((port >= 0x40 && port <= 0x42) || port == 0x3da)) {
++	if (replay_ports && !write && ((port >= 0x40 && port <= 0x42) || port == 0x3da) && CurrentLocation().module) {
 +		if (port_run.count && (port_run.service != service_events || port_run.port != port ||
 +		                       port_run.value != value))
 +			FlushPortRun();

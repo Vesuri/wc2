@@ -53,7 +53,7 @@ def counts(prog: M.Program, rows: list) -> dict[int, int]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("meter", type=Path)
-    ap.add_argument("--elf", type=Path, default=REPO / "build/host/swotl.elf")
+    ap.add_argument("--elf", type=Path, default=REPO / "build/host/wc2.elf")
     ap.add_argument("--gen", type=Path, default=REPO / "build/gen")
     ap.add_argument("--min", type=float, default=1000, help="least model cycles saved per site")
     ap.add_argument("--write", action="store_true")

@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""Run the generated program with the runtime on Unicorn 68020 (phase 5.1):
-build/host/swotl.elf from the SWOTL.EXE entry to a reference milestone, data
-files read from ref/ (read-only).
+"""Run the generated program with the runtime on Unicorn 68020 (gate 5):
+build/host/wc2.elf from the WC2.EXE entry to a reference milestone, data files
+read from the installed game directory (ref/WING2, read-only). Copied from
+X-Wing's tests/host_run.py (commit 49b792b; it adapted Secret Weapons of the
+Luftwaffe's) and adapted: WC2's reference runs and replay ports, VROOMM
+dispatch by the stubs' word 10h, the IRQ monitor only with a footprint.
 
-Checked against the DOSBox-X reference run of that milestone
-(tmp/pc-runs/ref-<milestone>, `make reference`):
+Checked against the host reference run of that milestone
+(tmp/pc-runs/host-<milestone>, `tools/reference.py --host`: hardware interrupts
+at the translator's poll points, the PIT and VGA status reads recorded):
 - service log: every software INT the guest raises, in order, with the
   registers at entry and at return (the tracer's svc/svc_ret events);
 - at the milestone label: guest registers and guest RAM (COMPARE ranges);
   dead stack is masked: bytes in the DEAD_STACK window below SS:SP at a
   service call or hardware interrupt that the guest did not write afterwards (DOSBox-X's own code
-  and the interrupt frame's FLAGS word leave other values there, open-work 24),
+  and the interrupt frame's FLAGS word leave other values there),
   and the FLAGS images of annotations/flags.csv PUSHFs until rewritten;
 - every machine byte outside COMPARE (and the IRQ0 handler's private stack)
   that generated code read holds the reference value.
+Every read of port 3DAh answers the reference's next recorded value, and every
+PIT latch the next two recorded port 40h reads (low, high), each read in the
+same service-event interval (trace/replay-ports.csv), and all are used.
+DOSBox-X restarts a REP at the end of its cycle slice, so an interrupt can land
+inside one: a diagnostic image with REP hooks (rep_replay.py) replays the
+reference's slices (trace/rep.csv) at each REP poll point, and all are used.
 With --amiga DIR, the same checks run on the A1200 model's capture
 (amiga/milestone.gdb.in: regs.txt, state.bin, ram.bin, dac.bin), masked by
 this host run's dead-stack set, and the shown frame (plane0-7.bin, bytes per
@@ -24,8 +34,9 @@ Exit 1 on any difference, a runtime stop or the time limit.
 
 from __future__ import annotations
 
-import json
 import argparse
+import json
+import gzip
 import csv
 import struct
 import sys
@@ -34,32 +45,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import uc as U  # noqa: E402
-import joystick_replay
-import irq_monitor
-import irq_stress
-import amiga_sprites as S
+import rep_replay  # noqa: E402
+import irq_monitor  # noqa: E402
 from translator import emit, image  # noqa: E402
-from tools import fixture_inputs
 
 REPO = image.REPO
-ELF = REPO / "build/host/swotl.elf"
+ELF = REPO / "build/host/wc2.elf"
 MEM = 0x01000000          # flat map: code, data, stack, guest RAM
 STACK_TOP = 0x00FF0000
 BLOCK = 0x00400000        # src/platform/host/host.c HOST_BLOCK
 GUEST_BYTES = 0x110000
-# Hardware-sprite pointer (docs/pointer-plan.md): DGROUP offsets, struct rt_pointer
-# (runtime.h: shown, w, h, other, x, y, image, the masked box, 16 x 16 pixels)
-POINTER = {r["name"]: int(r["offset"], 16) for r in image.rows("pointer.csv")}
-POINTER_BYTES, POINTER_PIXELS, POINTER_SIZE = 276, 18, 16
-# The tracker's motion words at its exit (SWOTL.EXE 0320:0D1A): the mouse's after
-# halving (A8F8, A9A8) and the one applied (C37C, C37E; keys or joystick may set
-# it instead); 0320:0C64 sets the position directly.
-# Prerendered effects (docs/sound-plan.md R1): played non-engine ids; 5, 6,
-# 22, 27, 33, 36 are never played and 35 is the anthem.
-SFX_PRERENDERED = frozenset(set(range(7, 39)) - {22, 27, 33, 35, 36})
-TRACKER_MOUSE, TRACKER_APPLIED, POSITION_SET = (0xA8F8, 0xA9A8), (0xC37C, 0xC37E), 0x3E64
-SFX_SLOT_IDS = 0x1DE   # SPAZ DS: per OPL channel the effect id·4 (stored at hle.csv sfx_start)
 TOP = BLOCK + GUEST_BYTES - 1   # rt_guest: guest linear L at TOP - L (reversed)
 STATE = TOP + 1           # state block (translator/lower.py STATE_EQU)
 G_IRQ = TOP + 9
@@ -115,18 +112,10 @@ FRAME = (0xA0000, 0xB0000)
 IRQ_STACK = (0xB8000 - 0x200, 0xB8000)
 REGS = ("ax", "cx", "dx", "bx", "sp", "bp", "si", "di")
 DEAD_STACK = 0x60
-TABLE = REPO / "reference/milestones.csv"  # --table: another table in that format
+
+TABLE = REPO / "reference/milestones.csv"
+RUNS = REPO / "tmp/pc-runs"
 POLLS = REPO / "build/gen/poll-points.csv"
-# SPAZ's data segment (DS 188Ah, `mov dx` at SPAZ+3DF; CS 1770h is SPAZ+240h):
-# from this module offset to the end of SPAZ's block. With --music-skip it holds
-# the song and effect state the skip changes, so it is not compared.
-SPAZ_DATA = 0x13E0
-# Also SPAZ's state in the game's data: per-effect counts at DS:6564+id (inc
-# on start SPAZ+64E, dec on end +65E; id 35 the music slot), and the dead stack
-# below SS:SP at the label: the effects the reference ignored during the music
-# now play and run deeper calls.
-SPAZ_COUNTS = (0x6564, 40)
-SKIP_DEAD_STACK = 0x800
 
 
 def elf_load(path: Path, function_extents: dict | None = None):
@@ -155,9 +144,15 @@ def elf_load(path: Path, function_extents: dict | None = None):
     return entry, segs, syms
 
 
+def events(trace: Path):
+    if (trace / "events.csv.gz").exists():
+        return gzip.open(trace / "events.csv.gz", "rt")
+    return (trace / "events.csv").open()
+
+
 def reference_services(trace: Path) -> list[tuple[str, dict]]:
     out = []
-    with (trace / "events.csv").open() as f:
+    with events(trace) as f:
         for r in csv.DictReader(f):
             if r["kind"] in ("svc", "svc_ret"):
                 vec, *kv = r["detail"].split()
@@ -174,7 +169,7 @@ def reference_inputs(trace: Path, *, exact_releases: bool = False) -> tuple[list
     retain recorded ineligible visits to the next trigger in that interval.
     The default preserves the existing diagnostic Amiga replay input format."""
     irqs, releases, n = [], [], 0
-    with (trace / "events.csv").open() as f:
+    with events(trace) as f:
         for r in csv.DictReader(f):
             if r["kind"] in ("svc", "svc_ret"):
                 n += 1
@@ -228,38 +223,21 @@ def fnv(data: bytes) -> int:
 
 
 SABOTAGE = {
-    "missing-file": "wrong file omitted from the disk-prompt fixture",
-    "mouse-motion": "scripted vertical mouse motion lost",
-    "mouse-buttons": "scripted middle mouse button lost",
     "read": "first byte of each guest file read flipped",
     "ax": "AX of the tenth service result off by one",
-    "psp": "one command-tail byte of the PSP changed at the guest entry",
+    "psp": "one PSP byte changed at the guest entry",
     "dac": "one DAC gun off at each DAC change",
-    "vram": "graphics driver stores to video memory not marked (rt_vram_mark returns at once)",
+    "vram": "stores to video memory not marked (rt_vram_mark returns at once)",
     "far": "every dispatch row near-only (rt_dispatch_far must stop, R14e)",
+    "retrace": "one VGA status read answered with bit 3 flipped",
     "irq-stack": "rt_irq_async runs the IRQ0 handler on the interrupted stack (private SS:SP not set, I4)",
     "irq-state": "rt_irq_async restores no state block after the handler (I4)",
     "irq-sentinel": "rt_irq_async expects another sentinel CS:IP than its frame holds (I4)",
+    "irq-offset": "rt_irq_async starts the private stack at 7FFEh, not IRQ_SP (the relocated compare)",
     "keyon": "rt_out8 counts no AdLib key-on edge (its addq dropped)",
-    "sfx_start": "rt_hle_sfx_start records no effect id (its move.b dropped)",
-    "pointer-ds": "rt_hle_pointer_tracked records no DGROUP (its move.w dropped)",
-    "pointer-clamp": "the lead clamps x motion to +-C0h, not +-BFh (pointer.c rebuilt)",
-    "pointer-trunc": "the lead halves by an arithmetic shift (floor), not toward zero",
-    "irq-main": "FLIGHT +0123B reads 9BCA instead of 813C (undeclared main read, I3)",
-    "irq-handler": "the IRQ0 handler's inc of 9BCA writes 9DC0 (outside the footprint, I3)",
+    "overlay": "the overlay stub table zeroed (machine.c overlay_row finds no overlay CS)",
+    "pit": "one PIT latch answered with the counter's low byte off by one",
 }
-# Plants only an asynchronous tick shows (--sabotage --stress SEED, I6)
-STRESS_SABOTAGE = {
-    "irq-async-state": "rt_irq_interrupt saves no state block (restores a stale one, I6)",
-}
-# Plants a milestone other than --milestone exercises (the guest's first
-# hardware interrupt handler runs after m1b-logo).
-SABOTAGE_AT = {"missing-file": "c83-program-disk-prompt", "keyon": "m2-choose-side", "sfx_start": "c6-flight-keys", "pointer-ds": "c9-mouse-menu", "pointer-clamp": "c9-mouse-menu",
-               "pointer-trunc": "c9-mouse-menu",
-               "irq-stack": "m2-choose-side", "irq-state": "m2-choose-side", "irq-sentinel": "m2-choose-side",
-               "irq-main": "m3-demo-flight", "irq-handler": "m2-choose-side",
-               "mouse-motion": "c9-mouse-menu",
-               "mouse-buttons": "c9-mouse-menu"}
 
 
 def dos_file_stamp(stamp):
@@ -301,10 +279,8 @@ class MemFile:
 
 
 class Host:
-    stress = None   # tests/irq_stress.py (also for hosts built without __init__)
-
-    def __init__(self, ref_root: Path, sabotage: str | None = None, music_skip: bool = False,
-                 elf: Path | None = None, stress: int | None = None):
+    def __init__(self, ref_root: Path, sabotage: str | None = None, elf: Path | None = None,
+                 retrace: list | None = None, pit: list | None = None):
         self.launch = ""
         self.root = ref_root
         self.file_clock = None
@@ -315,8 +291,6 @@ class Host:
         self.frame_writer = functions["push_frame"]
         e = self.e = U.Engine(U.ARCH_M68K, U.MODE_BIG_ENDIAN, U.CPU_M68K_M68020)
         e.map(0, MEM)
-        # I6: recorded ticks injected asynchronously (tests/irq_stress.py)
-        self.stress = irq_stress.Stress(self, stress) if stress is not None else None
         for vaddr, data, memsz in segs:
             e.write(vaddr, data + bytes(memsz - len(data)))
         self.entry = entry
@@ -334,16 +308,16 @@ class Host:
         self.stopped_at: str | None = None
         self.stubs = {self.syms[n]: n for n in ("plat_alloc", "plat_free", "plat_open", "plat_create", "plat_read", "plat_write",
                                                 "plat_delete", "plat_seek",
-                                                "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_mouse", "plat_present", "plat_palette",
-                                                "plat_service", "plat_sfx_wanted", "plat_sfx_captured", "plat_log", "plat_console",
+                                                "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_pit_count", "plat_mouse", "plat_present", "plat_palette",
+                                                "plat_service", "plat_vga_status", "plat_log", "plat_console",
                                                 "plat_exit")}
-        if '__wrap_rt_port_in' in self.syms:
-            @U.CODE_CB
-            def joystick_epoch(h, addr, size, user):
-                self.e.write(self.syms['replay_services'], struct.pack('>I', len(self.services)))
-            for name in ('__wrap_rt_port_in', '__wrap_rt_port_out'):
-                a = self.syms[name]
-                e.hook_range(U.HOOK_CODE, joystick_epoch, a, a)
+        # VGA status replay: (service events, value, reads) runs of trace/retrace.csv
+        self.retrace = list(retrace or [])
+        self.retrace_i = self.retrace_used = 0
+        self.retrace_bad: str | None = None
+        # PIT replay: (service events, value, reads) runs of port 40h reads
+        self.pit = list(pit or [])
+        self.pit_i = self.pit_used = self.pit_latches = 0
         self.mouse_dx = self.mouse_dy = self.mouse_buttons = 0
         self.presents = 0
         # D9 display: every byte the guest stores to the frame is inside the
@@ -351,32 +325,9 @@ class Host:
         self.vram_written: set[int] = set()
         self.display_miss: str | None = None
         e.write(self.syms["rt_present_due"], b"\1")  # a vertical blank is always due
-        # HLE music_skip: off (the guest path, which the references hold) unless
-        # --music-skip checks the replacement
-        e.write(self.syms["rt_music_skip"], bytes([music_skip]))
-        self.sound_log = None
-        self.sound_tick = 0
-        self.sfx_captured = 0
-        self.sfx_phase = None
-        self.in_capture = False     # rt_sfx_prerender to plat_sfx_captured (ticks held)
-
-        @U.CODE_CB
-        def capture_entry(h, addr, size, user):
-            self.in_capture = self.mem(self.syms["rt_sfx_prerender_on"], 1)[0] != 0
-            if self.in_capture:     # SPAZ's effect tick countdown (data [176]) at the start
-                cs = int.from_bytes(self.gmem(8 * 4 + 2, 2), "little")
-                self.sfx_phase = int.from_bytes(self.gmem((cs + 0x11A) * 16 + 0x176, 2), "little")
-
-        if "rt_sfx_prerender" in self.syms:  # SWOTL's effect capture; not in WC2's runtime
-            a = self.syms["rt_sfx_prerender"]
-            e.hook_range(U.HOOK_CODE, capture_entry, a, a)
-        self.music_skip = music_skip
-        self.skips = self.moved = 0
-        self.skipped_ran: set[str] = set()
-        self.music_masked: set[int] = set()
         if sabotage == "vram":
             e.write(self.syms["rt_vram_mark"], b"\x4e\x75")  # rts
-        if sabotage in ("irq-stack", "irq-state", "irq-sentinel"):
+        if sabotage in ("irq-stack", "irq-state", "irq-sentinel", "irq-offset"):
             a = self.syms["rt_irq_async"]
             code = e.read(a, self.syms["rt_irq_async_back"] + 0x40 - a)
             if sabotage == "irq-stack":     # move.w #$b000,G_SS(a6); move.w #$8000,rt_r+8 -> nops
@@ -384,37 +335,22 @@ class Host:
                 e.write(a + k, bytes.fromhex("4e71") * 3)
                 k = code.index(bytes.fromhex("33fc8000"))
                 e.write(a + k, bytes.fromhex("4e71") * 4)
+            elif sabotage == "irq-offset":  # move.w #$8000,rt_r+8 -> #$7ffe
+                k = code.index(bytes.fromhex("33fc8000"))
+                e.write(a + k + 2, bytes.fromhex("7ffe"))
             elif sabotage == "irq-state":   # move.l (a0)+,d16(a6) x4 after the handler -> nops
                 k = code.index(bytes.fromhex("2d580001"))
                 e.write(a + k, bytes.fromhex("4e71") * 8)
             else:                           # move.l #$b0008000,d7 -> #$b0008002
                 k = code.index(bytes.fromhex("2e3cb0008000"))
                 e.write(a + k + 2, bytes.fromhex("b0008002"))
-        if sabotage == "irq-async-state":   # move.l d16(a6),(a0)+ x4 -> nops
-            a = self.syms["rt_irq_interrupt"]
-            code = e.read(a, self.syms["rt_irq_abort"] - a)
-            e.write(a + code.index(bytes.fromhex("20ee0001")), bytes.fromhex("4e71") * 8)
         if sabotage == "keyon":  # addq.b #1,(a0,d7.w) -> nop; nop
             a = self.syms["rt_out8"]
             code = e.read(a, 0x100)
             e.write(a + code.index(bytes.fromhex("52307000")), bytes.fromhex("4e714e71"))
-        if sabotage == "pointer-ds":  # move.w G_DS(a6),rt_pointer_ds -> nops
-            a = self.syms["rt_hle_pointer_tracked"]
-            e.write(a + e.read(a, 0x10).index(bytes.fromhex("33ee0001")), bytes.fromhex("4e71") * 4)
-        if sabotage == "sfx_start":  # move.b d6,(a0,d7.w) -> nop; nop
-            a = self.syms["rt_hle_sfx_start"]
-            code = e.read(a, 0x20)
-            e.write(a + code.index(bytes.fromhex("11867000")), bytes.fromhex("4e714e71"))
-        # I3 plants: one displacement word of a generated instruction (lower.py:
-        # guest offset o of DS/ES at d16 = 7FFFh - o - 1)
-        for plant, lab, old, new in (("irq-main", "FLT_0123B", 0x813C, 0x9BCA),
-                                     ("irq-handler", "SPZ_00804", 0x9BCA, 0x9DC0)):
-            if sabotage == plant:
-                a = self.syms[lab]
-                code = e.read(a, 16)  # past a sync-build poll check (irq-plan I8)
-                want = (0x7FFF - old - 1) & 0xFFFF
-                k = code.index(want.to_bytes(2, "big"), 2)
-                e.write(a + k, ((0x7FFF - new - 1) & 0xFFFF).to_bytes(2, "big"))
+        if sabotage == "overlay":
+            n = int.from_bytes(e.read(self.syms["overlay_count"], 4), "big")
+            e.write(self.syms["overlay_stubs"], bytes(2 * n))
         if sabotage == "far":
             rows = int.from_bytes(e.read(self.syms["dispatch_count"], 4), "big")
             for k in range(rows):
@@ -440,14 +376,16 @@ class Host:
         # a service returns when the runtime glue's rts goes back to the
         # address after its jsr rt_int (static hooks: Unicorn retranslates
         # on every hook change)
-        @self.unbounded
         @U.CODE_CB
         def ret_hit(h, addr, size, user):
             if self.pending and self.u32(self.r("a7")) == self.pending[-1]:
                 self.pending.pop()
                 if self.sabotage == "ax" and len(self.services) == 19:
                     self.e.reg_write(U.M68K["d0"], (self.r("d0") + 1) & 0xFFFF)
-                self.services.append(("svc_ret", self.guest_regs(self.pending_vec.pop())))
+                regs = self.guest_regs(self.pending_vec.pop())
+                if self.irq_stack:
+                    regs["irq"] = self.irq_stack[-1]
+                self.services.append(("svc_ret", regs))
                 self.in_service = bool(self.pending)
 
         for n in ("rt_exit", "rt_exit_guest"):
@@ -455,10 +393,29 @@ class Host:
         self.pending: list = []
         self.pending_vec: list = []
 
+        # IRQ0's guest handler runs on the private stack (rt_irq_async, I4): the
+        # interrupted SS:SP for the relocated service compare (compare_services)
+        self.irq_stack: list[tuple[int, int]] = []
+
+        @U.CODE_CB
+        def irq_async(h, addr, size, user):
+            g = self.guest_regs(0)
+            self.irq_stack.append((g["ss"], g["sp"]))
+
+        @U.CODE_CB
+        def irq_async_back(h, addr, size, user):
+            self.irq_stack.pop()
+
+        e.hook_range(U.HOOK_CODE, irq_async, self.syms["rt_irq_async"], self.syms["rt_irq_async"])
+        e.hook_range(U.HOOK_CODE, irq_async_back, self.syms["rt_irq_async_back"],
+                     self.syms["rt_irq_async_back"])
+
         @U.CODE_CB
         def int_entry(h, addr, size, user):
             d6 = self.r("d6")
             regs = self.guest_regs(d6 & 0xFF)
+            if self.irq_stack:
+                regs["irq"] = self.irq_stack[-1]
             self.services.append(("svc", regs))
             self.in_service = True
             top = regs["ss"] * 16 + regs["sp"]
@@ -475,106 +432,15 @@ class Host:
 
         @U.CODE_CB
         def out8(h, addr, size, user):
-            if self.capturing():
-                return              # the effect capture's own writes (sfx.c)
             port, v = self.r("d7") & 0xFFFF, self.r("d6") & 0xFF
             if port in (0x388, 0x389):
                 self.opl_ports.append((port, v))
             if port == 0x389:
                 reg = self.mem(self.syms["rt_opl_index"], 1)[0]
                 self.opl.append((reg, v))
-                self.sound_event("o", reg, v)
 
         a = self.syms["rt_out8"]
         e.hook_range(U.HOOK_CODE, out8, a, a)
-
-        # HLE sfx_start (check_sfx): after the guest's store of DI at the
-        # hooked instruction, the runtime's report holds the same slot and id.
-        self.sfx_starts = [0, 0, 0]
-        self.sfx_bad: list[str] = []
-
-        @U.CODE_CB
-        def sfx_stored(h, addr, size, user):
-            if self.in_capture:
-                return              # the capture's plays; the runtime restores its reports
-            g = self.guest_regs(0)
-            slot, rest = divmod(g["bx"], 6)
-            stored = int.from_bytes(self.gmem(g["ds"] * 16 + ((SFX_SLOT_IDS + g["bx"]) & 0xFFFF), 2),
-                                    "little")
-            if rest or slot > 2 or stored != g["di"]:
-                self.sfx_bad.append(f"BX {g['bx']:04x}, DI {g['di']:04x}, stored {stored:04x}")
-                return
-            self.sound_event("s", slot, g["di"] >> 2)
-            self.sfx_starts[slot] = (self.sfx_starts[slot] + 1) & 0xFF
-            got = (self.mem(self.syms["rt_sfx_id"], 3)[slot], self.mem(self.syms["rt_sfx_starts"], 3)[slot])
-            if got != (g["di"] >> 2, self.sfx_starts[slot]):
-                self.sfx_bad.append(f"slot {slot}: id {got[0]} start {got[1]}, guest id "
-                                    f"{g['di'] >> 2} start {self.sfx_starts[slot]}")
-
-        for r in image.rows("hle.csv"):
-            if r["service"] == "sfx_start":
-                prefix = emit.label(r["module"], 0)[:-5]
-                last = int(r["last"], 16)
-                resume = min(int(n[len(prefix):], 16) for n in self.syms
-                             if n.startswith(prefix) and len(n) == len(prefix) + 5
-                             and int(n[len(prefix):], 16) > last)
-                a = self.syms[emit.label(r["module"], resume)]
-                e.hook_range(U.HOOK_CODE, sfx_stored, a, a)
-
-        # HLE pointer_tracked: after the service, rt_pointer_ds is the guest's DS
-        # (DGROUP); check_pointer's oracle reads the pointer state from it.
-        # The lead's prediction (rt_pointer_predicted) is the guest's new position
-        # at every exit whose motion came from the mouse.
-        self.tracker_ds = 0
-        self.pointer_bad: list[str] = []
-        self.pointer_counts = {"presents": 0, "shown": 0, "f9": 0, "exits": 0, "predicted": 0, "moved": 0}
-        self.position_set = False
-
-        @U.CODE_CB
-        def tracked(h, addr, size, user):
-            self.tracker_ds = ds = self.guest_regs(0)["ds"]
-            got = struct.unpack(">H", self.mem(self.syms["rt_pointer_ds"], 2))[0]
-            if got != self.tracker_ds and len(self.pointer_bad) < 8:
-                self.pointer_bad.append(f"tracker exit: rt_pointer_ds {got:04x}, DS {self.tracker_ds:04x}")
-            def word(o):
-                return int.from_bytes(self.gmem(ds * 16 + o, 2), "little", signed=True)
-            valid, px, py = struct.unpack(">3h", self.mem(self.syms["rt_pointer_predicted"], 6))
-            mouse = tuple(word(o) for o in TRACKER_MOUSE) == tuple(word(o) for o in TRACKER_APPLIED)
-            self.pointer_counts["exits"] += 1
-            if valid and mouse and not self.position_set:
-                self.pointer_counts["predicted"] += 1
-                x, y = word(POINTER["x"]), word(POINTER["y"])
-                self.pointer_counts["moved"] += any(word(o) for o in TRACKER_MOUSE)
-                if (px, py) != (x, y) and len(self.pointer_bad) < 8:
-                    self.pointer_bad.append(f"tracker exit {self.pointer_counts['exits']}: lead "
-                                            f"({px}, {py}), guest ({x}, {y}), motion "
-                                            f"{[word(o) for o in TRACKER_MOUSE]}")
-            self.position_set = False
-
-        @U.CODE_CB
-        def position_set(h, addr, size, user):
-            self.position_set = True
-
-        a = self.syms[emit.label("SWOTL.EXE", POSITION_SET)]
-        e.hook_range(U.HOOK_CODE, position_set, a, a)
-
-        for r in image.rows("hle.csv"):
-            if r["service"] == "pointer_tracked":
-                prefix = emit.label(r["module"], 0)[:-5]
-                last = int(r["last"], 16)
-                resume = min(int(n[len(prefix):], 16) for n in self.syms
-                             if n.startswith(prefix) and len(n) == len(prefix) + 5
-                             and all(ch in "0123456789ABCDEF" for ch in n[len(prefix):])
-                             and int(n[len(prefix):], 16) > last)
-                a = self.syms[emit.label(r["module"], resume)]
-                e.hook_range(U.HOOK_CODE, tracked, a, a)
-
-        @U.CODE_CB
-        def music_entry(h, addr, size, user):
-            self.sound_event("m", 0, 0)
-
-        a = self.syms["rt_hle_music_skip"]
-        e.hook_range(U.HOOK_CODE, music_entry, a, a)
 
         # Hardware interrupts: the reference's BIOS handlers (and the INT frame)
         # use the interrupted stack, ours run in C; the window below SS:SP is dead.
@@ -588,7 +454,8 @@ class Host:
             e.hook_range(U.HOOK_CODE, irq_entry, self.syms[n], self.syms[n])
 
         # I3: every guest access against the IRQ0 footprint (tests/irq_monitor.py)
-        self.irq = irq_monitor.Monitor(self, GUEST_BYTES)
+        self.irq = irq_monitor.Monitor(self, GUEST_BYTES) if irq_monitor.FOOTPRINT.exists() \
+            else NoMonitor()
 
         @U.CODE_CB
         def irq_deliver(h, addr, size, user):
@@ -599,7 +466,7 @@ class Host:
             self.irq.returned()
 
         e.hook_range(U.HOOK_CODE, irq_deliver, self.syms["deliver_guest"], self.syms["deliver_guest"])
-        for n in ("rt_irq_async_back", "rt_irq_interrupt_back"):   # the second: I6 builds
+        for n in ("rt_irq_async_back", "rt_irq_interrupt_back"):
             if n in self.syms:
                 e.hook_range(U.HOOK_CODE, irq_back, self.syms[n], self.syms[n])
 
@@ -625,7 +492,6 @@ class Host:
 
         # The FLAGS image of an annotations/flags.csv PUSHF is dead by that
         # annotation; its word below SS:SP is masked until the guest rewrites it.
-        @self.unbounded
         @U.CODE_CB
         def dead_pushf(h, addr, size, user):
             g = self.guest_regs(0)
@@ -663,7 +529,7 @@ class Host:
                     self.e.write(TOP - psp - off, b" ")
                 self.e.write(TOP - psp - 0xff, (b"\0\r" + bytes(126))[::-1])
             if self.sabotage == "psp":
-                a = TOP - (0x8120 + 0x82)
+                a = TOP - (0x8120 + 0x5d)
                 self.e.write(a, bytes([self.mem(a, 1)[0] ^ 0x20]))
             self.e.hook_range(U.HOOK_MEM_WRITE, write, TOP - GUEST_BYTES + 1, TOP)
             self.e.hook_range(U.HOOK_MEM_READ, read, TOP - GUEST_BYTES + 1, TOP)
@@ -677,14 +543,6 @@ class Host:
         self.watching = False
         a = self.syms["rt_run_guest"]
         e.hook_range(U.HOOK_CODE, guest_start, a, a)
-        if self.stress:
-            self.stress.setup(irq_monitor.FOOTPRINT, REPO / "build/gen")
-
-    def unbounded(self, cb):
-        """A code hook that does not end a stress window (tests/irq_stress.py)."""
-        if self.stress:
-            self.stress.free.add(id(cb))
-        return cb
 
     def r(self, name: str) -> int:
         return self.e.reg_read(U.M68K[name])
@@ -839,16 +697,20 @@ class Host:
                 self.display_miss = f"present {self.presents}: {len(miss)} stored pixels outside " \
                     f"its rectangles, first x={miss[0] % 320} y={miss[0] // 320}"
             self.vram_written.clear()
-            self.check_pointer(args[0])
             self.e.write(self.syms["rt_present_due"], b"\1")
         elif n == "plat_palette":
             if self.sabotage == "dac":
                 self.e.write(args[0] + 300, bytes([self.mem(args[0] + 300, 1)[0] ^ 1]))
-        elif n == "plat_sfx_wanted":
-            res = 1 if args[0] in SFX_PRERENDERED else 0
-        elif n == "plat_sfx_captured":
-            self.sfx_captured += 1
-            self.in_capture = False
+        elif n == "plat_vga_status":
+            res = self.vga_status()
+        elif n == "plat_pit_count":
+            if args[0] != 0:
+                self.retrace_bad = self.retrace_bad or f"PIT latch of channel {args[0]}"
+            lo, hi = self.pit_read(), self.pit_read()
+            self.pit_latches += 1
+            if self.sabotage == "pit" and self.pit_latches == 100:
+                lo ^= 1
+            res = hi << 8 | lo
         elif n == "plat_log":
             self.log.append(self.cstr(args[0]))
             print(self.log[-1])
@@ -860,81 +722,47 @@ class Host:
             self.e.stop()
         self.e.reg_write(U.M68K["d0"], res & 0xFFFFFFFF)
 
-    def check_pointer(self, frame_addr: int) -> None:
-        """At a present: the oracle's pointer (guest state at DGROUP, VGA memory)
-        against rt_pointer. Complete (every opaque on-screen pixel holds the shape,
-        one colour besides FEh at most): shown, the frame is VGA memory with those
-        pixels from the save buffer, the modelled sprite over the frame is VGA
-        memory and no frame pixel is F9h; otherwise not shown and the frame is VGA
-        memory."""
-        def bad(text):
-            if len(self.pointer_bad) < 8:
-                self.pointer_bad.append(f"present {self.presents}: {text}")
-        got = self.mem(self.syms["rt_pointer"], POINTER_BYTES)
-        frame = self.mem(frame_addr, 64000)
-        vram = self.gmem(0xA0000, 64000)
-        ds = self.tracker_ds
-        self.pointer_counts["presents"] += 1
-        pixels = {}
-        if ds and self.gmem(0x449, 1)[0] == 0x13:
-            def word(name, signed=True):
-                return int.from_bytes(self.gmem(ds * 16 + POINTER[name], 2), "little", signed=signed)
-            w, h = word("width"), word("height")
-            x0 = (word("x") + word("hot_x") + 0x8000) % 0x10000 - 0x8000
-            y0 = (word("y") + word("hot_y") + 0x8000) % 0x10000 - 0x8000
-            if 0 < w <= POINTER_SIZE and 0 < h <= POINTER_SIZE:
-                shape = self.gmem(ds * 16 + word("image", False), w * h)
-                buffer = self.gmem(ds * 16 + POINTER["buffer"], w * h)
-                for r in range(h):
-                    for c in range(w):
-                        p = shape[r * w + c]
-                        if p != 0xFD and 0 <= x0 + c < 320 and 0 <= y0 + r < 200:
-                            pixels[(y0 + r) * 320 + x0 + c] = (p, buffer[r * w + c])
-        others = {p for p, _ in pixels.values()} - {0xFE}
-        complete = bool(pixels) and len(others) <= 1 and all(vram[o] == p for o, (p, _) in pixels.items())
-        if got[0] != complete:
-            bad(f"shown {got[0]}, the oracle's pointer {'complete' if complete else 'not complete'}")
-            return
-        expected = bytearray(vram)
-        if complete:
-            self.pointer_counts["shown"] += 1
-            x, y = struct.unpack(">hh", got[4:8])
-            hot = struct.unpack("bb", got[274:276])
-            fields = (x, y, got[1], got[2], got[3]) + hot
-            want = (x0, y0, w, h, others.pop() if others else 0xFD, word("hot_x"), word("hot_y"))
-            if fields != want:
-                bad(f"x, y, w, h, other, hotspot {fields}, the oracle's {want}")
-            for o, (p, b) in pixels.items():
-                expected[o] = b
-            composite = bytearray(frame)
-            sprite = got[POINTER_PIXELS:POINTER_PIXELS + POINTER_SIZE * POINTER_SIZE]
-            for r in range(got[2]):
-                for c in range(got[1]):
-                    p = sprite[r * POINTER_SIZE + c]
-                    if p != 0xFD and 0 <= x + c < 320 and 0 <= y + r < 200:
-                        composite[(y + r) * 320 + x + c] = p
-            if bytes(composite) != vram:
-                o = next(k for k in range(64000) if composite[k] != vram[k])
-                bad(f"frame + sprite differs from VGA memory, first x={o % 320} y={o // 320}")
-            if 0xF9 in frame:
-                self.pointer_counts["f9"] += 1
-                o = frame.index(0xF9)
-                bad(f"colour F9h shown at x={o % 320} y={o // 320} with the pointer")
-        if frame != bytes(expected) and self.gmem(0x449, 1)[0] == 0x13:
-            o = next(k for k in range(64000) if frame[k] != expected[k])
-            bad(f"frame differs from VGA memory {'with the pointer masked ' if complete else ''}"
-                f"first x={o % 320} y={o // 320}: {frame[o]:02x}, expected {expected[o]:02x}")
+    def vga_status(self) -> int:
+        """The reference's next 3DAh value, read in the same service interval."""
+        n = len(self.services)
+        while self.retrace_i < len(self.retrace) and self.retrace_used == self.retrace[self.retrace_i][2]:
+            self.retrace_i, self.retrace_used = self.retrace_i + 1, 0
+        if self.retrace_i == len(self.retrace):
+            self.retrace_bad = self.retrace_bad or f"VGA status read after the reference's last (service events {n})"
+            return 0
+        svc, value, _ = self.retrace[self.retrace_i]
+        if svc != n:
+            self.retrace_bad = self.retrace_bad or \
+                f"VGA status read #{sum(r[2] for r in self.retrace[:self.retrace_i]) + self.retrace_used} " \
+                f"at service event {n}, the reference's at {svc}"
+        self.retrace_used += 1
+        if self.sabotage == "retrace" and self.retrace_i == len(self.retrace) // 2 and self.retrace_used == 1:
+            value ^= 8
+        return value
 
-    def sound_event(self, kind: str, a: int, b: int) -> None:
-        if self.sound_log is not None:
-            self.sound_log.write(f"{self.sound_tick},{kind},{a},{b}\n")
+    def retrace_left(self) -> int:
+        return sum(r[2] for r in self.retrace[self.retrace_i:]) - self.retrace_used
 
-    def capturing(self) -> bool:
-        return self.in_capture
+    def pit_read(self) -> int:
+        """The reference's next port 40h value, read in the same service interval."""
+        n = len(self.services)
+        while self.pit_i < len(self.pit) and self.pit_used == self.pit[self.pit_i][2]:
+            self.pit_i, self.pit_used = self.pit_i + 1, 0
+        if self.pit_i == len(self.pit):
+            self.retrace_bad = self.retrace_bad or f"PIT read after the reference's last (service events {n})"
+            return 0
+        svc, value, _ = self.pit[self.pit_i]
+        if svc != n:
+            self.retrace_bad = self.retrace_bad or \
+                f"PIT read #{sum(r[2] for r in self.pit[:self.pit_i]) + self.pit_used} " \
+                f"at service event {n}, the reference's at {svc}"
+        self.pit_used += 1
+        return value
+
+    def pit_left(self) -> int:
+        return sum(r[2] for r in self.pit[self.pit_i:]) - self.pit_used
 
     def post(self, vector: int) -> None:
-        if vector == 8:
-            self.sound_tick += 1
         tail = self.mem(self.syms["rt_irq_tail"], 1)[0]
         self.e.write(self.syms["rt_irq_ring"] + tail % 32, bytes([vector]))
         self.e.write(self.syms["rt_irq_tail"], bytes([(tail + 1) & 0xFF]))
@@ -942,11 +770,11 @@ class Host:
         self.e.write(G_IRQ, b"\1")
 
     def guest_vector(self, vector: int) -> bool:
-        """machine.c guest_vector: the IVT entry points into the program's memory."""
+        """machine.c guest_vector: the IVT entry points into the program's memory,
+        from its PSP to the top of DOS memory."""
         off, seg = struct.unpack("<HH", self.gmem(vector * 4, 4))
         psp = int.from_bytes(self.mem(self.syms["load_segment"], 4), "big") - 0x10
-        top = struct.unpack("<H", self.gmem(psp * 16 + 2, 2))[0]
-        return psp * 16 <= seg * 16 + off < top * 16
+        return psp * 16 <= seg * 16 + off < 0x9FFF * 16
 
     def press(self, key: int) -> None:
         """The key's make and break scan codes (runtime.h rt_key_ring); the
@@ -963,9 +791,6 @@ class Host:
         Hardware interrupts replay the reference's (script["irqs"]): posted at
         the same visit of the same poll point after the same service event;
         key release eligibility uses recorded trigger visits when available."""
-        self.launch = script.get("launch", "") if script else ""
-        if self.launch.lower() not in ("", "swotl", "swotl.exe"):
-            raise ValueError(f"unsupported host launch: {self.launch}")
         steps = [(t, k) for t, k in script["keys"]] + [(t, None) for t in script["snapshots"]] \
             if script else []
         releases = list(script["releases"]) if script else []
@@ -1014,7 +839,6 @@ class Host:
                 self.halted = True
                 self.e.stop()
 
-        @self.unbounded
         @U.CODE_CB
         def poll(h, addr, size, user):
             try:
@@ -1025,7 +849,7 @@ class Host:
                 self.e.stop()
 
         def replay(addr):
-            if self.irq_i == len(self.irqs) or self.capturing():
+            if self.irq_i == len(self.irqs):
                 return
             n = len(self.services)
             if n != self.visit_n:  # executions of each poll point since the service event
@@ -1035,16 +859,7 @@ class Host:
             if n > svc and not self.irq_lost:
                 self.irq_lost = f"reference irq #{self.irq_i} at {lab} svc={svc} hits={hits} " \
                                 f"not reached (service events {n})"
-            if n == svc and here == lab and self.stress and self.stress.pending(addr):
-                return  # the armed tick (its visits) first; this poll runs again after it
             if n != svc or here != lab or self.visits.get(here, 0) != hits:
-                return
-            if self.stress and self.stress.eligible(self.irqs, self.irq_i):
-                self.irq_i += 1
-                g = self.guest_regs(0)  # the reference's frame went below SS:SP here
-                top = g["ss"] * 16 + g["sp"]
-                self.masked.update(range(top - DEAD_STACK, top))
-                self.stress.arm(addr)
                 return
             post_group(self.r("a7"))
 
@@ -1096,7 +911,6 @@ class Host:
             if lab + "_np" not in self.syms:
                 raise ValueError(f"missing replay execution continuation: {lab}")
 
-        @self.unbounded
         @U.CODE_CB
         def executed(h, addr, size, user):
             n = len(self.services)
@@ -1108,7 +922,6 @@ class Host:
         for a in continuations:
             self.e.hook_range(U.HOOK_CODE, executed, a, a)
 
-        rep = script.get("rep") if script else None
         if rep is not None:
             @U.CODE_CB
             def rep_checkpoint(h, addr, size, user):
@@ -1132,56 +945,10 @@ class Host:
         for a in {a for _, lab, _, _ in self.irqs for a in at[lab]}:
             self.e.hook_range(U.HOOK_CODE, poll, a, a)
         self.e.hook_range(U.HOOK_CODE, back, self.syms["rt_irq_back"], self.syms["rt_irq_back"])
-        if self.music_skip:
-            # The reference took an interrupt in the song code the skip bypasses
-            # (the next one pending, in SPAZ, at this service event): post it
-            # at the next poll point instead.
-            displaced = False
-
-            @U.CODE_CB
-            def skip_hit(h, addr, size, user):
-                nonlocal displaced
-                self.skips += 1
-                nxt = self.irqs[self.irq_i] if self.irq_i < len(self.irqs) else None
-                if nxt and nxt[0] == len(self.services) and nxt[1].startswith(emit.TAG["SPAZ.OVL"] + "_"):
-                    displaced = True
-
-            @U.CODE_CB
-            def late(h, addr, size, user):
-                nonlocal displaced
-                if displaced:
-                    displaced = False
-                    self.moved += 1
-                    post_group(self.r("a7"))
-
-            @U.CODE_CB
-            def skipped(h, addr, size, user):
-                self.skipped_ran.add(f"{addr:x}")
-
-            a = self.syms["rt_hle_music_skip"]
-            self.e.hook_range(U.HOOK_CODE, skip_hit, a, a)
-            for r in csv.DictReader(POLLS.open()):
-                for a in {self.syms[x] for lab in [emit.label(r["module"], int(r["offset"], 16))]
-                          for x in (lab, lab + "_bp") if x in self.syms}:
-                    self.e.hook_range(U.HOOK_CODE, late, a, a)
-            for r in image.rows("hle.csv"):
-                if r["service"] == "music_skip":
-                    for off in range(int(r["first"], 16) + 1, int(r["last"], 16) + 1):
-                        lab = emit.label(r["module"], off)
-                        if lab in self.syms:
-                            a = self.syms[lab]
-                            self.e.hook_range(U.HOOK_CODE, skipped, a, a)
         self.e.reg_write(U.M68K["sr"], 0x2700)
         self.e.reg_write(U.M68K["a7"], STACK_TOP)
         self.halted = False
-        deadline = time.monotonic() + timeout
         err = self.e.start(self.entry, 0xFFFFFFFF, timeout_us=timeout * 1_000_000)
-        # stress mode: stops to arm or inject a tick (tests/irq_stress.py)
-        while not err and self.stress and (begin := self.stress.resume()) is not None:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            err = self.e.start(begin, 0xFFFFFFFF, timeout_us=int(left * 1_000_000))
         if err:
             print(f"unicorn error {U.uc.uc_strerror(err).decode()} pc={self.r('pc'):x}")
             self.exit = -1
@@ -1196,25 +963,55 @@ def trigger(spec: str) -> tuple[str, int, int]:
     """MODULE+HEX[#N] -> (label, offset, N)."""
     at, _, n = spec.partition("#")
     mod, off = at.split("+")
+    off = off.removeprefix("0x")
     return emit.label(mod, int(off, 16)), int(off, 16), int(n or 1)
 
 
 def milestone_script(name: str) -> dict:
     """reference/milestones.csv row: the run stops at the last snapshot trigger;
-    keys are pressed in order, each counted from the previous key's release
-    (the tracer's rules); the frame is compared at vga_mode 13."""
+    keys (those of `after`, then its own: tools/reference.py) are pressed in order,
+    each counted from the previous key's release (the tracer's rules); the frame
+    is compared at vga_mode 13."""
     rows = {r["name"]: r for r in csv.DictReader(TABLE.open())}
-    if name not in rows:
-        rows.update({r["name"]: r for r in csv.DictReader((REPO / "reference/coverage.csv").open())})
     r = rows[name]
     keys = []
     for k in filter(None, r["keys"].split(";")):
-        spec, _, key = k.partition("=")
-        keys.append((trigger(spec), key if (joystick_replay.action(key, r.get("joystick") == "1") or key.startswith(("mx", "my", "mb"))) else key_code(key)))
-    return {"keys": keys, "snapshots": [trigger(s) for s in r["snapshots"].split()],
-            "frame": r["vga_mode"] == "13", "launch": r["launch"],
-            "missing_files": fixture_inputs.missing_files(r.get("missing_files") or ""),
-            "rep_chunks": r.get("rep_chunks") == "1", "joystick": r.get("joystick") == "1"}
+        if "*" in k:
+            raise SystemExit(f"{name}: per-key hold {k} is not replayed yet")
+        spec, _, key = k.rpartition("=")
+        keys.append((trigger(spec), key if key.startswith(("mx", "my", "mb")) else key_code(key)))
+    return {"keys": keys, "snapshots": [trigger(t) for t in r["snapshots"].split()],
+            "frame": r["vga_mode"] == "13"}
+
+
+def host_reference(milestone: str) -> Path:
+    """The host reference run's trace (tools/reference.py --host)."""
+    run = RUNS / f"host-{milestone}"
+    if not (run / "trace").is_dir():
+        raise SystemExit(f"no host reference for {milestone}: python3 tools/reference.py --host {milestone}")
+    return run / "trace"
+
+
+def port_runs(trace: Path, ports: tuple[int, ...]) -> list[tuple[int, int, int]]:
+    """(service events, value, reads) runs of the module reads of `ports`
+    (trace/replay-ports.csv, `pc_run.py --replay-ports`)."""
+    with (trace / "replay-ports.csv").open() as f:
+        return [(int(r["service"]), int(r["value"], 16), int(r["count"])) for r in csv.DictReader(f)
+                if int(r["port"], 16) in ports]
+
+
+class NoMonitor:
+    """No IRQ0 footprint (gen.IRQ_PROOF off, open-work 9): interrupts are taken
+    at poll points only, so no handler runs inside main code's accesses."""
+
+    def deliver(self): pass
+    def returned(self): pass
+    def read(self, lin, size): pass
+    def write(self, lin, size): pass
+
+    def finish(self, path) -> list[str]:
+        print("irq monitor: no footprint (IRQ_PROOF off): not run")
+        return []
 
 
 def machine_ranges() -> list[tuple[int, int]]:
@@ -1226,15 +1023,36 @@ def machine_ranges() -> list[tuple[int, int]]:
     return [(lo, hi) for lo, hi in out + [(at, GUEST_BYTES)] if lo < hi]
 
 
+IRQ_SS, IRQ_SP = 0xB000, 0x8000   # runtime.h RT_IRQ_SS, RT_IRQ_SP (I4)
+
+
+def relocated(g: dict) -> tuple[dict, list[str]]:
+    """A service inside IRQ0's handler (owner decision 2026-11-10, docs/design.md):
+    ours runs on the private stack IRQ_SS:IRQ_SP, the reference on the interrupted
+    SS:SP. SS must be IRQ_SS and stands for the interrupted SS; SP, and BP while it
+    points into the private stack (SP <= BP <= IRQ_SP), are their offsets below
+    IRQ_SP applied to the interrupted SP. Every other register compares as is."""
+    if "irq" not in g:
+        return g, []
+    if g["ss"] != IRQ_SS:
+        return g, [f"ss={g['ss']:04x} in IRQ0's handler, not the private stack {IRQ_SS:04x}"]
+    ss, sp = g["irq"]
+    r = dict(g, ss=ss, sp=(g["sp"] - IRQ_SP + sp) & 0xFFFF)
+    if g["sp"] <= g["bp"] <= IRQ_SP:
+        r["bp"] = (g["bp"] - IRQ_SP + sp) & 0xFFFF
+    return r, []
+
+
 def compare_services(got, want) -> list[str]:
     """CF/ZF: services read no flags, so the state block may hold dead ones at
     entry; at return they are checked where the reference service changed them
-    or where they agreed at entry."""
+    or where they agreed at entry. Services in IRQ0's handler: relocated()."""
     bad = []
     keys = REGS + ("es", "ss", "ds", "vector")
     entry: list = []
     for k, ((gk, g), (wk, w)) in enumerate(zip(got, want)):
-        diff = [f"{n}={g[n]:04x}/{w[n]:04x}" for n in keys if g[n] != w[n]]
+        g, diff = relocated(g)
+        diff += [f"{n}={g[n]:04x}/{w[n]:04x}" for n in keys if g[n] != w[n]]
         flags = w["flags"]
         if gk == "svc":
             entry.append((g, w))
@@ -1316,26 +1134,6 @@ def compare_shown(capture: Path, bytes_per_row: int, snap: Path) -> list[str]:
     out = []
     if words[0] != 256 << 16:
         out.append(f"amiga: LoadRGB32 header {words[0]:08x}")
-    if (capture / "sprites.bin").exists():
-        # The pointer sprites (tests/amiga_sprites.py) over a frame with the
-        # pointer; entry F9h holds the stolen colour, the guest's own F9h is
-        # compared from its DAC.
-        sprites = (capture / "sprites.bin").read_bytes()
-        stolen = struct.unpack(">h", (capture / "stolen.bin").read_bytes())[0]
-        pointer = (capture / "pointer.bin").read_bytes()
-        if pointer[0] and not S.visible(sprites):
-            out.append("amiga: the frame has the pointer, the sprite is not shown")
-        if pointer[0]:
-            shown, problems = S.compose(bytes(shown), sprites, stolen)
-            out += [f"amiga: {p}" for p in problems]
-            print(f"amiga: pointer sprites composed, stolen colour {stolen:02x}")
-        elif S.visible(sprites):
-            print("amiga: sprite held over a frame without the pointer: not composed")
-        if stolen >= 0:
-            if dac[0xF9 * 3:0xF9 * 3 + 3] != dac[stolen * 3:stolen * 3 + 3]:
-                out.append(f"amiga: entry F9h {dac[0xF9 * 3:0xF9 * 3 + 3].hex()}, "
-                           f"the stolen colour {stolen:02x} {dac[stolen * 3:stolen * 3 + 3].hex()}")
-            dac[0xF9 * 3:0xF9 * 3 + 3] = (capture / "dac.bin").read_bytes()[0xF9 * 3:0xF9 * 3 + 3]
     dac = bytes(dac)
     ram = bytes(lo) + bytes(shown) + bytes(hi - lo - len(shown))
     out += [f"amiga shown: {p}" for p in compare_frame(ram, dac, snap, len(shown))]
@@ -1374,19 +1172,23 @@ def compare_video(png: Path, snap: Path) -> list[str]:
             f"y={a // 320} shown {px[ox + 2 * (a % 320), oy + 2 * (a // 320)]}"]
 
 
-def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h) -> list[str]:
+def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h, irq=None) -> list[str]:
     """Registers (state block: segments), RAM, framebuffer and DAC (dac None:
-    not compared) of one capture vs the snapshot."""
+    not compared) of one capture vs the snapshot. irq: the interrupted SS:SP
+    when the capture is inside IRQ0's handler (relocated(), design D8)."""
     problems = []
     seg = {"es": state[4:6], "ss": state[2:4], "ds": state[0:2]}  # G_ES +5, G_SS +3, G_DS +1
     regs = dict(regs, **{n: int.from_bytes(v, "big") for n, v in seg.items()})
+    if irq is not None:
+        regs, problems = relocated(dict(regs, irq=irq))
+        problems = [f"{tag}: {p}" for p in problems]
     for n in REGS + ("es", "ss", "ds"):
         if regs[n] != int(ref_regs[n], 16):
             problems.append(f"{tag}: register {n} {regs[n]:04x} reference {ref_regs[n]}")
     dead = sum(ram[a] != ref[a] for a in h.masked if a < len(ref))
     print(f"{tag}: dead stack {len(h.masked)} bytes masked, {dead} of them differ")
     problems += [f"{tag}: {p}" for p in compare_ram(ram, ref, snap / "residency.csv",
-                                                     h.masked | h.music_masked)]
+                                                     h.masked)]
     if dac is not None:
         problems += [f"{tag}: {p}" for p in compare_frame(ram, dac, snap)]
     reads = sorted(a for a in h.machine_reads if a < len(ref) and ram[a] != ref[a])
@@ -1399,46 +1201,74 @@ def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h) -> list[st
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sound-log", type=Path)
-    ap.add_argument("--milestone", default="m1-mode13h")
-    ap.add_argument("--timeout", type=int, default=600, help="seconds of emulation before failing")
+    ap.add_argument("--milestone", default="m1")
+    ap.add_argument("--timeout", type=int, default=1800, help="seconds of emulation before failing")
     ap.add_argument("--amiga", type=Path, help="also check this A1200-model capture")
     ap.add_argument("--label", action="store_true", help="print the milestone's label and exit")
-    ap.add_argument("--table", type=Path, help="milestone table (default reference/milestones.csv)")
     ap.add_argument("--sabotage", action="store_true",
                     help="each planted runtime fault (SABOTAGE) must fail the check")
-    ap.add_argument("--music-skip", action="store_true",
-                    help="HLE music_skip on: song starts skipped, SPAZ's data not compared")
-    ap.add_argument("--sfx-capture", type=Path, metavar="OUT",
-                    help="effect capture on (sound-plan R1): each id's OPL writes to OUT (tick,id,reg,value)")
-    ap.add_argument("--stress", type=int, metavar="SEED",
-                    help="I6: recorded ticks injected asynchronously (tests/irq_stress.py)")
     args = ap.parse_args(argv)
-    if args.table:
-        global TABLE
-        TABLE = args.table.resolve()
     if args.label:
         print(milestone_script(args.milestone)["snapshots"][-1][0])
         return 0
     if args.sabotage:
         missed = []
-        plants = SABOTAGE if args.stress is None else STRESS_SABOTAGE
-        for name, what in plants.items():
-            problems = check(SABOTAGE_AT.get(name, args.milestone), args.timeout, None, name,
-                             stress=args.stress)
-            print(f"sabotage {name:5} ({what}): {len(problems)} problems")
+        for name, what in SABOTAGE.items():
+            problems = check(args.milestone, args.timeout, None, name)
+            print(f"sabotage {name:12} ({what}): {len(problems)} problems, first: "
+                  f"{problems[0] if problems else '-'}", flush=True)
             if not problems:
                 missed.append(name)
         print("not caught: " + ", ".join(missed) if missed else "all sabotages caught")
         return 1 if missed else 0
-    if args.stress is not None and (args.music_skip or args.amiga):
-        ap.error("--stress runs alone")
-    problems = check(args.milestone, args.timeout, args.amiga, None, args.music_skip, args.sound_log,
-                     stress=args.stress, sfx_capture=args.sfx_capture)
+    problems = check(args.milestone, args.timeout, args.amiga, None)
     for p in problems:
         print(p)
     print(f"host run to {args.milestone}: {'ok' if not problems else 'FAIL'}")
     return 1 if problems else 0
+
+
+def overlay_problems(sabotage: str | None = None) -> list[str]:
+    """machine.c rt_lookup finds overlay code at the CS its stub's word 10h holds
+    (the manager's residency record): for each overlay alone at a buffer CS,
+    every entry of its rows must return its row; at a CS no stub holds, none."""
+    h, problems = Host(image.M.REF, sabotage), []
+    ret = h.syms["plat_exit"]  # stop address, never executed
+    h.e.write(h.syms["rt_guest"], TOP.to_bytes(4, "big"))
+    n = h.u32(h.syms["dispatch_count"])
+    craw = Host(image.M.REF).mem(h.syms["dispatch_table"], 12 * n)  # unplanted
+    count = h.u32(h.syms["overlay_count"])
+    stubs = struct.unpack(f">{count}H", Host(image.M.REF).mem(h.syms["overlay_stubs"], 2 * count))
+    rows: dict[int, list[tuple[int, int]]] = {}
+    for j in range(n):
+        cs, ip, overlay, _far, code = struct.unpack_from(">HHHHI", craw, 12 * j)
+        if overlay:
+            rows.setdefault(overlay, []).append((ip, code))
+    if not rows:
+        return ["overlay probe: no overlay rows"]
+    buffer = 0x6000
+
+    def lookup(cs, ip):
+        h.e.write(STACK_TOP - 16, ret.to_bytes(4, "big") + cs.to_bytes(4, "big")
+                  + ip.to_bytes(4, "big") + (0).to_bytes(4, "big"))
+        h.e.reg_write(U.M68K["sr"], 0x2700)
+        h.e.reg_write(U.M68K["a7"], STACK_TOP - 16)
+        h.e.start(h.syms["rt_lookup"], ret, timeout_us=1_000_000)
+        return h.r("d0") if h.r("pc") == ret else None
+
+    for k, stub in enumerate(stubs):
+        for other in stubs:
+            h.e.write(TOP - (other * 16 + 0x10) - 1, (buffer if other == stub else 0).to_bytes(2, "little")[::-1])
+        for ip, code in rows.get(k + 1, ()):
+            got = lookup(buffer, ip)
+            if got != code:
+                problems.append(f"rt_lookup {buffer:04x}:{ip:04x} with overlay {k + 1} (stub "
+                                f"{stub:04x}) at {buffer:04x}: {got if got is None else hex(got)}, "
+                                f"want {code:x}")
+                break
+        if len(problems) > 5:
+            break
+    return problems
 
 
 def rearm_problems() -> list[str]:
@@ -1465,8 +1295,7 @@ def rearm_problems() -> list[str]:
 
 def check_opl(h, trace: Path, counts: bool = True) -> list[str]:
     """The host's AdLib writes, per port and value, are the reference's
-    (ports.csv of the same run; not with the music skipped, which drops
-    SPAZ's song writes); rt_opl and rt_opl_keyon hold the registers and
+    (ports.csv of the same run); rt_opl and rt_opl_keyon hold the registers and
     key-on edges (B0-B8 bit 5 rising) of the host's write sequence."""
     want: dict[tuple[int, int], int] = {}
     for r in csv.DictReader((trace / "ports.csv").open()):
@@ -1497,25 +1326,9 @@ def check_opl(h, trace: Path, counts: bool = True) -> list[str]:
     return problems
 
 
-def check_pointer(h) -> list[str]:
-    """Each present's pointer against the oracle (Host.check_pointer)."""
-    c = h.pointer_counts
-    print(f"pointer: {c['presents']} presents, {c['shown']} with the pointer shown, "
-          f"DGROUP {h.tracker_ds:04x}; tracker exits {c['exits']}, {c['predicted']} predicted "
-          f"({c['moved']} with mouse motion)")
-    return [f"pointer: {p}" for p in h.pointer_bad]
-
-
-def check_sfx(h) -> list[str]:
-    """Each HLE sfx_start report (rt_sfx_id, rt_sfx_starts) equals the slot and
-    id SPAZ stored at the hooked instruction."""
-    print(f"sfx_start: starts per slot {h.sfx_starts}, ids {list(h.mem(h.syms['rt_sfx_id'], 3))}")
-    return [f"sfx_start: {len(h.sfx_bad)} reports differ, first {h.sfx_bad[0]}"] if h.sfx_bad else []
-
-
 def reference_clocks(trace):
     """Use recorded external inputs; old captures retain their unpinned clocks."""
-    with (trace / 'events.csv').open() as f:
+    with events(trace) as f:
         arm = next(csv.DictReader(f))
     assert arm['kind'] == 'arm', arm
     detail = dict(kv.split('=', 1) for kv in arm['detail'].split())
@@ -1527,109 +1340,51 @@ def reference_clocks(trace):
     clock = None
     if source.exists():
         fields = json.loads(source.read_text())
-        assert fields['WC2_FIXED_FILE_CLOCK'] == '1' and fields['basis'] == 'local calendar'
+        assert fields['basis'] == 'local calendar'
         clock = time.mktime(time.strptime(fields['host_file_clock'], '%Y-%m-%dT%H:%M:%S'))
     return calendar, clock
 
 
-def dump_sfx_capture(h, out: Path) -> list[str]:
-    """The effect capture (src/runtime/sfx.c) as tick,id,reg,value rows."""
-    if h.sfx_captured != 1:
-        return [f"effect capture: plat_sfx_captured called {h.sfx_captured} times, expected once"]
-    ids = 39
-    first = struct.unpack(f">{ids}H", h.mem(h.syms["rt_sfx_first"], 2 * ids))
-    writes = struct.unpack(f">{ids}H", h.mem(h.syms["rt_sfx_writes"], 2 * ids))
-    rows = ["tick,id,reg,value"]
-    for i in range(ids):
-        data = h.mem(h.syms["rt_sfx_capture"] + 4 * first[i], 4 * writes[i])
-        for k in range(writes[i]):
-            tick, reg, value = struct.unpack_from(">HBB", data, 4 * k)
-            rows.append(f"{tick},{i},0x{reg:02x},0x{value:02x}")
-    rows.insert(1, f"# phase {h.sfx_phase}")
-    rows.insert(2, "# opl " + h.mem(h.syms["rt_sfx_opl"], 256).hex())
-    out.write_text("\n".join(rows) + "\n")
-    print(f"effect capture: {sum(writes)} writes, {sum(1 for w in writes if w)} ids, "
-          f"effect countdown {h.sfx_phase} -> {out}")
-    return []
-
-
 def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None,
-          music_skip: bool = False, sound_log: Path | None = None,
-          trace: Path | None = None, stress: int | None = None,
-          sfx_capture: Path | None = None, elf: Path | None = None) -> list[str]:
-    class args:  # noqa: N801
-        pass
-    args.milestone, args.timeout, args.amiga = milestone, timeout, amiga
-    script = milestone_script(args.milestone)
+          trace: Path | None = None, elf: Path | None = None) -> list[str]:
+    script = milestone_script(milestone)
     frame = script["frame"]
-    trace = trace or REPO / f"tmp/pc-runs/ref-{args.milestone}/trace"
-    snap = trace / f"snap-{args.milestone}-{len(script['snapshots']) - 1}"  # where the run stops
-    fixture_inputs.verify(trace.parent, script["missing_files"])
-    import rep_replay
-    chunks = rep_replay.read(trace, required=script["rep_chunks"])
-    rep = rep_replay.Replay(chunks) if chunks else None
-    joystick = joystick_replay.read(trace / 'joystick.csv', required=script['joystick'])
-    if joystick and not script['joystick']:
-        raise ValueError('undeclared joystick recording')
-    joystick_header = joystick_replay.c_header(joystick) if joystick else None
-    diagnostic_elf = rep_replay.host_image(rep.labels if rep else [], joystick_header) if rep or joystick else None
+    trace = trace or host_reference(milestone)
+    snap = trace / f"snap-{milestone}-{len(script['snapshots']) - 1}"  # where the run stops
+    # REP slices (rep_replay.py): a diagnostic image with REP hooks replays the
+    # reference's decoder slices, so an interrupt inside a REP lands where it did
+    chunks = rep_replay.read(trace, required=True)
+    rep = rep_replay.Replay(chunks)
     script["rep"] = rep
-    if sabotage in ("pointer-clamp", "pointer-trunc"):
-        import test_pointer_model
-        diagnostic_elf = test_pointer_model.planted_elf(sabotage[len("pointer-"):])
-    h = Host(image.M.REF, sabotage, music_skip, elf=diagnostic_elf or elf, stress=stress)
-    h.deleted.update(("TARGETS.DEF",) if sabotage == "missing-file" else script["missing_files"])
-    if sfx_capture:
-        h.e.write(h.syms["rt_sfx_prerender_on"], b"\1")
+    h = Host(image.M.REF, sabotage, elf=elf or rep_replay.host_image(rep.labels),
+             retrace=port_runs(trace, (0x3DA,)), pit=port_runs(trace, (0x40,)))
     h.calendar_date, h.file_clock = reference_clocks(trace)
     label = script["snapshots"][-1][0]
     script["irqs"], script["releases"] = reference_inputs(trace, exact_releases=True)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
-    problems = rearm_problems()
+    problems = rearm_problems() + overlay_problems(sabotage)
     if int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes()):
-        problems.append("reference recorded with other poll points: rerun make reference")
-    if sound_log is None:
-        h.run(script, args.timeout)
-    else:
-        with sound_log.open("w") as log:
-            h.sound_log = log
-            h.run(script, args.timeout)
-        h.sound_log = None
-    if rep is not None:
-        try:
-            rep.complete()
-        except ValueError as error:
-            problems.append(str(error))
-    if joystick and (h.u32(h.syms['joystick_index']) != len(joystick) or h.u32(h.syms['joystick_used'])):
-        problems.append('unconsumed joystick recording')
+        problems.append("reference recorded with other poll points: rerun tools/reference.py --host")
+    t0 = time.monotonic()
+    h.run(script, timeout)
+    print(f"host run: {time.monotonic() - t0:.0f} s")
+    try:
+        rep.complete()
+    except ValueError as error:
+        problems.append(str(error))
     if h.irq_lost:
         problems.append(h.irq_lost)
-    if h.stress:
-        print(h.stress.summary())
-        if h.stress.problem:
-            problems.append(h.stress.problem)
-        if not h.stress.drawn:
-            problems.append("irq stress: no tick injected at a drawn instruction")
-    if music_skip:
-        print(f"music skip: {h.skips} song starts skipped, {h.moved} interrupts moved to the "
-              f"next poll point")
-        if not h.skips:
-            problems.append("music skip: no song start skipped")
-        if h.skipped_ran:
-            problems.append(f"music skip: skipped code ran at {sorted(h.skipped_ran)}")
-        for lo, hi, mod, off in image.M.residency(snap / "residency.csv"):
-            if mod == "SPAZ.OVL":
-                h.music_masked |= set(range(max(lo, lo + SPAZ_DATA - off), hi))
-    if sfx_capture:
-        problems += dump_sfx_capture(h, sfx_capture)
+    if h.retrace_bad:
+        problems.append(h.retrace_bad)
+    if h.stopped_at == label and h.retrace_left():
+        problems.append(f"VGA status: {h.retrace_left()} reference reads not made")
+    if h.stopped_at == label and h.pit_left():
+        problems.append(f"PIT: {h.pit_left()} reference reads not made")
     if h.display_miss:
         problems.append(h.display_miss)
-    problems += h.irq.finish(REPO / "tmp/test" / f"irq-monitor-{milestone}{'-' + sabotage if sabotage else ''}"
-                                                 f"{'-music-skip' if music_skip else ''}.json")
+    problems += h.irq.finish(REPO / "tmp/test" / f"irq-monitor-{milestone}{'-' + sabotage if sabotage else ''}.json")
     if h.stopped_at == label:
-        problems += check_opl(h, trace, not music_skip)
-        problems += check_sfx(h)
-    problems += check_pointer(h)
+        problems += check_opl(h, trace)
     marked = bytearray(64000)  # stored since the last present: still marked (rt_vram_rows)
     rows = h.mem(h.syms["rt_vram_rows"], 800)
     for y in range(200):
@@ -1641,8 +1396,11 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
                         f"first x={unmarked[0] % 320} y={unmarked[0] // 320}")
     print(f"frame presents: {h.presents}")
     print(f"hardware interrupts: {h.irq_i} replayed, {len(script['irqs'])} in the reference")
+    print(f"VGA status reads: {sum(r[2] for r in h.retrace)} in the reference")
+    print(f"PIT latches: {h.pit_latches}, reads {sum(r[2] for r in h.pit)} in the reference")
     if h.stopped_at != label:
-        problems.append(f"milestone label {label} not reached (exit {h.exit}, pc={h.r('pc'):x})")
+        problems.append(f"milestone label {label} not reached (exit {h.exit}, pc={h.r('pc'):x}"
+                        f"{', ' + h.log[-1] if h.log else ''})")
     want = reference_services(trace)
     if h.stopped_at == label:
         problems += compare_services(h.services, want)
@@ -1653,25 +1411,29 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
         ref_regs = dict(kv.split("=") for kv in (snap / "regs.txt").read_text().split())
         ref = (snap / "ram.bin").read_bytes()
         g = h.guest_regs(0)
-        if music_skip:
-            ds, ss, sp = (int(ref_regs[n], 16) for n in ("ds", "ss", "sp"))
-            h.music_masked |= set(range(ds * 16 + SPAZ_COUNTS[0], ds * 16 + sum(SPAZ_COUNTS)))
-            h.music_masked |= set(range(ss * 16 + sp - SKIP_DEAD_STACK, ss * 16 + sp))
-            print(f"music skip: {len(h.music_masked)} bytes not compared")
         problems += check_capture("host", g, h.mem(STATE, 16), h.gmem(0, 0x100000),
                                   h.mem(h.syms["rt_dac"], 768) if frame else None,
-                                  ref_regs, ref, snap, h)
-        if args.amiga:
-            regs = dict(kv.split("=") for kv in (args.amiga / "regs.txt").read_text().split())
+                                  ref_regs, ref, snap, h, h.irq_stack[-1] if h.irq_stack else None)
+        if amiga:
+            regs = dict(kv.split("=") for kv in (amiga / "regs.txt").read_text().split())
             ga = {n: int(regs[n], 16) for n in REGS}
             if frame:
-                problems += compare_shown(args.amiga, int(regs["bpr"]), snap)
-            problems += check_capture("amiga", ga, (args.amiga / "state.bin").read_bytes(),
-                                      (args.amiga / "ram.bin").read_bytes()[::-1],  # reversed
-                                      (args.amiga / "dac.bin").read_bytes() if frame else None,
-                                      ref_regs, ref,
-                                      snap, h)
+                problems += compare_shown(amiga, int(regs["bpr"]), snap)
+            problems += check_capture("amiga", ga, (amiga / "state.bin").read_bytes(),
+                                      (amiga / "ram.bin").read_bytes()[::-1],  # reversed
+                                      (amiga / "dac.bin").read_bytes() if frame else None,
+                                      ref_regs, ref, snap, h, amiga_irq(amiga))
     return problems
+
+
+def amiga_irq(capture: Path) -> tuple[int, int] | None:
+    """The interrupted SS:SP of a capture inside IRQ0's handler (irq.bin:
+    rt_irq0_running, then rt_irq_saved: state block, rt_r), else None."""
+    data = (capture / "irq.bin").read_bytes()
+    if not data[0]:
+        return None
+    saved = data[1:]
+    return int.from_bytes(saved[2:4], "big"), int.from_bytes(saved[16 + 8:16 + 10], "big")
 
 
 if __name__ == "__main__":

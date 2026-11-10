@@ -126,9 +126,11 @@ class Ctx:
     far_targets: tuple = ()                   # known (seg, off) targets of an indirect far one
     manager: bool = False                     # PLINK manager call: return skips `dw id`
     far_return: bool = False                  # `push cs; call near`: the callee returns far
+    push_call: bool = False                   # direct near call pushing a continuation (push-calls.csv)
+    jump_return: bool = False                 # indirect near jmp that is a near return (jump-returns.csv)
     program: bool = False                     # program mode (return checks, runtime calls)
     vram: bool = False                        # graphics driver: stores to A000h mark rows (D9)
-    driver_call: bool = False                 # PLINK thunk jump into the graphics driver (D9)
+    driver_call: bool = False                 # D9: PLINK thunk jump or far call into the graphics driver
     ret_mismatch: str = "rt_ret_mismatch"     # a return check's mismatch branch (emit.py: local)
     far_ret_mismatch: str = "rt_ret_far_mismatch"
     bp_direct: bool = False                   # guarded copy: [bp+d] direct (region.py, R6)
@@ -2036,11 +2038,18 @@ class Lowering:
             self.goto_near(t.target)
             return
         self.target_d7(t)
+        if self.c.jump_return:
+            self.e("rts")   # the caller's return check compares d7.w
+            return
         self.dispatch_near("jmp")
 
     def op_call(self):
         i = self.i
         t = i.operands[0]
+        if isinstance(t, Rel) and self.c.push_call:
+            self.push(const=hx(i.next_ip))
+            self.goto_near(t.target)   # the callee consumes the pushed IP: no native frame
+            return
         if isinstance(t, Rel):
             self.push(const=hx(i.next_ip))
             self.goto_near(t.target, "jsr")
@@ -2084,10 +2093,17 @@ class Lowering:
         f = self.far_operand()
         self.push_far(self.c.cs, hx(i.next_ip))
         ret = i.next_ip + (2 if self.c.manager else 0)  # the manager skips `dw id`
+        if self.c.driver_call:
+            # D9 (WC2): a far call into the graphics driver; its outermost
+            # return publishes what it drew (rt_vdrv_return keeps d7)
+            self.e("addq.w #1,rt_vdrv_depth")
         if f:
             self.goto_far(f[0], f[1], "jsr")
         else:
             self.dispatch_far("jsr")
+        if self.c.driver_call:
+            self.e("jsr rt_vdrv_return")
+            self.stats["graphics driver call"] += 1
         self.return_check(ret, self.c.cs)
 
     def op_jcc(self):

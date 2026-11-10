@@ -21,6 +21,11 @@ The translator's poll points (build/gen/poll-points.csv) gate hardware interrupt
 in the trace patch; they are passed only once `make gen` emits some (port-plan P2),
 since an empty list would hold every interrupt. Adapted from Secret Weapons of
 Luftwaffe (docs/upstream.md).
+
+`--host` records host references (P5, tests/host_run.py): one run per milestone
+(host-<name>) that also records the PIT and 3DAh reads (`--replay-ports`) and the
+decoder slices of every REP at a poll point (`--rep-chunks`), which the host run
+replays; the two-run and previous-invocation comparisons are not made.
 """
 
 from __future__ import annotations
@@ -74,7 +79,7 @@ def polls() -> list[str]:
         return ["--polls", str(POLLS)] if len(f.read().splitlines()) > 1 else []
 
 
-def command(m: dict, run: str) -> list[str]:
+def command(m: dict, run: str, host: bool = False) -> list[str]:
     name = m["name"]
     triggers = m["snapshots"].split()
     names = [f"{name}-{i}" for i in range(len(triggers))]
@@ -83,6 +88,10 @@ def command(m: dict, run: str) -> list[str]:
            "--snapshots", ",".join(f"{n}@{t}" for n, t in zip(names, triggers)),
            "--exit-after", names[-1], "--keys", m["keys"].replace(";", ","), "--services"]
     cmd += polls()
+    if host:
+        if not polls():
+            raise SystemExit("--host needs build/gen/poll-points.csv (make gen)")
+        cmd += ["--replay-ports", "--rep-chunks"]
     for path in fixture_inputs.missing_files(m.get("missing_files") or ""):
         cmd += ["--missing-file", path]
     if m.get("joystick") == "1":
@@ -99,9 +108,9 @@ def command(m: dict, run: str) -> list[str]:
     return cmd
 
 
-def check_run(m: dict, run: str) -> tuple[list[str], list[dict]]:
+def check_run(m: dict, run: str, host: bool = False) -> tuple[list[str], list[dict]]:
     """Problems of one run, and per snapshot: name, icount, hashes."""
-    status = subprocess.run(command(m, run), stdout=subprocess.DEVNULL).returncode
+    status = subprocess.run(command(m, run, host), stdout=subprocess.DEVNULL).returncode
     if status != 0:
         return [f"{run}: run status {status}"], []
     trace = REPO / f"tmp/pc-runs/{run}/trace"
@@ -153,6 +162,8 @@ def main() -> int:
     ap.add_argument("--table", default="reference/milestones.csv")
     ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                     help="milestones in parallel (each runs two emulators)")
+    ap.add_argument("--host", action="store_true",
+                    help="host references (one run each, host-<name>; see the module text)")
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
     table = [m for m in csv.DictReader((REPO / args.table).open())
@@ -162,6 +173,15 @@ def main() -> int:
         previous = {r["name"]: r for r in csv.DictReader(HASHES.open())}
     failed = False
     results = []
+    if args.host:
+        with ThreadPoolExecutor(max(1, args.jobs)) as pool:
+            for m, (problems, rows) in zip(table, pool.map(
+                    lambda m: check_run(m, f"host-{m['name']}", True), table)):
+                failed |= bool(problems) or not rows
+                last = rows[-1] if rows else {"icount": ""}
+                print(f"{m['name']:18} {'FAIL ' + '; '.join(problems) if problems else 'ok'}  "
+                      f"snapshots={len(rows)} icount={last['icount']}", flush=True)
+        return 1 if failed else 0
     with ThreadPoolExecutor(max(1, args.jobs)) as pool:
         for m, (problems, rows) in zip(table, pool.map(milestone, table)):
             for row in rows:

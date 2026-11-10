@@ -392,6 +392,18 @@ class Program:
                     if t != "(isr)" and ts[k + 1:k + 2] != ["(isr)"]))
             self.indirect[(r["module"], int(r["offset"], 16))] = (parse("switch_targets"),
                                                                   parse("traced_targets"))
+        # near returns by an indirect jump through a saved return IP (jump-returns.csv)
+        self.jump_returns = {(r["module"], int(r["offset"], 16)) for r in image.rows("jump-returns.csv")}
+        for mod, off in self.jump_returns:
+            i = self.units[mod].insns.get(off) if mod in self.units else None
+            if i is None or i.op != "jmp" or isinstance(i.operands[0], Rel):
+                raise LowerError(f"jump-returns.csv: {mod}+{off:05X} is no indirect near jmp")
+        # near calls that push a continuation the callee consumes (push-calls.csv)
+        self.push_calls = {(r["module"], int(r["offset"], 16)) for r in image.rows("push-calls.csv")}
+        for mod, off in self.push_calls:
+            i = self.units[mod].insns.get(off) if mod in self.units else None
+            if i is None or i.op != "call" or not isinstance(i.operands[0], Rel):
+                raise LowerError(f"push-calls.csv: {mod}+{off:05X} is no direct near call")
         self.succ: dict[tuple[str, int], list] = {}
         self.fall: dict[tuple[str, int], tuple[str, int] | None] = {}
         self.ret_sites: set[tuple[str, int]] = set()
@@ -491,6 +503,13 @@ class Program:
         self.cell_regions()
         # D9: jumps into the per-frame graphics call (WC2: none before P6)
         self.driver_jumps: set[int] = set()
+        # D9 (WC2): far calls from the game into the graphics drivers, `call far [mem]`
+        # sites whose traced targets lie in VRAM_MODULES: the bracket counts them in
+        # rt_vdrv_depth and the outermost return publishes (rt_vdrv_return)
+        self.driver_calls = {(m, o) for (m, o), (sw, tr) in self.indirect.items()
+                             if m in self.units and m not in VRAM_MODULES
+                             and o in self.units[m].insns and self.units[m].insns[o].op == "callf"
+                             and any(t[0] in VRAM_MODULES for t in sw + tr)}
         # VROOMM: overlays by their code range, the stub cells far transfers reach
         self.ovls = M.overlays() if M.ROOT in self.units else []
         self.ovl_of = {f"O{o.stub >> 4:04X}": o for o in self.ovls}
@@ -529,7 +548,7 @@ class Program:
             if n in self.far_calls and self.node_insn(n).op == "call":
                 cache: dict = {}
                 near = [r for t in targets if t not in (RET, UNKNOWN, SMC)
-                        for r in self.reach(t, cache)[0] if self.node_insn(r).op == "ret"]
+                        for r in self.reach(t, cache)[0] if self.node_insn(r).op != "retf"]
                 if near:
                     raise LowerError(f"{n[0]}+{n[1]:05X}: push cs; call reaches a near ret at "
                                      f"{near[0][0]}+{near[0][1]:05X}")
@@ -636,10 +655,13 @@ class Program:
                 s: list = []
                 op = i.op
                 t = i.operands[0] if i.operands else None
-                if op in ("ret", "retf"):
+                if op in ("ret", "retf") or n in self.jump_returns:
                     s = [RET]
                 elif op in ("iret", "hlt"):
                     s = []
+                elif isinstance(t, Rel) and n in self.push_calls:
+                    s = [self.near_node(mod, off, t.target)]   # push IP; jmp: no return site
+                    fall = None
                 elif isinstance(t, Rel):
                     s = [self.near_node(mod, off, t.target)]
                     if op == "call":
@@ -659,7 +681,7 @@ class Program:
                     s = self.indirect_succ(mod, off, far=False)
                     if op == "call":
                         self.ret_sites.add((mod, nxt))
-                if op in ("call", "callf"):
+                if op in ("call", "callf") and n not in self.push_calls:
                     self.calls.append((n, (mod, nxt), list(s)))
                 if fall and op != "call" and op != "callf":
                     s = s + [fall]
@@ -685,7 +707,7 @@ class Program:
         call_site = self.call_site
         while stack:
             n = stack.pop()
-            if self.node_insn(n).op in ("ret", "retf"):
+            if self.is_ret(n):
                 rets.add(n)
                 continue
             # a call continues at its return site; the divide-error edge is an
@@ -701,6 +723,10 @@ class Program:
                     stack.append(x)
         cache[t] = (rets, escapes)
         return cache[t]
+
+    def is_ret(self, n) -> bool:
+        """A return: RET, RETF or a near return by jump (jump-returns.csv)."""
+        return self.node_insn(n).op in ("ret", "retf") or n in self.jump_returns
 
     def dispatch_key(self, n) -> int | None:
         """The rows an unresolved transfer at n may reach through the runtime
@@ -751,7 +777,7 @@ class Program:
         every = frozenset(self.ret_sites)
         self.ret_fallback = 0
         for n in self.succ:
-            if self.node_insn(n).op in ("ret", "retf"):
+            if self.is_ret(n):
                 sites = ret_of.get(n)
                 if not sites:
                     self.ret_fallback += 1
@@ -1059,7 +1085,10 @@ class Program:
                    seg_repeat=label(mod, off) in self.seg_repeat,
                    program=True, vram=mod in VRAM_MODULES,
                    far_return=i.op == "call" and (mod, off) in self.far_calls,
-                   driver_call=mod == M.ROOT and off in self.driver_jumps, ret_mismatch=RM,
+                   jump_return=(mod, off) in self.jump_returns,
+                   push_call=(mod, off) in self.push_calls,
+                   driver_call=(mod == M.ROOT and off in self.driver_jumps) or (mod, off) in self.driver_calls,
+                   ret_mismatch=RM,
                    far_ret_mismatch=RMF,
                    rep_hook=((self.diagnostic_reps[(mod, off)], label(mod, off))
                              if (mod, off) in self.diagnostic_reps else None))

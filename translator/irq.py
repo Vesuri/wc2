@@ -1198,7 +1198,7 @@ class Main:
                     ds = st.segs[1] if t in self.declared else r.segs[1]
                     out.append(((ctx, site), self.after(st, r, words, ds)))
             return out
-        if i.op in ("ret", "retf"):
+        if prog.is_ret(n):
             r = mjoin(self.rets.get(ctx), st)
             if r != self.rets.get(ctx):
                 self.rets[ctx] = r
@@ -1464,7 +1464,7 @@ class Proof:
 
         def after(n):
             ss = [s for s in prog.succ.get(n, ()) if isinstance(s, tuple) and s in prog.succ]
-            if prog.node_insn(n).op in ("ret", "retf"):
+            if prog.is_ret(n):
                 ss += sorted(prog.ret_of.get(n, ()))
             return ss
 

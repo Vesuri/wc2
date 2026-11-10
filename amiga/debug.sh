@@ -47,8 +47,10 @@ else
 fi
 cp -f "$SETPATCH" "$DH0/c/SetPatch"
 cp -f "${3:-out/Wc2.exe}" "$GAME/Wc2" || exit 1
-# The game's own data files next to the executable (local only, never committed).
-rsync -a --exclude '*.pdf' ../ref/ "$GAME/"
+# The game's own data files next to the executable (local only, never committed):
+# the installed game directory C:\WING2, the runtime's file root (dos.c),
+# writable (ref/ is read-only; MODE_OLDFILE opens read-write).
+rsync -a --exclude '*.pdf' ../ref/WING2/ "$GAME/" && chmod -R u+w "$GAME"
 rm -f "$RUN"/state/*.uss
 
 fsuae_claim_port || exit 1

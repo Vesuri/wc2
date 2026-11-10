@@ -7,15 +7,23 @@ import tempfile
 from dataclasses import replace
 import rep_replay as R
 import test_replay_events as C
+import amiga_replay as A
+
+
+REP_STRUCT = ('struct replay_rep { uint32_t service, hits; uint16_t point, cx, si, di, '
+              'end_cx, end_si, end_di, restart, repeat; };\n')
+
+
+def rep_data(chunks, ids={'L': 0, 'N': 1}):
+    """REP metadata as amiga_replay.py writes it: the compacted varint stream."""
+    stream = A.rep_stream(R.compact(chunks), ids)
+    return (REP_STRUCT + f'#define REPLAY_REPS {len(chunks)}u\n'
+            'static const uint8_t replay_rep_stream[] = {' + ','.join(map(str, stream)) + '};\n')
 
 
 def check_builds(source, expect_failure=False):
     data = C.DATA
-    rep = '''
-#define REPLAY_REPS 1u
-struct replay_rep { uint32_t point, service, hits, cx, si, di, end_cx, end_si, end_di, restart, repeat; };
-static const struct replay_rep replay_reps[] = {{0,0,0,1,0,0,0,1,1,0,1}};
-'''
+    rep = rep_data([R.Chunk('L', 0, 0, (1, 0, 0), (0, 1, 1), False)])
     compiler = Path(os.environ.get('AMIGA_TOOLCHAIN', Path.home() / '.local/opt')) / 'bin/m68k-amiga-elf-gcc'
     with tempfile.TemporaryDirectory(prefix='swotl-replay-build-') as tmp:
         p = Path(tmp)
@@ -74,14 +82,9 @@ def check_scheduler(broken=False):
 
 
 def check_c(source, broken=False):
-    data=C.DATA+'''
-#define REPLAY_REPS 3u
-struct replay_rep { uint32_t point, service, hits, cx, si, di, end_cx, end_si, end_di, restart, repeat; };
-static const struct replay_rep replay_reps[] = {
- {0,0,0,4,65534,20,2,2,24,1,1},
- {1,1,0,1,30,40,0,28,38,0,1},
- {0,2,0,2,2,24,1,4,26,0,1}};
-'''
+    data=C.DATA+rep_data([R.Chunk('L',0,0,(4,65534,20),(2,2,24),True),
+                          R.Chunk('N',1,0,(1,30,40),(0,28,38),False),
+                          R.Chunk('L',2,0,(2,2,24),(1,4,26),False)])
     harness=C.HARNESS[:C.HARNESS.index('int main(void)')]+'''
 int main(void) {
  static uint32_t r[15];
@@ -127,19 +130,14 @@ def check_compact(source):
                 start=tuple((x+i*d)&65535 for x,d in zip(c.start,delta)),
                 end=tuple((x+i*d)&65535 for x,d in zip(c.end,delta))))
     assert expanded == chunks
-    data = C.DATA + '''
-#define REPLAY_REPS 8u
-struct replay_rep { uint32_t service, hits; uint16_t point, cx, si, di, end_cx, end_si, end_di, restart, repeat; };
-static const struct replay_rep replay_reps[] = {
-''' + ''.join('{' + ','.join(map(str,(c.service,c.hits,0,*c.start,*c.end,int(c.restart),n))) + '},\n'
-              for c,n in groups) + '};\n'
+    data = C.DATA + rep_data(chunks)
     calls = []
     for c in chunks:
         calls.append(f'replay_services={c.service}; epochs[0]={c.service+1}; visits[0]={c.hits+1};')
         for regs, done, expected in ((c.start,0,0),(c.end,int(not c.restart),int(c.restart))):
             calls.append(f'r[1]={regs[0]}; r[12]={regs[1]}; r[13]={regs[2]}; assert(replay_rep(0,{done},r)=={expected});')
     harness = C.HARNESS[:C.HARNESS.index('int main(void)')] + 'int main(void) { static uint32_t r[15];\n' + '\n'.join(calls) + '''
-assert(replay_rep_index==8 && replay_rep_record==4 && !replay_rep_offset && !replay_rep_active);
+assert(replay_rep_index==8 && !replay_rep_offset && !replay_rep_active);
 return 0;
 }
 '''
@@ -154,9 +152,9 @@ if __name__=='__main__':
     check_c(source)
     check_compact(source)
     if args.sabotage:
-        guarded = '#if REPLAY_REPS\nstatic uint32_t replay_rep_record, replay_rep_offset;\n#endif'
+        guarded = '#if REPLAY_REPS\nstatic uint32_t replay_rep_offset;\n'
         assert guarded in source
-        check_builds(source.replace(guarded, 'static uint32_t replay_rep_record, replay_rep_offset;'), True)
+        check_builds(source.replace(guarded, 'static uint32_t replay_rep_offset;\n#if REPLAY_REPS\n'), True)
         try:check_scheduler(True)
         except AssertionError:pass
         else:raise AssertionError('wrong endpoint plant survived')

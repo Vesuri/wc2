@@ -36,12 +36,13 @@ def machine():
 
 
 def check_irq():
-    for seg, off in [(0xf000, 0xd020), (0xf000, 0xd021), (0xf001, 0xd020)]:
+    # WC2's reference vector F000:CFA0 (machine.c MOUSE_INT74_*, MEASURED: host-m0 IVT)
+    for seg, off in [(0xf000, 0xcfa0), (0xf000, 0xcfa1), (0xf001, 0xcfa0)]:
         h = machine()
         write_guest(h, 0x74 * 4, struct.pack('<HH', off, seg))
         h.post(0x74)
         result = call(h, 'rt_irq_c', 0x08220000, 0x100)
-        if (seg, off) == (0xf000, 0xd020):
+        if (seg, off) == (0xf000, 0xcfa0):
             assert result == 0 and not h.halted and h.mem(H.G_IRQ, 1) == b'\0', (result, h.log)
         else:
             assert h.halted and any('hardware interrupt vector' in x for x in h.log), h.log
@@ -73,9 +74,11 @@ def check_irq():
 
 
 def check_reference():
-    # Positive controls: both axes/signs, consumed motion, every button and IRQs.
-    trace = H.REPO / 'tmp/pc-runs/ref-c9-mouse-menu/trace'
-    buttons, motions, pending = set(), [], []
+    # Positive controls over WC2's mouse surface in the m2 reference (gate 1, run a):
+    # reset, set position and the position poll with motion and both button states;
+    # WC2 reads no motion counters (AX=0Bh) and takes no IRQ12 there (MEASURED).
+    trace = H.REPO / 'tmp/pc-runs/ref-m2-a/trace'
+    calls, positions, buttons, pending = set(), set(), set(), []
     for kind, regs in H.reference_services(trace):
         if kind == 'svc':
             pending.append(regs)
@@ -83,17 +86,14 @@ def check_reference():
             entry = pending.pop()
             if entry['vector'] != 0x33:
                 continue
+            calls.add(entry['ax'])
             if entry['ax'] == 3:
+                positions.add((regs['cx'], regs['dx']))
                 buttons.add(regs['bx'])
-            if entry['ax'] == 0xb:
-                motions.append((regs['cx'], regs['dx']))
-    expected = [(-400, 0), (0, -600), (9, 0), (0, 14), (-9, 0), (0, -14),
-                (700, 0), (0, 500), (-11, 0), (0, -18)]
-    assert [xy for xy in motions if xy != (0, 0)] == [(x & 65535, y & 65535) for x, y in expected]
-    assert {0, 1, 2, 4, 7} <= buttons, buttons
-    assert any(v == 0x74 for _, _, _, v in H.reference_inputs(trace)[0])
-    assert motions[-1] == (0, 0)
-    print('mouse reference: signed motion, consumption, buttons and IRQ12 covered')
+    assert calls == {0, 3, 4}, calls
+    assert len(positions) > 1 and buttons == {0, 1}, (positions, buttons)
+    assert not any(v == 0x74 for _, _, _, v in H.reference_inputs(trace)[0])
+    print('mouse reference: reset, set position, moved positions and both button states covered')
 
 
 if __name__ == '__main__':

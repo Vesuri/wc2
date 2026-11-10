@@ -1,0 +1,2 @@
+module,offset,reason
+WC2.EXE,0x03c55,"near return by jump: the _INIT_ routine at +03B46 (INFERRED: Borland _setargv; entries.csv start-up table) pops its return IP into DS:AD6A at entry (+03B46), builds argv below the caller's SP and leaves by jmp word [AD6A]; it is entered only by the init walker's call word es:[bx+2] at +00216, so the jump lowers as that call's near return (rts, IP in d7, checked at +0021A) (MEASURED: every reference run's edges.csv that reaches it, +03C55 -> +0021A only; DERIVED: reading)"

@@ -16,13 +16,20 @@ commands
   x/s *(char **)($sp+4)
   quit 1
 end
+# A program that returns without reaching the label (a failed start included:
+# "not enough memory") is a stop, not an idle machine waiting out the timeout.
+break amiga_start_return
+commands
+  silent
+  printf "WC2_PROGRAM_RETURNED %d\n", *(int *)($sp+4)
+  quit 1
+end
 break @LABEL@
 continue
 disable $bpnum
 set $bm = &amiga_bitmap
 printf "WC2_REGS ax=%04x cx=%04x dx=%04x bx=%04x sp=%04x bp=%04x si=%04x di=%04x bpr=%d\n", $d0 & 0xffff, $d1 & 0xffff, $d2 & 0xffff, $d3 & 0xffff, ($d4 ^ 0x7fff) & 0xffff, ($d5 ^ 0x7fff) & 0xffff, (unsigned)$a4 & 0xffff, (unsigned)$a5 & 0xffff, $bm ? $bm->BytesPerRow : 0
 printf "WC2_AUDIO restarts=%u renders=%u\n", amiga_audio_restarts, fm_renders
-printf "WC2_EFFECTS capture=%u render=%u save=%u cached=%u bytes=%u\n", amiga_sfx_capture_fields, amiga_audio_effect_fields, amiga_audio_effect_save_fields, amiga_audio_effect_cached, amiga_audio_effect_bytes
 printf "WC2_CHIP free=%u largest=%u\n", amiga_chip_free, amiga_chip_largest
 set $g = *(unsigned char **)&rt_guest
 dump binary memory @OUT@/state.bin $g+1 $g+17

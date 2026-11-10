@@ -20,6 +20,8 @@
 #include "FileDate.h"
 #ifdef WC2_REPLAY
 #include "replay_clocks.h"
+uint16_t replay_pit_count(uint32_t ch);   /* tests/amiga_replay.c */
+uint8_t replay_vga_status(void);
 #endif
 
 struct DosLibrary *DOSBase = 0;
@@ -340,7 +342,7 @@ static int timer_open(void)
         return 0;
     }
     cia_interrupt.is_Node.ln_Type = NT_INTERRUPT;
-    cia_interrupt.is_Node.ln_Name = (char *)"SWOTL PIT";
+    cia_interrupt.is_Node.ln_Name = (char *)"WC2 PIT";
     cia_interrupt.is_Code = (void (*)(void))cia_tick;
     for (WORD bit = CIAICRB_TA; bit <= CIAICRB_TB; ++bit) {
         if (!AddICRVector(cia_base, bit, &cia_interrupt)) {
@@ -368,6 +370,48 @@ void plat_timer_rate(uint32_t divisor)
         cia_load(divisor);
         Enable();
     }
+}
+
+/* PIT channel 0 from the CIA timer that stands in for it: the CIA counts its
+ * latch down once per tick, the PIT (mode 3, as the game programs it) its
+ * divisor down by two twice per tick. Other channels stop (ports.c latches
+ * channel 0 only). */
+uint16_t plat_pit_count(uint32_t ch)
+{
+#ifdef WC2_REPLAY
+    return replay_pit_count(ch);    /* the reference's reads (tests/amiga_replay.c) */
+#else
+    if (ch != 0 || cia_bit < 0) {
+        rt_stop("PIT count without the CIA timer (channel)", ch, 0);
+    }
+    volatile UBYTE *lo = cia_bit == CIAICRB_TA ? &CIAB->ciatalo : &CIAB->ciatblo;
+    volatile UBYTE *hi = cia_bit == CIAICRB_TA ? &CIAB->ciatahi : &CIAB->ciatbhi;
+    uint32_t divisor = rt_pit_divisor;
+    uint32_t latch = amiga_ntsc ? (divisor * 3u + 2u) / 5u : (divisor * 35469u + 29829u) / 59659u;
+    UBYTE h, l;
+    do {
+        h = *hi;
+        l = *lo;
+    } while (h != *hi);
+    uint32_t left = (uint32_t)(h << 8 | l);         /* CIA counts this tick still has */
+    uint32_t count = (2u * left * divisor / (latch ? latch : 1)) % divisor;
+    return (uint16_t)(count & ~1u);
+#endif
+}
+
+/* VGA input status from the beam: bit 3 (and 0) in the vertical blank, bit 0
+ * in the horizontal blank, around the 200-line display window. */
+uint8_t plat_vga_status(void)
+{
+#ifdef WC2_REPLAY
+    return replay_vga_status();     /* the reference's reads (tests/amiga_replay.c) */
+#else
+    ULONG beam = *(volatile ULONG *)0xdff004;       /* VPOSR:VHPOSR */
+    UWORD v = (UWORD)((beam >> 8) & 0x1ff), h = (UWORD)(beam & 0xff);
+    UWORD top = AMIGA_TOP_LINE;
+    int vblank = v < top || v >= top + 200;
+    return (uint8_t)((vblank ? 0x09 : 0) | (h < 0x38 || h >= 0xd8 ? 0x01 : 0));
+#endif
 }
 
 /* Diagnostic key script (argument KEYS=when:key,...; when is a frame from
@@ -465,7 +509,7 @@ static void key_script_check(void)
             ++p;
         }
         if (!known(name, (int)(p - name))) {
-            plat_log("SWOTL KEYS: unknown key");
+            plat_log("WC2 KEYS: unknown key");
         }
         p += *p == ',';
     }
@@ -590,7 +634,7 @@ static int wb_options(void)
                 }
                 key_script = wb_keys;
             } else {
-                plat_log("SWOTL not enough memory");
+                plat_log("WC2 not enough memory");
                 ok = 0;
             }
         }
@@ -623,7 +667,7 @@ static int shell_options(void)
     shell_args = ReadArgs((CONST_STRPTR)SHELL_TEMPLATE, values, 0);
     if (!shell_args) {
         amiga_io_begin();
-        PrintFault(IoErr(), (CONST_STRPTR)"SWotL");
+        PrintFault(IoErr(), (CONST_STRPTR)"WC2");
         amiga_io_end();
         return 0;
     }
@@ -662,7 +706,7 @@ int amiga_guest_open(void)
     }
 #ifndef WC2_SYNC
     if (rt_bench) {         /* production takes no tick at a poll point (irq-plan I8) */
-        plat_log("SWOTL frame bench needs the sync image (make amiga-sync)");
+        plat_log("WC2 frame bench needs the sync image (make amiga-sync)");
         return 0;
     }
     rt_frame_cap = 1;       /* one game frame per field (runtime.h) */
@@ -674,19 +718,19 @@ int amiga_guest_open(void)
     guest_block = (uint8_t *)AllocMem(RT_STATE_BYTES + RT_GUEST_BYTES + RT_EMS_BYTES, MEMF_ANY | MEMF_CLEAR);
     guest_stack = (uint8_t *)AllocMem(GUEST_STACK_BYTES, MEMF_ANY);
     if (!guest_block || !guest_stack) {
-        plat_log("SWOTL not enough memory");
+        plat_log("WC2 not enough memory");
         return 0;
     }
-    plat_log("SWOTL guest start");
+    plat_log("WC2 guest start");
     rt_start(guest_block);
 #ifdef WC2_REPLAY
     (void)timer_open;
-    plat_log("SWOTL diagnostic reference replay");
+    plat_log("WC2 diagnostic reference replay");
 #else
     if (rt_bench) {
-        plat_log("SWOTL frame bench");
+        plat_log("WC2 frame bench");
     } else if (!timer_open()) {
-        plat_log("SWOTL no CIA-B timer");
+        plat_log("WC2 no CIA-B timer");
     }
 #endif
     return 1;

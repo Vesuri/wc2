@@ -149,20 +149,69 @@ static void fail(uint16_t code)
     set_cf(1);
 }
 
-/* "C:\DIR\NAME.EXT" -> "DIR/NAME.EXT", upper case */
+/* The platform's file root is the game directory C:\WING2, the guest's
+ * directory at the launch; AH=3Bh changes the current one (WC2: GAMEDAT).
+ * "C:\WING2\DIR\NAME.EXT" -> "DIR/NAME.EXT" and "NAME.EXT" -> the current
+ * directory's, upper case. Another drive, an absolute path outside WING2 and
+ * "." or ".." components stop. */
+static char current_dir[64];    /* "" (the game directory) or "DIR" */
+
 static void path_of(uint32_t a, char *out, int size)
 {
+    static const char game[] = "WING2";
     int n = 0;
     if (rd8(a) && rd8(a + 1) == ':') {
+        if ((rd8(a) | 0x20) != 'c') {
+            rt_stop("path on another drive than C:", rd8(a), 0);
+        }
         a += 2;
     }
-    while (rd8(a) == '\\' || rd8(a) == '/') {
+    if (rd8(a) == '\\' || rd8(a) == '/') {
         ++a;
+        for (int k = 0; game[k]; ++k, ++a) {
+            uint8_t c = rd8(a);
+            if ((c >= 'a' && c <= 'z' ? c - 32 : c) != game[k]) {
+                rt_stop("absolute path outside C:\\WING2", rd8(a), (uint32_t)k);
+            }
+        }
+        if (rd8(a) == '\\' || rd8(a) == '/') {
+            ++a;
+        } else if (rd8(a)) {
+            rt_stop("absolute path outside C:\\WING2", rd8(a), 5);
+        }
+    } else {
+        for (const char *c = current_dir; *c && n < size - 2; ++c) {
+            out[n++] = *c;
+        }
+        if (n) {
+            out[n++] = '/';
+        }
     }
+    int start = n;
     for (uint8_t c; (c = rd8(a)) != 0 && n < size - 1; ++a) {
+        if (c == '.' && (n == start || out[n - 1] == '/')) {
+            rt_stop("path component . or ..", rd8(a + 1), 0);
+        }
         out[n++] = c == '\\' ? '/' : (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
     }
     out[n] = 0;
+}
+
+/* AH=3Bh: the current directory DS:DX, a directory that holds files (the
+ * platform lists an empty and a missing one alike: either stops); AX = 0 as
+ * the reference's. */
+static void change_dir(void)
+{
+    char path[sizeof current_dir];
+    path_of(lin(G_DS, rt_r.dx), path, sizeof path);
+    if (plat_dir_names(path, 0, 0) <= 0) {
+        rt_stop("directory change to an empty or missing directory", 0, 0);
+    }
+    for (uint32_t k = 0; k < sizeof path; ++k) {
+        current_dir[k] = path[k];
+    }
+    rt_r.ax = 0;
+    set_cf(0);
 }
 
 /* A free handle and SFT entry for platform file f (AX = handle), else error 4. */
@@ -441,22 +490,33 @@ static void allocate(void)
 /* AH=4Ah: DOS 5 shrink/grow of the PSP's block with the next MCB. */
 static void resize(uint16_t cs, uint16_t ip)
 {
+    /* The block at ES with the free last block after it, if any (a shrink
+     * made it), as one: the size it can take; it must end the chain. */
     uint16_t seg = G_ES;
     uint32_t m = lin(seg - 1, 0);
-    uint16_t total = rd16(m + 3);
-    if (rd8(m) != 'Z' || rt_r.bx > total) {
-        rt_unsupported("resize other than shrinking the last block", 0x21, cs, ip);
+    uint16_t size = rd16(m + 3);
+    uint32_t avail = size;
+    uint8_t type = rd8(m);
+    uint32_t after = lin(seg + size, 0);
+    if (type == 'M' && rd8(after) == 'Z' && rd16(after + 1) == 0) {
+        avail += 1u + rd16(after + 3);
+        type = 'Z';
     }
-    if (rt_r.bx < total) {
+    if (type != 'Z' || rt_r.bx > avail) {
+        rt_unsupported("resize other than of the last block within memory", 0x21, cs, ip);
+    }
+    if (rt_r.bx < avail) {
         uint32_t next = lin(seg + rt_r.bx, 0);
         wr8(next, 'Z');
         wr16(next + 1, 0);
-        wr16(next + 3, total - rt_r.bx - 1);
+        wr16(next + 3, (uint16_t)(avail - rt_r.bx - 1));
         wr8(m, 'M');
-        wr16(m + 3, rt_r.bx);
-        if (seg == rt_psp()) {
-            wr16(lin(seg, 2), seg + rt_r.bx);   /* reference: PSP memory top follows */
-        }
+    } else {
+        wr8(m, 'Z');
+    }
+    wr16(m + 3, rt_r.bx);
+    if (seg == rt_psp()) {
+        wr16(lin(seg, 2), seg + rt_r.bx);   /* reference: PSP memory top follows */
     }
     rt_r.ax = seg;
     set_cf(0);
@@ -682,6 +742,8 @@ static void find_first(uint16_t cs, uint16_t ip)
     find_next_entry();
 }
 
+static uint8_t break_check;  /* DOS BREAK, off at boot (DOSBox-X, MEASURED: host-m1 AX=3301h DL=0) */
+
 void rt_int21(uint16_t cs, uint16_t ip)
 {
     uint8_t ah = AH(rt_r.ax);
@@ -720,10 +782,19 @@ void rt_int21(uint16_t cs, uint16_t ip)
         SET_AL(rt_r.bx, 0);
         rt_r.cx = 0;
         break;
+    case 0x33:  /* Ctrl-Break checking: get (AL=0) or set (AL=1) the flag in DL */
+        if (AL(rt_r.ax) == 0x00)
+            rt_r.dx = (uint16_t)((rt_r.dx & 0xff00) | break_check);
+        else if (AL(rt_r.ax) == 0x01)
+            break_check = (uint8_t)(rt_r.dx & 1);
+        else
+            rt_unsupported("DOS function", 0x21, cs, ip);
+        break;
     case 0x35:
         rt_r.bx = rd16(AL(rt_r.ax) * 4);
         G_ES = rd16(AL(rt_r.ax) * 4 + 2);
         break;
+    case 0x3b: change_dir(); break;
     case 0x3c: create_file(); break;
     case 0x3d: open_file(cs, ip); break;
     case 0x3e: close_file(); break;

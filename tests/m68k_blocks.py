@@ -1014,7 +1014,8 @@ def main(argv=None, on_batch=None) -> int:
             # return protocol after a call
             far = last.op == "callf" or (mod, run[-1]) in p.far_calls   # also push cs; call
             if (stop in node_of or stop in walks_at or stop in cell_at or stop == "rt_dispatch_near") \
-                    and last.op in ("call", "callf") and not diffs:
+                    and last.op in ("call", "callf") and not diffs \
+                    and (mod, run[-1]) not in p.push_calls:   # push IP; jmp: no native return
                 ret_ip = last.next_ip + (2 if run[-1] in u.manager_calls else 0)
                 site = emit.label(mod, run[-1] + last.size + (2 if run[-1] in u.manager_calls else 0))
                 if copy and site + "_bp" in addr:   # past the guard after the call (BP in range)

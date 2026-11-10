@@ -21,7 +21,7 @@ mkdir -p "$DH0/c" "$DH0/s" "$DH1" "$RUN/state"
 printf 'C:SetPatch QUIET\ncd dh1:\nWc2 %s\n' "${WC2_ARGS:-}" > "$DH0/s/startup-sequence"
 cp -f "$SETPATCH" "$DH0/c/SetPatch"
 cp -f "$EXE" "$DH1/Wc2"
-rsync -a --exclude '*.pdf' ../ref/ "$DH1/"
+rsync -a --exclude '*.pdf' ../ref/WING2/ "$DH1/" && chmod -R u+w "$DH1"  # the game directory C:\WING2
 # A resumed .uss saved by a halted GDB session makes any build look frozen.
 rm -f "$RUN"/state/*.uss
 

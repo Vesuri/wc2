@@ -383,6 +383,10 @@ void rt_int33(void)
         }
         rt_video_frame();
         break;
+    case 0x0004:  /* set the position (CX, DX), clamped to the range */
+        mouse_x = clamp((int16_t)rt_r.cx, 639);
+        mouse_y = clamp((int16_t)rt_r.dx, 199);
+        break;
     case 0x000b:  /* motion since last call */
         rt_pointer_open();
         mouse_scale();

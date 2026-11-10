@@ -108,6 +108,8 @@ volatile uint8_t rt_present_due;
 volatile uint32_t rt_fields;
 uint8_t rt_frame_cap;
 static uint32_t frame_field;     /* rt_fields when the last poll returned */
+static uint8_t dac_index, dac_component;  /* rt_dac_out, rt_dac_in */
+static uint8_t dac_changed;      /* port writes not yet shown (present) */
 static volatile uint8_t busy;    /* the main thread presents or sets the video mode or DAC */
 static struct plat_rect rects[200];
 /* Persistent guest-order pixels, plus 32 bytes of Kalms C2P lookahead. */
@@ -141,6 +143,10 @@ static void vram_all(void)
  * unit), rows with equal columns merged; the marks are cleared. */
 static void present(void)
 {
+    if (dac_changed) {
+        dac_changed = 0;
+        plat_palette(rt_dac);
+    }
     int32_t n = 0;
     /* The pointer masked at the last present: from VGA memory again (pointer.c). */
     for (uint16_t y = rt_pointer.masked_y0; y < rt_pointer.masked_y1; ++y) {
@@ -259,6 +265,35 @@ void rt_video_frame(void)
     frame_field = rt_fields;
 }
 
+/* VGA DAC ports: 3C8h the write index, 3C7h the read index (component 0),
+ * 3C9h the next component written or read, the index advancing after blue.
+ * Writes reach the platform at the next present (the driver writes whole
+ * palettes component by component). */
+void rt_dac_out(uint16_t port, uint8_t v)
+{
+    if (port == 0x3c8 || port == 0x3c7) {
+        dac_index = v;
+        dac_component = 0;
+        return;
+    }
+    rt_dac[dac_index * 3 + dac_component] = v & 0x3f;
+    dac_changed = 1;
+    if (++dac_component == 3) {
+        dac_component = 0;
+        ++dac_index;
+    }
+}
+
+uint8_t rt_dac_in(void)
+{
+    uint8_t v = rt_dac[dac_index * 3 + dac_component];
+    if (++dac_component == 3) {
+        dac_component = 0;
+        ++dac_index;
+    }
+    return v;
+}
+
 static void dac_block(int set)
 {
     uint32_t first = rt_r.bx, n = rt_r.cx, a = lin(G_ES, rt_r.dx);
@@ -289,6 +324,21 @@ void rt_int10(void)
         set_mode();
         vram_all();
         plat_palette(rt_dac);
+        break;
+    case 0x08:  /* character and attribute at the cursor: text memory is not
+                 * modelled; the reference's text screen is blank there (0720h) */
+        if (rd8(BDA_MODE) != 0x03) {
+            rt_unsupported("video BIOS character read outside text mode", 0x10, 0, 0);
+        }
+        rt_r.ax = 0x0720;
+        break;
+    case 0x12:  /* EGA information (BL=10h): colour, 256 KiB, the reference's
+                 * switches and feature bits */
+        if ((uint8_t)rt_r.bx != 0x10) {
+            rt_unsupported("video BIOS alternate select other than BL=10h", 0x10, 0, 0);
+        }
+        rt_r.bx = 0x0003;
+        rt_r.cx = 0x0f09;
         break;
     case 0x0f:  /* current mode, columns, page */
         rt_r.ax = (uint16_t)(rd8(BDA_COLUMNS) << 8 | rd8(BDA_MODE));

@@ -81,8 +81,8 @@ def planted_elf(name):
     objects += [host / n for n in ("program.o", "compute_projection.o", "compute_normalise.o",
                                    "compute_scenery.o", "compute_native.o")]
     subprocess.run([str(tools / "m68k-amiga-elf-ld"), "-Ttext=0x10000", "-e", "_start",
-                    "-o", str(out / "swotl.elf"), *map(str, objects)], check=True)
-    return out / "swotl.elf"
+                    "-o", str(out / "wc2.elf"), *map(str, objects)], check=True)
+    return out / "wc2.elf"
 
 
 class Model:

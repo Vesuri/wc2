@@ -64,7 +64,7 @@ def layout(elf: Path, objdump: str):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("meter", nargs="?", type=Path)
-    ap.add_argument("--elf", type=Path, default=REPO / "build/host/swotl.elf")
+    ap.add_argument("--elf", type=Path, default=REPO / "build/host/wc2.elf")
     ap.add_argument("--objdump", default=M.OBJDUMP)
     ap.add_argument("--min", type=int, default=64, help="least count difference to align a chunk")
     ap.add_argument("--write", action="store_true")

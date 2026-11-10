@@ -652,9 +652,10 @@ vram_row:	; row of each 64-byte block of the frame: k / 5
 	dc.b	196,196,196,196,196,197,197,197,197,197,198,198,198,198,198,199,199,199,199,199
 	even
 
-; D9: the `jmp far` of a PLINK thunk into the graphics driver called the
-; entry; its retf returns here (d7.l = the popped CS:IP for the caller's
-; return check). The outermost return publishes what the driver drew.
+; D9: a graphics driver call returned here (SWOTL: the `jmp far` of a PLINK
+; thunk; WC2: a `call far [mem]` into TM.DRV or SUPERTM.DRV), d7.l = the
+; popped CS:IP for the caller's return check, kept. The outermost return
+; publishes what the driver drew.
 rt_vdrv_return:
 	subq.w	#1,rt_vdrv_depth
 	bne.s	.inner

@@ -17,6 +17,8 @@
 	xdef	plat_dir_names
 	xdef	plat_file_info
 	xdef	plat_timer_rate
+	xdef	plat_pit_count
+	xdef	plat_vga_status
 	xdef	plat_mouse
 	xdef	plat_present
 	xdef	plat_palette
@@ -64,6 +66,10 @@ plat_dir_names:	nop
 plat_file_info:	nop
 	rts
 plat_timer_rate:	nop
+	rts
+plat_pit_count:	nop
+	rts
+plat_vga_status:	nop
 	rts
 plat_mouse:	nop
 	rts

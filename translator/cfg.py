@@ -20,7 +20,8 @@ near and far transfers; stops at returns and indirect jumps, and after a near ca
 routine of `noreturn.csv`. A far target in a stub segment at an entry (20h + 5k) is the
 overlay's entry k (`stub_calls` keeps the stub cell it goes through, emit.py); in a root code segment, the root; anything else (no literal far
 transfer in a driver; `jmp far FFFF:0000` in the root) is not followed. A start is
-reached with one CS. Self-modified regions are not decoded statically (D16): flow into
+reached with one CS; a seed without one takes the CS its runtime.csv row names, else
+its unit's (Unit.segment). Self-modified regions are not decoded statically (D16): flow into
 one is recorded as an entry of the region, and the successors of each of its listed
 forms are followed. Overlaps, flow outside its code range, undecodable bytes, two CS
 values for one start and far targets at a stub offset that is no entry raise CfgError
@@ -116,6 +117,17 @@ class _Descent:
         self.smc = image.smc_regions()
         self.forms = image.smc_forms()
         self.noreturn = {(r["module"], int(r["offset"], 16)) for r in image.rows("noreturn.csv")}
+        # runtime.csv rows name their CS (seg_ip): a routine below a later root code
+        # segment (WC2.EXE+0FA58, 0F12:0938, a near target) runs with it
+        self.known_cs: dict[tuple[str, int], int] = {}
+        for r in image.rows("runtime.csv"):
+            if r["module"] not in self.units or not r.get("seg_ip"):
+                continue
+            seg, ip = (int(x, 16) for x in r["seg_ip"].split(":"))
+            off = int(r["offset"], 16)
+            if seg * 16 + ip != mods[r["module"]].to_link(off):
+                self.errors.append(f"{r['module']}+{off:05X}: runtime.csv seg_ip {r['seg_ip']} is not its offset")
+            self.known_cs[(r["module"], off)] = seg
         self.work: list[tuple[str, int, str, int | None]] = []
         self.body: dict[str, dict[int, int]] = {n: {} for n in scope}  # byte -> start
         self.errors: list[str] = []
@@ -195,6 +207,8 @@ class _Descent:
                 return
             if off in self.body[mod]:
                 raise CfgError(f"{mod}+{off:05X}: start inside {mod}+{self.body[mod][off]:05X} ({why})")
+            if cs is None:
+                cs = self.known_cs.get((mod, off))
             seg = cs = u.segment(off) if cs is None else cs
             ip = u.module.to_link(off) - seg * 16
             if not 0 <= ip < 0x10000:

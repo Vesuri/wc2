@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Diagnostic assembly hook ABI: real 68020 execution and a planted loss."""
 import argparse
+from unittest import mock
 from pathlib import Path
 import random
 import struct
@@ -135,7 +136,7 @@ def check_copy(hook, target, body, broken=False):
 def check_generation(body, sabotage):
     normal = emit.Program()
     # A recorded key/snapshot trigger in the middle of a production block.
-    node = ('SWOTL.EXE', 0x44e2)
+    node = ('WC2.EXE', 0x276)   # mov bp,sp after push bp at +00275
     assert node not in normal.leaders
     diagnostic = emit.Program(normal.units, diagnostic_hooks={node: 7})
     assert diagnostic.loop_heads == normal.loop_heads
@@ -151,10 +152,17 @@ def check_generation(body, sabotage):
     normal_lines, _ = normal.module_text(node[0])
     assert not any('rt_replay_point' in line for line in normal_lines)
     print(f'replay generation: {hooks} entries hooked, original poll points unchanged, normal output has no hooks')
-    copied = set().union(*(nodes for _, _, nodes, _ in normal.comps))
-    node = sorted(copied & normal.loop_heads)[0]
-    diagnostic = emit.Program(normal.units, diagnostic_hooks={node: 7})
-    lines, _ = diagnostic.module_text(node[0])
+    # WC2 chooses no BP regions yet (a profile choice, P7): a fixture row whose
+    # component holds a loop head gives the guarded copy its hook
+    rows = emit.image.rows
+    def fixture(name):
+        return [{'module': 'STRAX.DRV', 'writer': '0x009d7'}] if name == 'bp-regions.csv' else rows(name)
+    with mock.patch.object(emit.image, 'rows', fixture):
+        normal = emit.Program(normal.units)
+        copied = set().union(*(nodes for _, _, nodes, _ in normal.comps))
+        node = sorted(copied & normal.loop_heads)[0]
+        diagnostic = emit.Program(normal.units, diagnostic_hooks={node: 7})
+        lines, _ = diagnostic.module_text(node[0])
     copy, target = emit.copy_label(*node), emit.label(*node) + '_np'
     k = next(k for k, line in enumerate(lines) if line.startswith(copy + ':'))
     hook = lines[k + 1:k + 5]

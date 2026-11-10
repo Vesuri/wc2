@@ -14,12 +14,21 @@ DATA = '''
 #define REPLAY_IRQS 3u
 #define REPLAY_SERVICES 1u
 #define REPLAY_STEPS 1u
-struct replay_point_info { uint32_t cs, ip; };
+#define REPLAY_RETRACE 0u
+#define REPLAY_VGA_READS 0u
+#define REPLAY_PIT 0u
+#define REPLAY_PIT_READS 0u
+struct replay_point_info { uint32_t cs, ip, slot; };
 struct replay_irq { uint32_t service, point, hits, vector; };
 struct replay_step { uint32_t point, hits, kind; int32_t value; uint32_t release; };
-static const struct replay_point_info replay_points[] = {{1,2},{3,4},{5,6}};
+struct replay_retrace { uint32_t service, value, repeat; };
+static const struct replay_point_info replay_points[] = {{1,2,0},{3,4,0},{5,6,0}};
 static const struct replay_irq replay_irqs[] = {{0,0,1,8},{0,0,1,8},{1,1,0,9}};
 static const struct replay_step replay_script[] = {{2,1,0,0,0}};
+static const struct replay_retrace replay_retrace[] = {{0,0,0}};
+static const struct replay_retrace replay_pit[] = {{0,0,0}};
+#define REPLAY_HASH_STEP 1u
+#define REPLAY_FINAL_HASH SERVICE_HASH
 static const uint32_t replay_service_hashes[] = {SERVICE_HASH};
 '''
 HARNESS = '''
@@ -34,6 +43,10 @@ uint32_t test_case;
 void test_stop(void) { for (;;) {} }
 void rt_unsupported(const char *what, uint16_t a, uint16_t b, uint16_t c)
 { (void)what; (void)a; (void)b; (void)c; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
+void rt_stop(const char *what, uint32_t a, uint32_t b)
+{ (void)what; (void)a; (void)b; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
+volatile uint8_t rt_irq0_running;
+uint8_t rt_irq_saved[RT_STATE_BYTES + sizeof(struct rt_regs)];
 int main(void) {
     G_IF = 1;
     if (test_case == 3 || test_case == 4) {
@@ -181,6 +194,6 @@ if __name__ == '__main__':
                          ('a->point == b->point', 'a->point != b->point'),
                          ('replay_services != REPLAY_SERVICES', 'replay_services == REPLAY_SERVICES'),
                          ('if (!G_IF)', 'if (0 && !G_IF)'),
-                         ('service_hash != replay_service_hashes[replay_services]', '0')]:
+                         ('service_hash != ', '0 && service_hash != ')]:
             assert old in source
             check(source.replace(old, new), True)

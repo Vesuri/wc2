@@ -52,6 +52,18 @@ def check(sabotage=False):
     assert rows == capture(), 'DOS SDA oracle did not repeat'
     psp = int.from_bytes(rows[0][1][16:18], 'little')
     h = T.machine.machine()
+    # The oracle program's PSP (its own, smaller environment) stands for the
+    # machine's: WC2's at 0814h (machine.c, MEASURED: host-m0); the DTA segment
+    # and the current-PSP words that hold it are compared as the runtime's PSP.
+    ours = T.machine.call(h, 'rt_psp') & 0xFFFF
+    def own(row):
+        data = bytearray(row[1])
+        for at in (14, 16):
+            if int.from_bytes(data[at:at + 2], 'little') == psp:
+                data[at:at + 2] = ours.to_bytes(2, 'little')
+        return row[0], bytes(data)
+    rows = [own(row) for row in rows]
+    psp = ours
     for step, row in zip(STEPS, rows):
         if step is not None:
             seg, off = step

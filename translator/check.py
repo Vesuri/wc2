@@ -69,7 +69,10 @@ def lint(paths: list[Path]) -> list[str]:
     for root in paths:
         for f in sorted([root] if root.is_file() else root.rglob("*")):
             shown = f.relative_to(image.REPO) if f.is_relative_to(image.REPO) else f
-            if f.suffix.lower() not in SOURCES or "gen" in Path(shown).parts[:2]:
+            # generated code and the Amiga build's outputs (amiga/out, amiga/obj:
+            # listings of the generated program) are not hand-written
+            if f.suffix.lower() not in SOURCES or "gen" in Path(shown).parts[:2] or \
+                    Path(shown).parts[:2] in (("amiga", "out"), ("amiga", "obj")):
                 continue
             for k, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
                 for m in GUEST_NAME.finditer(line):

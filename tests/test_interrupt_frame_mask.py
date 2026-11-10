@@ -15,9 +15,9 @@ SABOTAGE = None
 
 def watching():
     h = H.Host(H.image.M.REF)
-    h.run({'keys': [], 'snapshots': [H.trigger('SWOTL.EXE+164f2')],
+    h.run({'keys': [], 'snapshots': [H.trigger('WC2.EXE+0')],
            'irqs': [], 'releases': []}, 30)
-    assert h.stopped_at == 'R_164F2'
+    assert h.stopped_at == 'R_00000'
     h.halted = False
     if SABOTAGE == 'frame':
         h.frame_writer = (0, 0)  # Reintroduce runtime-frame mask removal.
@@ -45,8 +45,8 @@ class FrameMaskTests(unittest.TestCase):
         g = h.guest_regs(0)
         top = g['ss'] * 16 + g['sp']
         h.masked = set(range(top - H.DEAD_STACK, top))
-        # Execute the existing generated PUSH BP, stopping before MOV BP,SP.
-        err = h.e.start(h.syms['R_00000'], h.syms['R_00001'], timeout_us=1_000_000)
+        # Execute a generated PUSH BP (WC2.EXE+00275), stopping before MOV BP,SP.
+        err = h.e.start(h.syms['R_00275'], h.syms['R_00276'], timeout_us=1_000_000)
         self.assertFalse(err)
         self.assertEqual(h.gmem(top - 2, 2), struct.pack('<H', g['bp']))
         self.assertEqual(h.masked, set(range(top - H.DEAD_STACK, top - 2)))

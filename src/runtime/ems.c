@@ -21,6 +21,9 @@ static uint16_t ems_free = RT_EMS_PAGES;
 static uint16_t pages[EMS_HANDLES];   /* 0: free; handle 0 is the operating system's */
 static uint8_t page_of[EMS_HANDLES][RT_EMS_PAGES], used[RT_EMS_PAGES];
 static uint16_t mapped[EMS_PHYS];     /* store page + 1, 0: none */
+/* AH=47h/48h: a handle's saved frame mappings (DOSBox-X EMM_SavePageMap) */
+static uint16_t saved_map[EMS_HANDLES][EMS_PHYS];
+static uint8_t saved[EMS_HANDLES];
 
 static uint8_t *store(uint16_t slot)
 {
@@ -80,6 +83,8 @@ static void copy(uint8_t *d, const uint8_t *s)
     }
 }
 
+static uint8_t map_slot(uint8_t phys, uint16_t slot);
+
 static uint8_t map(uint8_t phys, uint16_t page, uint16_t handle)
 {
     if (phys >= EMS_PHYS) {
@@ -91,7 +96,12 @@ static uint8_t map(uint8_t phys, uint16_t page, uint16_t handle)
     if (page != 0xffff && page >= pages[handle]) {
         return 0x8a;
     }
-    uint16_t slot = page == 0xffff ? 0 : page_of[handle][page] + 1;
+    return map_slot(phys, page == 0xffff ? 0 : page_of[handle][page] + 1);
+}
+
+/* Frame page phys shows store slot (0: unmapped). */
+static uint8_t map_slot(uint8_t phys, uint16_t slot)
+{
     uint8_t *frame = frame_page(phys);
     if (slot && mapped[phys] == slot) {
         /* Write-back then reload of the same page leaves the frame unchanged
@@ -172,6 +182,36 @@ void rt_int67(void)
         }
         ems_free += pages[rt_r.dx];
         pages[rt_r.dx] = 0;
+        saved[rt_r.dx] = 0;
+        break;
+    case 0x46:  /* version 4.0 */
+        rt_r.ax = 0x0040;
+        return;
+    case 0x47:  /* save the frame mappings in handle DX (0: the OS's) */
+    case 0x48:  /* restore them */
+        if (rt_r.dx >= EMS_HANDLES || (rt_r.dx && !pages[rt_r.dx])) {
+            SET_AH(rt_r.ax, 0x83);
+            return;
+        }
+        if (AH(rt_r.ax) == 0x47) {
+            if (saved[rt_r.dx]) {
+                SET_AH(rt_r.ax, 0x8d);
+                return;
+            }
+            for (int k = 0; k < EMS_PHYS; ++k) {
+                saved_map[rt_r.dx][k] = mapped[k];
+            }
+            saved[rt_r.dx] = 1;
+        } else {
+            if (!saved[rt_r.dx]) {
+                SET_AH(rt_r.ax, 0x8e);
+                return;
+            }
+            saved[rt_r.dx] = 0;
+            for (int k = 0; k < EMS_PHYS; ++k) {
+                map_slot((uint8_t)k, saved_map[rt_r.dx][k]);
+            }
+        }
         break;
     default:
         rt_unsupported("EMS function", 0x67, 0, 0);

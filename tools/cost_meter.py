@@ -505,9 +505,9 @@ def plant_check(base_json: Path, objdump: str) -> int:
     order = ["host_s.o", "host.o", "rt_entry.o"]
     runtime_c = sorted(p.stem for p in (REPO / "src/runtime").glob("*.c"))
     objs = [host / o for o in order] + [host / f"{c}.o" for c in runtime_c] + [work / "program.o", host / "compute_projection.o", host / "compute_normalise.o", host / "compute_scenery.o", host / "compute_native.o"]
-    subprocess.run([cross + "ld", "-Ttext=0x10000", "-e", "_start", "-o", str(work / "swotl.elf")]
+    subprocess.run([cross + "ld", "-Ttext=0x10000", "-e", "_start", "-o", str(work / "wc2.elf")]
                    + [str(o) for o in objs], check=True)
-    elf = work / "swotl.elf"
+    elf = work / "wc2.elf"
     prog = Program(elf, objdump, (host / "host.o", host / "host_s.o"))
     blocks, taken_blocks, meta = run(base["meta"]["milestone"], elf, work / "gen", 3600)
     meta.pop("into")
@@ -624,7 +624,7 @@ def calibrate(capture: Path, elf: Path, objdump: str, write: bool) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("milestone", nargs="?", default="m4-demo-frames")
-    ap.add_argument("--elf", type=Path, default=REPO / "build/host/swotl.elf")
+    ap.add_argument("--elf", type=Path, default=REPO / "build/host/wc2.elf")
     ap.add_argument("--gen", type=Path, default=REPO / "build/gen")
     ap.add_argument("--out", type=Path, help="write the full result as JSON")
     ap.add_argument("--timeout", type=int, default=3600)

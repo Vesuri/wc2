@@ -1,6 +1,6 @@
 ## Wing Commander II — repository-level targets.
 
-.PHONY: all help extract install hash check-ref prepare-reference reference-staging compare \
+.PHONY: all help test-host test-amiga extract install hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size clean
 
@@ -35,7 +35,9 @@ help:
 	@echo "  make lint               G2: no guest-address names in hand-written code"
 	@echo "  make test               lint, decoder, x86 (forms, blocks, space, boundary) and 68020 (forms, blocks, space, boundary) differentials, the program block test, guards, gen-check"
 	@echo "  make test-sabotage      planted faults must fail the x86 and 68020 differentials"
-	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/swotl.elf"
+	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/wc2.elf"
+	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1 and m1b (tests/host_run.py)"
+	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
@@ -148,7 +150,11 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_joystick_events test_joystick_link test_load_image test_joystick_recorder test_joystick_replay \
 	test_jump_fusion test_key_release test_m68k_assembly test_next_branch \
 	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
-	test_rep_replay test_replay_chords test_replay_events test_smc_flow
+	test_rep_replay test_replay_chords test_replay_events test_smc_flow \
+	test_dos_sda test_dos_search test_ems test_far_return_protocol test_file_dates \
+	test_host_launch test_irq_in_service test_mouse_irq test_interrupt_frame_mask \
+	test_key_chords test_keyboard_prefix test_host_replay_visits test_replay_hooks \
+	test_replay_run_isolation
 # The program block test in parts (tests/m68k_blocks.py --shard); BLOCK_JOBS bounds
 # the parts run at once when test-blocks runs alone.
 BLOCK_SHARDS ?= 8
@@ -220,10 +226,26 @@ build/host/%.o: src/runtime/%.c src/runtime/runtime.h src/runtime/platform.h
 	@mkdir -p $(dir $@)
 	$(CROSS)gcc $(RT_CFLAGS) -c -o $@ $<
 
-build/host/swotl.elf: $(HOST_OBJ)
+build/host/wc2.elf: $(HOST_OBJ)
 	$(CROSS)ld -Ttext=0x10000 -e _start -o $@ $(HOST_OBJ)
 
-host: gen-check build/host/swotl.elf
+host: gen-check build/host/wc2.elf
+
+# Gate 5 (docs/port-plan.md P5): lockstep against the host references
+# (tools/reference.py --host), one run per milestone, in parallel.
+HOST_MILESTONES = m1 m1b
+t-host-%:
+	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 5400)
+test-host: host
+	@$(MAKE) -s -k -j$(JOBS) $(HOST_MILESTONES:%=t-host-%)
+
+# test-amiga (gate 5): the diagnostic replay image (tests/amiga_replay.py) replays
+# the host reference's interrupts, REP slices, 3DAh and PIT reads and clocks on the
+# 68030 model; its capture at the milestone gets the host run's checks.
+AMIGA_MILESTONE ?= m1b
+AMIGA_CPU       ?= 68030
+test-amiga: host
+	. amiga/env.sh && AMIGA_CPU=$(AMIGA_CPU) $(PYTHON) tests/amiga_replay.py --milestone $(AMIGA_MILESTONE)
 
 amiga: gen-check
 	. amiga/env.sh && $(MAKE) -C amiga

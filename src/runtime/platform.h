@@ -39,6 +39,12 @@ int32_t plat_file_info(const char *path, struct plat_file_info *info);
 /* PIT channel 0 now fires every `divisor` input clocks (1..65536, 1193182 Hz):
  * per period the platform posts vector 08h (runtime.h rt_irq_ring). */
 void plat_timer_rate(uint32_t divisor);
+/* PIT channel `ch`'s counter now (1193182 Hz down from rt_pit_divisor, mode 3
+ * counts by two: the value a latch command captures). */
+uint16_t plat_pit_count(uint32_t ch);
+/* VGA input status (port 3DAh): bit 3 in the vertical retrace, bit 0 in any
+ * blanking, as the beam stands now. */
+uint8_t plat_vga_status(void);
 /* Mouse counts since the last call (right and down positive) and the
  * buttons held (bit 0 left, 1 right, 2 middle). */
 uint32_t plat_mouse(int32_t *dx, int32_t *dy);

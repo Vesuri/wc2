@@ -312,6 +312,10 @@ P5 (open-work 9). 5 is designed there ("WC2 EMS model"); building it is open-wor
    recomputed from it on the 68030 and 68040 models. That makes open-work 6's report, checked
    against D1.
 
+Status: 1–3 pass (`make test-host`: m1 and m1b in lockstep, services inside IRQ0's handler
+compared relocated, design D8; `make test-amiga` at m1b on the 68030 model, 32 MB Zorro III
+Fast RAM for the diagnostic image). 4 waits on open-work 9 and 10.
+
 ### P6. Whole game (gate 6)
 
 1. Runtime surfaces, in milestone order:
