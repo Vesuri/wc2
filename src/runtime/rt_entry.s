@@ -144,12 +144,27 @@ deliver_or_return:
 	move.l	d0,-(a7)
 	bsr	load_regs
 	move.l	(a7)+,d7
-	bne.s	deliver_guest
+	bne.s	deliver_int
 rt_exit:	; back to generated code (tests/host_run.py: service returns)
 	ifd WC2_REPLAY
 	jsr rt_replay_return
 	endif
 	rts
+deliver_int:	; a software interrupt's guest handler: its IRET may return elsewhere
+	move.l	d7,-(a7)		; (VROOMM's INT 3Fh re-runs the stub entry, or
+	moveq	#0,d6			; enters the overlay at a redirected return,
+	move.w	rt_deliver_cs,d6	; docs/vroomm.md): then re-dispatched there
+	moveq	#0,d7
+	move.w	rt_deliver_ip,d7
+	movea.l	rt_deliver_code,a0
+	jsr	(a0)
+	cmp.l	(a7)+,d7
+	beq	rt_exit_guest
+	addq.l	#4,a7			; the generated caller's return: the INT is done
+	ifd WC2_REPLAY
+	jsr rt_replay_return
+	endif
+	bra	rt_ret_far_mismatch
 deliver_guest:	; d7 = CS << 16 | IP of the pushed frame; the handler's IRET pops it
 	move.l	d7,-(a7)
 	moveq	#0,d6
@@ -159,7 +174,7 @@ deliver_guest:	; d7 = CS << 16 | IP of the pushed frame; the handler's IRET pops
 	movea.l	rt_deliver_code,a0	; rt_lookup's far entry (deliver)
 	jsr	(a0)
 	cmp.l	(a7),d7
-	bne	rt_ret_far_mismatch
+	bne	rt_ret_far_stop		; a hardware interrupt comes back where it struck
 	addq.l	#4,a7
 rt_exit_guest:
 	ifd WC2_REPLAY
@@ -460,9 +475,19 @@ dispatch:
 	movem.l	(a7)+,d0-d1/a1
 	jmp	(a0)
 
-; Return site reached with another guest IP (d7) / CS (d6).
-; R33 far returns carry both words in d7; normalize only the failure path.
+; A far return (RETF, IRET; R33: CS:IP packed in d7) to another site than its call's:
+; VROOMM redirects the returns into an overlay it moves or evicts (docs/vroomm.md,
+; "Return trapping"), so it continues there through the far rows (rt_dispatch_far
+; stops at an address without one). The return already left the native frame.
 rt_ret_far_mismatch:
+	moveq	#0,d6
+	swap	d7
+	move.w	d7,d6
+	clr.w	d7
+	swap	d7
+	bra	rt_dispatch_far
+; Return site reached with another guest IP (d7) / CS (d6): stops.
+rt_ret_far_stop:
 	move.l	d7,d6
 	swap	d6
 rt_ret_mismatch:

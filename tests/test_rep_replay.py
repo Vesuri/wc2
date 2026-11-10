@@ -65,7 +65,7 @@ def check_scheduler(broken=False):
         try:R.read(Path(tmp), required=True)
         except ValueError:pass
         else:raise AssertionError('empty required REP metadata accepted')
-        p.write_text(','.join(R.FIELDS)+'\nSWOTL.EXE,0x10,0,0,4,65534,20,2,2,24,1\n')
+        p.write_text(','.join(R.FIELDS)+'\nWC2.EXE,0x10,0,0,4,65534,20,2,2,24,1\n')
         assert R.read(Path(tmp))[0].end==(2,2,24)
         p.write_text(p.read_text().replace(',2,2,24,1',',5,2,24,1'))
         try:R.read(Path(tmp))

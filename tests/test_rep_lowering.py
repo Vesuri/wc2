@@ -14,7 +14,7 @@ def check(broken=False):
     original_run=h.m.run
     resumed=set()
     calls=[0]
-    def lower(insns,cs,tag,end_ip):
+    def lower(insns,cs,tag,end_ip,**_extra):   # no cs-slot variant
         def context(k):
             return Ctx(cs=hx(cs),label=f'{tag}_{k}',rep_hook=(0,f'{tag}_{k}'))
         lines=[f'{tag}:'];cold=[];stats=Counter()

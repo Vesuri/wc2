@@ -1,7 +1,7 @@
 ## Wing Commander II — repository-level targets.
 
 .PHONY: all help extract install hash check-ref prepare-reference reference-staging compare \
-	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-sabotage \
+	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size clean
 
 REFERENCE_ROOT ?= tmp/pc-root
@@ -33,7 +33,7 @@ help:
 	@echo "  make gen                translate the in-scope modules -> build/gen (none before P1.4)"
 	@echo "  make gen-check          G1: headers, digests and byte-identical regeneration of build/gen"
 	@echo "  make lint               G2: no guest-address names in hand-written code"
-	@echo "  make test               lint, decoder, x86 (forms, blocks, space, boundary) and 68020 (space, boundary) differentials, guards, gen-check"
+	@echo "  make test               lint, decoder, x86 (forms, blocks, space, boundary) and 68020 (forms, blocks, space, boundary) differentials, the program block test, guards, gen-check"
 	@echo "  make test-sabotage      planted faults must fail the x86 and 68020 differentials"
 	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/swotl.elf"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
@@ -114,15 +114,18 @@ lint:
 test-decode:
 	$(PYTHON) tests/test_decode.py
 
-# The "forms" and "blocks" corpora come from the game's code (image.X86_SCOPE, gate 3);
-# the 68020 side has no module in scope until P4.
+# The "forms" and "blocks" corpora come from the game's code (image.X86_SCOPE, gate 3;
+# the 68020 side: the generated scope, gate 4); test-blocks runs the generated program.
 X86_CORPORA ?= forms,space,boundary,blocks
-CORPORA ?= space,boundary
+CORPORA ?= forms,space,boundary,blocks
 test-x86:
 	$(PYTHON) tests/x86_diff.py --only $(X86_CORPORA)
 
 test-m68k:
 	$(PYTHON) tests/m68k_diff.py --only $(CORPORA)
+
+test-blocks:
+	@$(MAKE) -s -k -j$(BLOCK_JOBS) $(BLOCK_TESTS)
 
 test-guards: gen
 	$(PYTHON) tests/test_guards.py
@@ -134,7 +137,8 @@ RUN = @mkdir -p tmp/test; if $(2) > tmp/test/$(1).log 2>&1; then echo "ok    $(1
 	else echo "FAIL  $(1) (tmp/test/$(1).log)"; tail -n 15 tmp/test/$(1).log; exit 1; fi
 X86_SHARDS = forms.0/8 forms.1/8 forms.2/8 forms.3/8 forms.4/8 forms.5/8 forms.6/8 forms.7/8 \
 	blocks.0/2 blocks.1/2 space.0/1 boundary.0/1
-SHARDS = space.0/1 boundary.0/1
+SHARDS = forms.0/8 forms.1/8 forms.2/8 forms.3/8 forms.4/8 forms.5/8 forms.6/8 forms.7/8 \
+	blocks.0/2 blocks.1/2 space.0/1 boundary.0/1
 # Unit tests (docs/upstream.md lists the deferred ones); test_load_image needs ref/.
 UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_boundary \
 	test_byteorder_entries test_carry_entries test_compact test_cost_meter \
@@ -145,7 +149,12 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_jump_fusion test_key_release test_m68k_assembly test_next_branch \
 	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
 	test_rep_replay test_replay_chords test_replay_events test_smc_flow
-TESTS = t-lint t-decode t-guards $(subst /,-of-,$(X86_SHARDS:%=t-x86-%)) $(subst /,-of-,$(SHARDS:%=t-m68k-%)) \
+# The program block test in parts (tests/m68k_blocks.py --shard); BLOCK_JOBS bounds
+# the parts run at once when test-blocks runs alone.
+BLOCK_SHARDS ?= 8
+BLOCK_JOBS ?= $(BLOCK_SHARDS)
+BLOCK_TESTS = $(foreach k,$(shell seq 0 $$(($(BLOCK_SHARDS)-1))),t-blocks.$(k)-of-$(BLOCK_SHARDS))
+TESTS = t-lint t-decode t-guards $(BLOCK_TESTS) $(subst /,-of-,$(X86_SHARDS:%=t-x86-%)) $(subst /,-of-,$(SHARDS:%=t-m68k-%)) \
 	$(UNIT_TESTS:%=t-unit-%)
 
 test: gen-check
@@ -158,6 +167,8 @@ t-lint:
 	$(call RUN,lint,$(PYTHON) -m translator.check lint)
 t-decode:
 	$(call RUN,decode,$(PYTHON) tests/test_decode.py)
+t-blocks.%:
+	$(call RUN,blocks.$*,$(PYTHON) tests/m68k_blocks.py --shard $(subst -of-,/,$*))
 t-guards:
 	$(call RUN,guards,$(PYTHON) tests/test_guards.py)
 # t-x86-<corpus>.<k>-of-<n>: one shard of a differential corpus

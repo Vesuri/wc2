@@ -1,7 +1,13 @@
 """Program mode: global flag liveness, block leaders and the 68020 `.s` of every
 module (Motorola syntax, vasm). Generated text is G1-guarded like the IR listing.
 
-Successors: fall-through (a PLINK manager call returns 2 bytes later), direct
+WC2 (port-plan P4, docs/translator-design.md "WC2: VROOMM overlays"): module tags; the
+root and the drivers at a static CS (the drivers' paragraphs, docs/drivers.md); overlay
+code at a dynamic CS read from its stub's word 10h; the stub cells (`CD 3F` / `EA off seg`)
+lowered as two-form cells; far returns that do not come back re-dispatched; the
+start-up self-modification as a form switch and a run-time operand (smc_switch).
+
+Successors: fall-through, direct
 near/far targets (cfg), statically resolved switch tables; a `ret`/`retf`
 continues at the return sites of the calls whose targets reach it without
 crossing a call (native rts; a mismatch stops; a call through the dispatcher
@@ -23,19 +29,21 @@ from __future__ import annotations
 
 import bisect
 import csv
+import dataclasses
 import re
 from collections import Counter
 from pathlib import Path
 
 from . import cfg, compute, image, region, smc
-from .decode import Far, Rel
+from .decode import Far, Mem, Rel, decode
 from .flags import ALL, plan, transfer
 from .lower import GREG, LOADSEG, MIRROR, Ctx, LowerError, hx
 
 M = image.M
-TAG = {"SWOTL.EXE": "R", "SPAZ.OVL": "SPZ", "RTSVGA.OVL": "VGA", "FRONTEND.OVL": "FE",
-       "CAMPAIGN.OVL": "CMP", "NOTCAMP.OVL": "NCP", "FLIGHT.OVL": "FLT", "REPLAY.OVL": "RPL",
-       "PANEL.OVL": "PNL", "DATA.OVL": "DAT"}
+TAG = {"WC2.EXE": "R", "TM.DRV": "TM", "SUPERTM.DRV": "STM", "STRAX.DRV": "SX"}
+# Each driver's run-time paragraph above the load segment (MEASURED, docs/drivers.md:
+# every trace loads it there, once; a driver elsewhere matches no row and stops)
+DRIVER_SEG = {"TM.DRV": 0x3CE9, "SUPERTM.DRV": 0x3FCB, "STRAX.DRV": 0x4723}
 RET, UNKNOWN, SMC = "ret", "unknown", "smc"
 TERMINAL = {"jmp", "jmpf", "ret", "retf", "iret", "hlt"}
 RUNTIME = ("rt_int", "rt_irq", "rt_fault", "rt_halt", "rt_trap", "rt_in8", "rt_in16", "rt_out8", "rt_out16",
@@ -55,17 +63,16 @@ POINTER_NAMES = ("x", "y", "width", "height", "hot_x", "hot_y", "image", "x_min"
 
 def pointer_guest() -> list[int]:
     rows = image.rows("pointer.csv")
-    if not rows and not image.SCOPE:
-        return [0] * len(POINTER_NAMES)  # WC2: no guest yet (port-plan P1.4); never read
+    if not rows:
+        return [0] * len(POINTER_NAMES)  # WC2: no pointer state annotated yet (P6); never read
     if tuple(r["name"] for r in rows) != POINTER_NAMES:
         raise LowerError(f"pointer.csv: names must be {', '.join(POINTER_NAMES)} in order")
     return [int(r["offset"], 16) for r in rows]
 
 
-# D9: the graphics driver in scope. Only it writes video memory
-# (docs/external-surface.md); a return from a call into it through its PLINK
-# thunks publishes a frame.
-GRAPHICS_DRIVER = "RTSVGA.OVL"
+# D9: modules whose stores to A000h mark rows. TM.DRV and SUPERTM.DRV draw; WC2.EXE's
+# own writer sites and the frame boundary are port-plan P6 (docs/external-surface.md, VGA).
+VRAM_MODULES = ("TM.DRV", "SUPERTM.DRV")
 
 
 def retried(i) -> bool:
@@ -120,14 +127,18 @@ def poll(lab: str, always: bool = False) -> list[str]:
     return (test if always else ["\tifd WC2_SYNC", *test, "\tendif"]) + [f"{lab}_np:"]
 
 
-def poll_stub(lab: str, ip: int, cs: str, always: bool = False, loop: bool = False) -> list[str]:
+def poll_stub(lab: str, ip: int, cs: str, always: bool = False, loop: bool = False,
+              slot: str = "") -> list[str]:
     """Out of line, after an unconditional transfer: rt_irq takes a pending
     hardware interrupt with d6 = CS << 16 (| 1 at a loop head: the bench's spin
     rule counts those, the pre-I8 poll set), d7 = the poll point's IP, then back
     past the test (`{lab}_np`; tools fold it into `lab`): a return to the label
     would be another visit, and loop while the bench watch keeps G_IRQ set."""
-    stub = [f"{lab}_irq:", f"\tmove.l #{hx(ip)},d7", f"\tmove.l #({cs})<<16{'|1' if loop else ''},d6",
-            "\tjsr rt_irq", f"\tbra {lab}_np"]
+    if slot:    # dynamic CS (a VROOMM overlay)
+        load = ["\tmoveq #0,d6", f"\tmove.w {slot},d6", "\tswap d6"] + (["\tmove.w #1,d6"] if loop else [])
+    else:
+        load = [f"\tmove.l #({cs})<<16{'|1' if loop else ''},d6"]
+    stub = [f"{lab}_irq:", f"\tmove.l #{hx(ip)},d7", *load, "\tjsr rt_irq", f"\tbra {lab}_np"]
     return stub if always else ["\tifd WC2_SYNC", *stub, "\tendif"]
 
 
@@ -315,11 +326,42 @@ def copy_label(mod: str, off: int) -> str:
     return f"{TAG[mod]}_{off:05X}_bp"
 
 
-def cs_expr(cs: int) -> str:
-    return f"LOADSEG+{hx(cs)}"
+def cs_expr(cs: int, mod: str = "") -> str:
+    """The run-time CS of link paragraph `cs` (a driver's: its load paragraph)."""
+    return f"LOADSEG+{hx(cs + DRIVER_SEG.get(mod, 0))}"
+
+
+def lin_expr(seg: str, off: int) -> str:
+    """Linear address of seg:off (assemble-time)."""
+    return f"(({seg})*16+{hx(off)})"
+
+
+def byte_at(lin: str) -> str:
+    """Guest byte at a linear address (reversed RAM: TOP - L)."""
+    return f"(-{lin},a6)"
+
+
+def word_at(lin: str) -> str:
+    """Little-endian guest word at a linear address (native word at TOP - L - 1)."""
+    return f"(-{lin}-1,a6)"
+
+
+def stub_seg(o) -> str:
+    return f"LOADSEG+{hx(o.stub >> 4)}"
+
+
+def cs_slot(o) -> str:
+    """An overlay's run-time CS: its stub's word 10h (docs/vroomm.md, "Stub")."""
+    return word_at(lin_expr(stub_seg(o), 0x10))
+
+
+def cell_label(o, k: int | None) -> str:
+    """A stub cell: entry k (`CD 3F off 00` / `EA off seg`) or the header (k None)."""
+    return f"R_{o.stub + (0 if k is None else 0x20 + 5 * k):05X}_cell"
 
 
 class Program:
+    ovls: list = []   # VROOMM overlays (wc2_model.overlays); set in __init__
     hle: dict = {}   # (mod, first) -> ((mod, resume), service); set from hle.csv
     compute_resumes: dict = {}  # compute hook -> its resumes (returns, root loop heads); set in __init__
 
@@ -338,11 +380,16 @@ class Program:
         self.outline_sites: dict[str, tuple] = {}  # R27, outline_cold
         self.offsets: dict[str, list[int]] = {}   # sorted instruction offsets (outline_cold)
         self.run_last: dict[str, dict[int, int]] = {}  # each run's last offset by its first
+        self.fixups: dict[str, list[int]] = {}    # sorted fixup offsets per module (ctx)
         self.indirect: dict[tuple[str, int], tuple[list, list]] = {}
         for r in image.rows("indirect.csv"):
             def parse(col):
-                return [(t.split("+")[0], int(t.split("+")[1], 16)) for t in r[col].split()
-                        if t != "(isr)"]
+                # "(isr)" marks the target before it as an interrupt handler the trace
+                # entered there, not a target of the site
+                ts = r[col].split()
+                return list(dict.fromkeys(
+                    (t.split("+")[0], int(t.split("+")[1], 16)) for k, t in enumerate(ts)
+                    if t != "(isr)" and ts[k + 1:k + 2] != ["(isr)"]))
             self.indirect[(r["module"], int(r["offset"], 16))] = (parse("switch_targets"),
                                                                   parse("traced_targets"))
         self.succ: dict[tuple[str, int], list] = {}
@@ -426,18 +473,38 @@ class Program:
                     self.compute_end[(mod, first)] = int(r['end'], 16)
             elif r.get('end'):
                 raise LowerError(f"hle.csv: {mod}+{first:05X} end needs kind compute")
-        int0 = [r for r in image.rows("runtime.csv") if r["name"] == "__cintDIV"]
+        int0 = [r for r in image.rows("runtime.csv") if r["name"] == "ZeroDivision"]
         self.int0 = (int0[0]["module"], int(int0[0]["offset"], 16)) if int0 else None
         # D16: self-modified regions, each lowered as one cell walk
         # only modules in scope are lowered; the others' forms wait for theirs
-        self.smc_forms = {k: v for k, v in image.smc_forms().items() if k[0] in image.SCOPE}
+        forms = {k: v for k, v in image.smc_forms().items() if k[0] in image.SCOPE}
+        # WC2: regions whose forms are each one whole instruction SWOTL's cell walk does not
+        # know are a switch over the forms (smc_switch_text); a run-time operand region
+        # (kind `operand`) is read from guest RAM by the instruction holding it
+        self.smc_switch = {k: v for k, v in forms.items() if not set(v) <= set(smc.FORMS)}
+        self.smc_forms = {k: v for k, v in forms.items() if k not in self.smc_switch}
+        self.smc_operands = {(r["module"], int(r["first"], 16), int(r["last"], 16))
+                             for r in image.rows("self-modifying.csv")
+                             if r["kind"] == "operand" and r["module"] in image.SCOPE}
         self.walk_preserves_flags = all(smc.preserves_flags(forms)
                                         for forms in self.smc_forms.values())
         self.cell_regions()
-        # D9: the `jmp far` of each PLINK thunk into the graphics driver
-        # (thunk: call far manager, dw id, jmp far)
-        self.driver_jumps = {at + 7 for at, mod, _ in M.thunks(image.load()) if mod == GRAPHICS_DRIVER}
+        # D9: jumps into the per-frame graphics call (WC2: none before P6)
+        self.driver_jumps: set[int] = set()
+        # VROOMM: overlays by their code range, the stub cells far transfers reach
+        self.ovls = M.overlays() if M.ROOT in self.units else []
+        self.ovl_of = {f"O{o.stub >> 4:04X}": o for o in self.ovls}
+        self.ovl_id = {o.stub: k + 1 for k, o in enumerate(self.ovls)}
+        self.stub_ovl = {o.stub: o for o in self.ovls}
         self.build_edges()
+        # VROOMM: the return sites, in overlay code, of far calls (and `push cs; call
+        # near`): a return the manager redirected to the stub's trap comes back there by
+        # IRET, so they are far rows; their check compares the CS word too (far_calls)
+        self.far_calls = {n for n, _, _ in self.calls if self.far_call(n)}
+        self.trap_sites = {site for n, site, _ in self.calls
+                           if n in self.far_calls and self.overlay(*n) is not None}
+        self.dispatch |= self.trap_sites
+        self.far_rows |= self.trap_sites
         # D8 poll points: where tests and the reference take a pending hardware
         # interrupt (production: at the CIA tick). The I8 sync points and, so the
         # reference keeps the original's timing (user 2026-10-26), the loop heads:
@@ -458,6 +525,14 @@ class Program:
         self.ccr_only: dict = {}    # label -> live flags only the CCR holds there (R14d)
         self.ret_of: dict = {}
         self.returns()
+        for n, site, targets in self.calls:   # `push cs; call near`: its callee returns far
+            if n in self.far_calls and self.node_insn(n).op == "call":
+                cache: dict = {}
+                near = [r for t in targets if t not in (RET, UNKNOWN, SMC)
+                        for r in self.reach(t, cache)[0] if self.node_insn(r).op == "ret"]
+                if near:
+                    raise LowerError(f"{n[0]}+{n[1]:05X}: push cs; call reaches a near ret at "
+                                     f"{near[0][0]}+{near[0][1]:05X}")
         self.compute_bodies = {n: compute.validate(self, n, self.hle[n][0], self.compute_end.get(n),
                                                     n in self.compute_endpoints,
                                                     self.compute_exits.get(n, ()),
@@ -494,6 +569,39 @@ class Program:
         self.components(components)
 
     # -- graph ----------------------------------------------------------------
+    def overlay(self, mod: str, off: int):
+        """The VROOMM overlay holding mod+off, or None (root, drivers)."""
+        if mod != M.ROOT:
+            return None
+        r = self.units[mod].range_at(off)
+        return self.ovl_of.get(r.name) if r is not None else None
+
+    def stub_cell(self, mod: str, off: int):
+        """(CS, IP, label) of the stub cell at mod+off (an entry or the header), else None."""
+        if mod != M.ROOT or not M.STUBS[0] <= off < M.STUBS[1] or not self.ovls:
+            return None
+        o = self.stub_ovl[max(k for k in self.stub_ovl if k <= off)]
+        k, rem = divmod(off - o.stub - 0x20, 5)
+        if off == o.stub:
+            return stub_seg(o), 0, cell_label(o, None)
+        if rem or not 0 <= k < len(o.entries):
+            raise LowerError(f"{mod}+{off:05X}: no stub cell")
+        return stub_seg(o), off - o.stub, cell_label(o, k)
+
+    def static_cs(self, mod: str, off: int) -> str:
+        cs_e, slot = self.cs_of(mod, off)
+        if slot:
+            raise LowerError(f"{mod}+{off:05X}: an HLE row in overlay code (dynamic CS)")
+        return cs_e
+
+    def cs_of(self, mod: str, off: int) -> tuple[str, str]:
+        """(CS expression, dynamic CS slot or "") of the instruction at mod+off."""
+        o = self.overlay(mod, off)
+        if o is not None:
+            return stub_seg(o), cs_slot(o)
+        u = self.units[mod]
+        return cs_expr(u.cs[off] if off in u.cs else u.segment(off), mod), ""
+
     def near_only(self, why: str) -> bool:
         kind, _, site = why.partition(" ")
         if kind not in ("switch", "traced"):
@@ -501,6 +609,16 @@ class Program:
         mod, _, off = site.partition("+")
         i = self.units[mod].insns.get(int(off, 16)) if mod in self.units else None
         return bool(i) and i.op in ("jmp", "call")
+
+    def far_call(self, n) -> bool:
+        """A call that pushes CS:IP: callf, or a near call right after `push cs`
+        (Borland's call of a far routine in the same segment, port-plan P4.3)."""
+        i = self.node_insn(n)
+        if i.op == "callf":
+            return True
+        p = self.node_insn((n[0], n[1] - 1))
+        return i.op == "call" and p is not None and p.op == "push" and \
+            getattr(p.operands[0], "name", "") == "cs" and self.fall.get((n[0], n[1] - 1)) == n
 
     def node_insn(self, n):
         return self.units[n[0]].insns.get(n[1])
@@ -656,7 +774,12 @@ class Program:
         nodes = sorted(self.succ, key=lambda n: (n[0], -n[1]))
         for n in nodes:
             self.live_in[n] = set()
-        entries = [e for e in self.dispatch if e in self.live_in]
+        # VROOMM stub cells are rows too: they continue at their overlay's entry, and
+        # through INT 3Fh at that entry or a redirected return site with the flags the
+        # trap pushed (the handler only moves its FLAGS word and IRET restores it,
+        # WC2.EXE+F628..F648; the frame's copy is dead stack): their continuations' flags
+        entries = [e for e in self.dispatch if e in self.live_in] + \
+            [(M.ROOT, o.code + e) for o in self.ovls for e in o.entries if (M.ROOT, o.code + e) in self.live_in]
         changed = True
         while changed:
             changed = False
@@ -788,18 +911,27 @@ class Program:
         return next(((lo, hi) for m, lo, hi in self.smc_forms if m == mod and lo <= off <= hi),
                     None)
 
-    def dispatch_rows(self) -> list[tuple[int, int, int, int, str]]:
-        """Run-time dispatch table: (link CS, IP, overlay id (root 0), far (R14e),
-        label) of every decoded entry, sorted by CS:IP. Overlays sharing an area share
-        CS:IP, so the runtime picks the row whose overlay is resident."""
+    def dispatch_rows(self) -> list[tuple[str, int, int, int, str]]:
+        """Run-time dispatch table: (CS, IP, overlay id, far (R14e), label), sorted by
+        CS:IP. Root, drivers and stub cells: their CS, id 0. Overlay code (dynamic CS):
+        its stub's segment and the overlay's id (1 + its index in file order); the
+        runtime finds the overlay whose stub word 10h holds the CS asked for
+        (src/runtime/machine.c rt_lookup). Rows: the cfg seeds, every stub cell, and in
+        overlays the return sites of far calls (a return redirected through the stub's
+        trap comes back there by IRET)."""
         out = []
         for mod, off in self.dispatch:
             u = self.units.get(mod)
             if not u or off not in u.insns:
                 continue
-            out.append((u.cs[off], u.ip_of(off), u.module.index + 1,
+            o = self.overlay(mod, off)
+            seg = (o.stub >> 4) if o is not None else u.cs[off] + DRIVER_SEG.get(mod, 0)
+            out.append((seg, u.ip_of(off), self.ovl_id[o.stub] if o is not None else 0,
                         int((mod, off) in self.far_rows), label(mod, off)))
-        return sorted(out)
+        for o in self.ovls:
+            out.append((o.stub >> 4, 0, 0, 1, cell_label(o, None)))
+            out += [(o.stub >> 4, 0x20 + 5 * k, 0, 1, cell_label(o, k)) for k in range(len(o.entries))]
+        return [(f"LOADSEG+{hx(seg)}", ip, oid, far, lab) for seg, ip, oid, far, lab in sorted(out)]
 
     def program_text(self, files: list[str]) -> str:
         """Assembly root of the Amiga/host link: equates, runtime imports, the module
@@ -811,7 +943,7 @@ class Program:
             lines.append("\txref\trt_replay_rep")
         lines += ["\txref\t" + s for s in sorted({s for _, s in self.hle.values()})]
         lines += ["\txdef\tdispatch_table", "\txdef\tdispatch_count", "\txdef\tload_segment", "\txdef\tpointer_guest",
-                  "\txdef\toverlay_table", "\txdef\tsmc_expose", "\txdef\tsmc_lo",
+                  "\txdef\toverlay_count", "\txdef\toverlay_stubs", "\txdef\tsmc_expose", "\txdef\tsmc_lo",
                   "\txdef\tsmc_hi", "\txdef\tsmc_seg_limit"]
         if len(self.cells) == 1:
             lines += ["\txdef\t" + a for a, _ in WALK_ALIASES]
@@ -821,10 +953,12 @@ class Program:
         lines += code
         rows = self.dispatch_rows()
         lines += ["\tcnop\t0,4", "load_segment:\tdc.l\tLOADSEG",
-                  f"overlay_table:\tdc.l\t{hx(M.OVL_TABLE)}\t; PLINK records, id 1 first (root offset)",
+                  f"overlay_count:\tdc.l\t{len(self.ovls)}\t; VROOMM overlays, id 1 first",
+                  "overlay_stubs:" + "".join(f"\n\tdc.w\t{stub_seg(o)}" for o in self.ovls),
+                  "\tcnop\t0,4",
                   "pointer_guest:\tdc.w\t" + ",".join(hx(o) for o in pointer_guest()),
                   "\tcnop\t0,4", "dispatch_count:", f"\tdc.l\t{len(rows)}", "dispatch_table:"]
-        lines += [f"\tdc.w\t{cs_expr(cs)},{hx(ip)},{oid},{far}\n\tdc.l\t{lab}"
+        lines += [f"\tdc.w\t{cs},{hx(ip)},{oid},{far}\n\tdc.l\t{lab}"
                   for cs, ip, oid, far, lab in rows]
         lines += ["\tsection\t.bss,bss"] + data
         return "\n".join(lines) + "\n"
@@ -839,10 +973,28 @@ class Program:
         return {(lo, hi) for m, lo, hi in self.smc_forms
                 if m == mod and u.segment(lo) == u.segment(hi) == u.cs[off]}
 
-    def ctx(self, mod: str, off: int, stats: Counter) -> Ctx:
+    def operand_insn(self, mod: str, off: int):
+        """The instruction at mod+off; one whose immediate is a run-time operand region
+        (self-modifying.csv kind `operand`) reads it from its code bytes in guest RAM
+        (`mov r, imm` as `mov r, cs:[imm's offset]`, same size and flags)."""
+        i = self.units[mod].insns[off]
+        for m, lo, hi in self.smc_operands:
+            if m != mod or hi < off or lo >= off + i.size:
+                continue
+            w = hi - lo + 1
+            if i.op != "mov" or len(i.operands) != 2 or not hasattr(i.operands[1], "value") \
+                    or lo != off + i.size - w or w * 8 != i.operands[0].width:
+                raise LowerError(f"{mod}+{off:05X}: run-time operand {mod}+{lo:05X} is not "
+                                 f"the immediate of a mov ({i})")
+            u = self.units[mod]
+            return dataclasses.replace(i, operands=(i.operands[0], Mem(
+                i.operands[0].width, "cs", None, None, u.ip_of(off) + i.size - w, True)))
+        return i
+
+    def ctx(self, mod: str, off: int, stats: Counter, insn=None) -> Ctx:
         u = self.units[mod]
-        i = u.insns[off]
-        cs = u.cs[off]
+        i = insn or u.insns[off]
+        cs = u.cs[off] if off in u.cs else u.segment(off)
 
         def near(ip):
             t = u.off_of(cs, ip)
@@ -857,6 +1009,9 @@ class Program:
         def far(key):
             if key in far_map:
                 return far_map[key]
+            if off in u.stub_calls:     # through the overlay's stub cell
+                stub, k = u.stub_calls[off]
+                return cell_label(self.stub_ovl[stub], k)
             if site:
                 return label(*site) if self.node_insn(site) else smc_label(*site)
             return stop_label(mod, off)
@@ -865,25 +1020,45 @@ class Program:
         near_t, far_t, smc_t = (), (), set()
         sw, tr = self.indirect.get((mod, off), ([], []))
         if i.op in ("jmp", "call") and not isinstance(i.operands[0], Rel):
-            near_t = tuple(u.ip_of(o) for m, o in sw + tr if m == mod and not self.region(m, o))
+            ts = [o for m, o in dict.fromkeys(sw + tr) if m == mod and not self.region(m, o)]
+            # a target translated at another link CS (the same bytes reached through a
+            # different CS) is no label for this site: the dispatcher looks it up, and
+            # with no row for this CS it stops
+            other = [o for o in ts if (u.cs[o] if o in u.cs else u.segment(o)) != cs]
+            stats["near target in another CS"] += len(other)
+            near_t = tuple(u.ip_of(o) for o in ts if o not in other)
             smc_t = self.near_walks(mod, off)
         if i.op in ("jmpf", "callf") and not isinstance(i.operands[0], Far):
             keys = []
             for m, o in sw + tr:
+                cell = self.stub_cell(m, o)
+                if cell is not None:
+                    k = cell[:2]
+                    far_map[k] = cell[2]
+                    keys.append(k)
+                    continue
                 if m not in self.units or o not in self.units[m].insns:
                     continue
-                k = (cs_expr(self.units[m].cs[o]), self.units[m].ip_of(o))
+                if self.overlay(m, o) is not None:
+                    continue    # dynamic CS: the runtime's table (rt_dispatch_far)
+                k = (cs_expr(self.units[m].cs[o], m), self.units[m].ip_of(o))
                 far_map[k] = label(m, o)
                 keys.append(k)
             far_t = tuple(keys)
-        rel = frozenset(f - off for f in u.module.fixups if off <= f < off + i.size)
-        return Ctx(cs=cs_expr(cs), label=label(mod, off), reloc=rel, near=near, far=far,
+        if mod not in self.fixups:
+            self.fixups[mod] = sorted(u.module.fixups)
+        fx = self.fixups[mod]
+        k = bisect.bisect_left(fx, off)
+        rel = frozenset(f - off for f in fx[k:k + i.size] if f < off + i.size)
+        cs_e, slot = self.cs_of(mod, off)
+        return Ctx(cs=cs_e, cs_slot=slot, label=label(mod, off), reloc=rel, near=near, far=far,
                    near_targets=near_t, complete=bool(sw), far_targets=far_t,
                    smc_targets=tuple(sorted((u.ip_of(lo), u.ip_of(hi), walk_label(mod, lo))
                                             for lo, hi in smc_t)),
-                   code_regions=self.code_regions(cs), seg_limit=self.smc_limit,
+                   code_regions=() if slot else self.code_regions(cs), seg_limit=self.smc_limit,
                    seg_repeat=label(mod, off) in self.seg_repeat,
-                   manager=off in u.manager_calls, program=True, vram=mod == GRAPHICS_DRIVER,
+                   program=True, vram=mod in VRAM_MODULES,
+                   far_return=i.op == "call" and (mod, off) in self.far_calls,
                    driver_call=mod == M.ROOT and off in self.driver_jumps, ret_mismatch=RM,
                    far_ret_mismatch=RMF,
                    rep_hook=((self.diagnostic_reps[(mod, off)], label(mod, off))
@@ -940,7 +1115,7 @@ class Program:
         """One run (exact, or in component `comp`'s copy): its lines and whether it
         ends without falling through. Poll stubs and out-of-line code go to `stubs`."""
         u = self.units[mod]
-        insns = [u.insns[o] for o in run]
+        insns = [self.operand_insn(mod, o) for o in run]
         lives = [self.live_out[(mod, o)] for o in run]
         taken = [self.taken_live((mod, o)) for o in run]
         leaders = {k for k, o in enumerate(run) if (mod, o) in self.leaders}
@@ -961,7 +1136,8 @@ class Program:
             assert (mod, o) in self.leaders, (mod, o)
             always = self.sync.get((mod, o)) == "if"
             lines.extend(poll(lab(mod, o), always))
-            stub = poll_stub(lab(mod, o), u.ip_of(o), cs_expr(u.cs[o]), always, (mod, o) in self.loops)
+            cs_e, slot = self.cs_of(mod, o)
+            stub = poll_stub(lab(mod, o), u.ip_of(o), cs_e, always, (mod, o) in self.loops, slot)
             if comp is not None:    # a handler may change BP: on in the exact code
                 stub[-1 if always else -2] = f"\tbra {label(mod, o)}_np"
             stubs.extend(stub)
@@ -990,7 +1166,7 @@ class Program:
                 _, service = self.hle[row]
                 if row in self.compute_entries:
                     lines.append(f"\tmoveq #{index},d7")
-                lines += compute.hook(service, f"{lab(mod, o)}_cx", cs_expr(u.cs[o]))
+                lines += compute.hook(service, f"{lab(mod, o)}_cx", self.static_cs(mod, o))
                 targets = [self.compute_resume(x, f"{lab(mod, o)}_cr{k}", stubs)
                            for k, x in enumerate(resumes)]
                 stubs += compute.resume_dispatch(f"{lab(mod, o)}_cx", targets, hx(u.ip_of(o)))
@@ -999,7 +1175,7 @@ class Program:
                 resume, service = self.hle[(mod, o)]
                 if (mod, o) in self.compute_rows:
                     target = self.compute_resume(resume, f"{lab(mod, o)}_cr", stubs)
-                    lines += compute.hook(service, target, cs_expr(u.cs[o]))
+                    lines += compute.hook(service, target, self.static_cs(mod, o))
                 else:
                     lines += [f"\tmove.w {GREG[a]},{d}" for a, d in zip(self.hle_args[(mod, o)], ("d7", "d6"))]
                     lines += [f"\tjsr {service}", f"\tbne {label(*resume)}"]
@@ -1095,6 +1271,77 @@ class Program:
         stats["cold side outlined"] += len(cuts)
         return out + lines[last:], end == len(run)
 
+    def smc_switch_text(self, mod: str, off: int, lo: int, hi: int, stats: Counter) -> list[str]:
+        """A self-modified region whose listed forms are whole instructions (WC2's start-up
+        `ja`/`jb`): compare the region's bytes in guest RAM with each form and run that
+        form's lowering (a leader: flags from the state block; every flag live after
+        it); no form matches: stop."""
+        if off != lo:
+            raise LowerError(f"{mod}+{off:05X}: entry inside self-modified region {mod}+{lo:05X}")
+        u = self.units[mod]
+        cs_e, slot = self.cs_of(mod, lo)
+        if slot:
+            raise LowerError(f"{mod}+{lo:05X}: self-modified region in overlay code")
+        lab = smc_label(mod, lo)
+        out = [f"{lab}:\t; self-modified code (D16): one of its listed forms"]
+        cold = []
+        for k, form in enumerate(self.smc_switch[(mod, lo, hi)]):
+            code = bytes.fromhex(form)
+            i = decode(code, u.ip_of(lo))
+            if i.size != hi - lo + 1:
+                raise LowerError(f"{mod}+{lo:05X}: form {form} does not fill its region")
+            nxt = f"{lab}_f{k + 1}"
+            for p, b in enumerate(code):
+                out += [f"\tcmp.b #{hx(b)},{byte_at(lin_expr(cs_e, u.ip_of(lo) + p))}", f"\tbne {nxt}"]
+            lw, = plan([i], [set(ALL)], {0}, lambda _: self.ctx(mod, lo, stats, insn=i), program=True)
+            out += [f"{lab}_{form}:\t; {i}"] + lw.out
+            if i.op not in TERMINAL:
+                t = (mod, u.off_of(u.segment(lo), i.next_ip))
+                if t[1] not in u.insns:
+                    raise LowerError(f"{mod}+{lo:05X}: form {form} falls into no instruction")
+                out.append(f"\tbra {label(*t)}")
+            cold += lw.cold
+            stats.update(lw.stats)
+            out.append(f"{nxt}:")
+        out += [f"\tmove.l #{hx(u.ip_of(lo))},d7", f"\tmove.l #{cs_e},d6", "\tjmp rt_stop_unknown"]
+        stats["self-modified switch"] += 1
+        return out + cold
+
+    def stub_cells_text(self, stats: Counter) -> list[str]:
+        """The VROOMM stub cells (docs/vroomm.md, "Stub"), read in guest RAM: the header's
+        return trap `CD 3F`, and each entry, `CD 3F off 00` while the overlay is out
+        (INT 3Fh: the manager loads it and IRETs to the entry, which the far-return
+        re-dispatch reaches as a row) or `EA off seg` while it is in the buffer: `off`
+        must be the entry's and `seg` the stub's word 10h (the CS overlay code reads);
+        then the overlay's native entry. Anything else stops."""
+        out = []
+        for o in self.ovls:
+            seg = stub_seg(o)
+            for k in [None] + list(range(len(o.entries))):
+                lab = cell_label(o, k)
+                ip = 0 if k is None else 0x20 + 5 * k
+                at = lambda d: lin_expr(seg, ip + d)  # noqa: E731
+                out.append(f"{lab}:\t; VROOMM stub {o.stub >> 4:04X} "
+                           + ("header (return trap)" if k is None else f"entry {k}"))
+                if k is not None:
+                    e = o.code + o.entries[k]
+                    if e not in self.units[M.ROOT].insns:
+                        raise LowerError(f"stub {o.stub >> 4:04X} entry {k}: {M.ROOT}+{e:05X} not decoded")
+                    out += [f"\tcmp.b #$ea,{byte_at(at(0))}", f"\tbne.s {lab}_t",
+                            f"\tcmp.w #{hx(o.entries[k])},{word_at(at(1))}", f"\tbne.s {lab}_x",
+                            f"\tmove.w {word_at(at(3))},d7", f"\tcmp.w {cs_slot(o)},d7",
+                            f"\tbne.s {lab}_x", f"\tjmp {label(M.ROOT, e)}",
+                            f"{lab}_t:", f"\tcmp.w #$3fcd,{word_at(at(0))}", f"\tbne.s {lab}_x",
+                            f"\tcmp.w #{hx(o.entries[k])},{word_at(at(2))}", f"\tbne.s {lab}_x"]
+                else:
+                    out += [f"\tcmp.w #$3fcd,{word_at(at(0))}", f"\tbne.s {lab}_x"]
+                out += [f"\tmove.l #{hx(ip + 2)},d7", f"\tmove.l #(({seg})<<16)|$3f,d6",
+                        "\tjsr rt_int",   # comes back only to the IP after the INT: no code there
+                        f"{lab}_x:", f"\tmove.l #{hx(ip)},d7", f"\tmove.l #{seg},d6",
+                        "\tjmp rt_stop_unknown"]
+                stats["stub cell"] += 1
+        return out
+
     def module_text(self, mod: str) -> tuple[list[str], Counter]:
         u = self.units[mod]
         stats = Counter()
@@ -1169,9 +1416,15 @@ class Program:
             lines += mismatch_stub(here, marker == RMF)
             tramps += 1
         for off in sorted(u.smc_entries):
+            sw = next(((lo, hi) for m, lo, hi in self.smc_switch if m == mod and lo <= off <= hi), None)
+            if sw is not None:
+                lines += self.smc_switch_text(mod, off, *sw, stats)
+                continue
             lo, _ = self.region(mod, off)
             lines += [f"{smc_label(mod, off)}:\t; self-modified code (D16)",
                       f"\tmove.l #{hx(u.ip_of(off))},d7", f"\tbra {walk_label(mod, lo)}"]
+        if mod == M.ROOT:
+            lines += self.stub_cells_text(stats)
         for (m, lo, hi), forms in sorted(self.smc_forms.items()):
             if m == mod:
                 if u.ip_of(lo) > u.ip_of(hi) or u.segment(lo) != u.segment(hi):

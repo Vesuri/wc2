@@ -179,6 +179,56 @@ diffs directly); relocated words in instructions are emitted as
 - Overlays (D2 = a): every translated module resident in native code; the
   guest's own PLINK manager runs translated and loads the overlay bytes into
   guest RAM (data, CS-relative reads, RAM equal to the reference).
+- WC2: VROOMM overlays and dynamic CS (port-plan P4.2, P4.3; [vroomm.md](vroomm.md)).
+  `LOADSEG` = 0824h (the milestone load segment). Drivers (`TM.DRV`, `SUPERTM.DRV`,
+  `STRAX.DRV`) are modules at static CS `LOADSEG + DRIVER_SEG` (`emit.DRIVER_SEG`, the
+  reference's load paragraphs, [drivers.md](drivers.md)); a driver loaded elsewhere
+  reaches no row and stops. Each of the 124 overlays is translated once at link CS =
+  the paragraph of its image offset; its run-time CS is the word at offset 10h of its
+  stub, the manager's own residency record (0: out), read in guest RAM
+  (`emit.cs_slot`): `push cs`, far pushes, far return checks, `cs:` bases (d7 and the
+  CCR saved around the base), dispatch d6, interrupt and fault d6 and poll stubs.
+  The plan's state-block slot is not used: the manager rewrites the record on every
+  load, and reading it keeps the original's decision exact.
+  - Stub cells (`emit.stub_cells_text`, label `R_<off>_cell`): a far call to stub
+    entry k jumps to its cell, which reads the entry's bytes: `EA off seg` with `off`
+    the entry's own offset and `seg` the stub's word 10h branches to the overlay
+    entry's native label; `CD 3F off 00`, and the header's `CD 3F`, are
+    `jsr rt_int` (vector 3Fh, d7 the IP after it); anything else stops. A cell's
+    flags are its continuations': the INT 3Fh handler (WC2.EXE+F606) swaps the FLAGS
+    word with BP around the loader and IRETs, so the overlay entries join the
+    dispatcher's live union.
+  - Rows: an overlay row is (stub CS, IP, overlay id = 1 + file order); the runtime
+    takes the overlay whose stub word 10h equals the CS (`machine.c overlay_row`).
+    Return sites of far calls in overlay code (trap sites) are far rows. A RETF or
+    IRET return mismatch re-dispatches far (`rt_ret_far_mismatch`): the INT 3Fh
+    IRET returns to the entry or to a return address the manager redirected. A near
+    mismatch and hardware interrupt delivery still stop.
+  - `push cs; call near` is a far call (P4.3): its return check is far and the callee
+    must reach only RETF (checked at generation).
+  - Self-modified start-up code (`annotations/self-modifying.csv`): a region whose
+    forms are whole instructions (+1ED, `ja`/`jb`) is a switch comparing guest bytes
+    with each form, then that form's lowering (a leader, every flag live after it);
+    no match stops. An operand region (+1DC, the `imm8` of `mov ah` at +1DB) is
+    lowered as a load of those bytes through CS.
+  - Checked by `tests/m68k_blocks.py` (overlay blocks at a random buffer CS held in
+    the stub word, cells in every form, both start-up regions) and the 68020
+    differential's `cs-slot` variants (a run whose lowering reads CS, again with CS
+    from guest RAM).
+- WC2 EMS model (port-plan P4.5, C3; design, not built). WC2 maps 4 physical pages
+  of a 164-page handle with INT 67h AH=44h, about 5–15 maps per timer tick, 218,641
+  maps to m6 ([external-surface.md](external-surface.md) "EMS", MEASURED). The logical
+  pages' own storage (reversed, as guest RAM) is the truth and a map is a table
+  update. A segment base that addresses the frame (E000h–EFFFh) is, behind a guard
+  on the access's offset range (as R6 guards BP) and on the frame not being
+  materialized, a base into the mapped page's storage, so an access that cannot
+  leave that 16 KB page touches the page itself. Every other frame access takes the
+  exact path: the runtime materializes the four mapped pages into the frame in guest
+  RAM (F1's long copies) and the access runs there; the next map, or the next guarded
+  access, writes the frame back first (identical-remap skip kept). DOS reads into the
+  frame and the runtime's own frame accesses take the exact path. The x86 and 68020
+  differentials and a sabotage plant cover the guard edges when it is built
+  (open-work).
 - Memory (D15 = b): Fast RAM required (1.36 MB code at R34 + 1.06 MiB guest RAM);
   the A1200 model runs with 8 MiB Fast; development runs set `--cpu=68030`
   (`AMIGA_CPU`, ~3× the 68020: logo at 80 vs 252 frames); timing runs
@@ -210,7 +260,7 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   guest-memory layout; registers, segments, CS:IP, defined flags, FLAGS
   12–14, memory, OUT sequence, interrupt/fault. A case with a direct
   `[bp+d]` form also runs behind a region guard (copy, exact fallback).
-- Block differential (`make test-blocks`): the generated program as emitted,
+- Block differential (`make test-blocks`, in `--shard` parts): the generated program as emitted,
   run from executed leaders to the first transfer with random states. Every
   branch to an instruction's label targets a leader (copy exits, divide-error
   retries: `lower.exit_fault` re-executes the instruction), except exact code

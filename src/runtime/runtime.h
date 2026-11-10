@@ -116,7 +116,8 @@ struct rt_dispatch_row {
 extern const uint32_t dispatch_count;
 extern const struct rt_dispatch_row dispatch_table[];
 extern const uint32_t load_segment;
-extern const uint32_t overlay_table;
+extern const uint32_t overlay_count;     /* VROOMM overlays (emit.py) */
+extern const uint16_t overlay_stubs[];   /* each one's stub segment, id 1 first */
 
 /* Reference: environment block; its MCB is the first one DOS gives programs. */
 #define RT_ENV_SEG 0x07ca

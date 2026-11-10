@@ -291,6 +291,10 @@ boundary cases and sabotage plants; `docs/upstream.md` lists what came over.
      `tests/audit.csv`;
    - the G1 header and G2 lint pass.
 
+Status: 1–3 and 6 as built ([translator-design.md](translator-design.md), "WC2: VROOMM
+overlays and dynamic CS"; the CS is the stub's word 10h, not a state-block slot). 4 moves to
+P5 (open-work 9). 5 is designed there ("WC2 EMS model"); building it is open-work 10.
+
 ### P5. First vertical slice (gate 5)
 
 1. `machine.c` reference values re-measured from WC2's reference:

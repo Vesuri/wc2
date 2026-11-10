@@ -12,8 +12,8 @@ def main(sabotage=False):
     def entry_plan(insns, lives, leaders, ctx_for, program=False):
         return real_plan(insns, lives, set(leaders) | (set() if sabotage else {1}), ctx_for, program)
 
-    def poison_x(insns, cs, tag, end_ip):
-        lines, stats = real_case(insns, cs, tag, end_ip)
+    def poison_x(insns, cs, tag, end_ip, **extra):
+        lines, stats = real_case(insns, cs, tag, end_ip, **extra)
         # Arbitrary predecessor hardware X; guest CF remains in the state block.
         at = lines.index(f"{tag}_1:")
         lines.insert(at, "\tandi.b #$ef,ccr")

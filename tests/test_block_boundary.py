@@ -5,7 +5,7 @@ import m68k_blocks as B
 
 
 def check(boundary):
-    mod = 'SWOTL.EXE'
+    mod = 'WC2.EXE'
     nodes = [(mod, n) for n in range(1, 6)]
     p = SimpleNamespace(succ={n: [] for n in nodes}, fall={})
     p.succ[nodes[2]] = [nodes[3]]

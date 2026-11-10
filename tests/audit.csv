@@ -1,1 +1,7 @@
 counter,expected,reason
+spill,0,fixed register contract (D4); no lowering spills to the native stack
+full-flag materialization,1917,"every flag is live at the dispatcher (unknown_live = all six) and at 535 return sites: 59 PUSHF and 2 INT sites read the whole FLAGS word (annotations/flags.csv has no proved save/restore pair yet) and reach 458 of the 7202 dispatch rows, whose union every far-pointer call and return through the table inherits"
+PF store,2976,the same: PF is live wherever the dispatcher or such a return site follows
+AF store,2261,the same: AF is live wherever the dispatcher or such a return site follows
+dispatcher exit,515,"the indirect.csv sites without a proved switch table: 443 lcall, 5 ljmp, 53 call, 14 jmp through memory or a register (627 sites, 112 tables)"
+stop_unknown site,114,"112 switch tables' out-of-table fallback, the return of the noreturn.csv call at +00239 (__terminate), and the jmpf FFFF:0000 at +0FEB2"

@@ -65,6 +65,7 @@ MIRROR = {"sp": 0x7FFF, "bp": 0x7FFF}   # held as offset ^ 7FFFh
 M68 = {"ax": "d0", "cx": "d1", "dx": "d2", "bx": "d3", "sp": "d4", "bp": "d5", "si": "a4",
        "di": "a5"}
 BATCH = 1500
+CS_SLOT = 0x9FF00   # WC2: the dynamic-CS cases' slot (a stub's word 10h), below A0000h
 REPLAY: Path | None = None   # set by m68k_sabotage
 
 
@@ -321,19 +322,6 @@ def unruns(rs: list) -> dict:
     return {a + k: v for a, d in rs for k, v in enumerate(d)}
 
 
-I186 = {0x68, 0x69, 0x6A, 0x6B, 0xC0, 0xC1, 0xC8, 0xC9}
-
-
-def i186_form(i) -> bool:
-    """An 80186 form of translator/decode.py (X-Wing 3dea12a). SWOTL's lowering has none:
-    it lowers some of them wrongly instead of stopping (a shift by an immediate as a shift
-    by one), so the 68020 side compares none until port-plan P4 brings X-Wing's ec4a238."""
-    k = 0
-    while i.raw[k] in (0x26, 0x2E, 0x36, 0x3E, 0xF2, 0xF3):
-        k += 1
-    return i.raw[k] in I186
-
-
 class Harness(X.Harness):
     recording = False   # --record
     keep_failing = True     # keep the source and image of a batch with mismatches
@@ -375,16 +363,7 @@ class Harness(X.Harness):
             patches.append((a(regs) if callable(a) else a, data))
         patches.append((cs * 16 + ip, code))
         case = (regs, flags, flagsx, ip, patches)
-        key = hashlib.blake2b(repr((self.seed, n, sorted(regs.items()), sorted(flags.items()),
-                                    flagsx, ip, patches)).encode(), digest_size=16).digest()
-        k, self.ncases = self.ncases, self.ncases + 1
-        if k < len(self.replay) and self.replay[k][0] == key:
-            side = self.replay[k][1]
-            self.replayed += 1
-        else:
-            side = self.x86_side(code, n, case)
-        if self.record is not None:
-            self.record.append((key, side))
+        side = self.side(code, n, case)
         if side[0] == "undefined":
             self.undefined[side[1]] += 1
             return
@@ -400,9 +379,6 @@ class Harness(X.Harness):
             insns.append(i)
             k += i.size
             at = i.next_ip
-        if any(map(i186_form, insns)):
-            self.skipped["80186 form (lowered in port-plan P4)"] += 1
-            return
         tag = f"c{len(self.pending)}"
         try:
             text, st = lower_case(insns, cs, tag, insns[-1].next_ip)
@@ -426,8 +402,44 @@ class Harness(X.Harness):
             self.lowered.update(st)
             self.pending.append((label + " seg-repeat", code, case, undef, oracle, text,
                                  regs, flags, insns[-1].op))
+        # WC2: the same run with CS read from guest RAM, as overlay code reads its stub's
+        # word 10h (Ctx.cs_slot); only runs whose lowering reads CS differ
+        slot = f"(-{hx(CS_SLOT)}-1,a6)"
+        tag = f"c{len(self.pending)}"
+        try:
+            dyn, st = lower_case(insns, cs, tag, insns[-1].next_ip, cs_slot=slot)
+        except LowerError as e:
+            self.bad.append(f"{label} cs-slot {code.hex()}: lowering: {e}")
+            return
+        if dyn != lower_case(insns, cs, tag, insns[-1].next_ip)[0]:
+            span = range(CS_SLOT, CS_SLOT + 2)
+            if not any(a < span.stop and span.start < a + len(d) for a, d in patches):
+                case2 = (regs, flags, flagsx, ip, patches + [(CS_SLOT, cs.to_bytes(2, "little"))])
+                side2 = self.side(code, n, case2)
+                if side2[0] == "ok":
+                    _, undef2, (err, out, fl, mem, ints, outs) = side2
+                    self.lowered.update(st)
+                    self.lowered["cs-slot case"] += 1
+                    self.pending.append((label + " cs-slot", code, case2, undef2,
+                                         (err, out, fl, unruns(mem), ints, outs), dyn,
+                                         regs, flags, insns[-1].op))
         if len(self.pending) >= BATCH:
             self.flush()
+
+    def side(self, code: bytes, n: int, case) -> tuple:
+        """The case's x86 side: replayed (--record of the same sources) or run."""
+        regs, flags, flagsx, ip, patches = case
+        key = hashlib.blake2b(repr((self.seed, n, sorted(regs.items()), sorted(flags.items()),
+                                    flagsx, ip, patches)).encode(), digest_size=16).digest()
+        k, self.ncases = self.ncases, self.ncases + 1
+        if k < len(self.replay) and self.replay[k][0] == key:
+            side = self.replay[k][1]
+            self.replayed += 1
+        else:
+            side = self.x86_side(code, n, case)
+        if self.record is not None:
+            self.record.append((key, side))
+        return side
 
     def x86_side(self, code: bytes, n: int, case) -> tuple:
         """("undefined", why) | ("skipped", why) | ("ok", undefined flags, Unicorn result)."""

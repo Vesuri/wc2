@@ -19,7 +19,9 @@ them in the CCR for the next instruction (`fuse`), which then reads `ccr_in`
 instead of the state block.
 
 Semantics follow translator/sem.py (386 real mode); the tests compare the
-output against Unicorn x86-16, independently of the IR.
+output against Unicorn x86-16, independently of the IR. The 80186 forms (`push imm`,
+three-operand `imul`, shifts by an immediate, `enter`, `leave`) are X-Wing's
+(`ec4a238`, docs/upstream.md).
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ CCR_OK = {"add": ALLC | {"X"}, "adc": ALLC | {"X"}, "sub": ALLC | {"X"}, "sbb": 
 # State block above guest RAM (a6 = TOP, odd: words at a6+odd are aligned).
 STATE_EQU = (("G_FL", 15), ("G_PF", 14), ("G_AF", 13), ("G_DF", 12), ("G_IF", 11),
              ("G_TF", 10), ("G_IRQ", 9), ("G_FX", 7), ("G_ES", 5), ("G_SS", 3), ("G_DS", 1))
-LOADSEG = 0x0822  # load segment of every reference run (docs/source-inventory.md)
+LOADSEG = 0x0824  # load segment of the milestone runs (docs/drivers.md, pc-reference-loop.md)
 RET_BYTE = 0xC3   # the RET planted in self-modified cells (smc.py)
 # A closed whitelist proves X preservation; unknown instructions kill it.
 KEEPS_X = {"move", "movea", "moveq", "lea", "ror", "rol", "and", "or", "eor", "eori", "not",
@@ -101,6 +103,10 @@ class Ctx:
     """What the lowering of one instruction needs from its module (or a test)."""
     cs: str                                   # 68k expression of the run-time CS
     label: str                                # this instruction's label
+    cs_slot: str = ""                         # dynamic CS (a VROOMM overlay): the native
+                                              # address of the word holding it (its stub's
+                                              # word 10h, the manager's residency record);
+                                              # `cs` is then the stub segment
     need: set = field(default_factory=set)    # status flags to store in the state block
     live: set = field(default_factory=lambda: set(STATUS))  # status flags live after
     ccr_in: set = field(default_factory=set)  # flags valid in the CCR at entry
@@ -119,6 +125,7 @@ class Ctx:
     complete: bool = False                    # near_targets is a proved switch table
     far_targets: tuple = ()                   # known (seg, off) targets of an indirect far one
     manager: bool = False                     # PLINK manager call: return skips `dw id`
+    far_return: bool = False                  # `push cs; call near`: the callee returns far
     program: bool = False                     # program mode (return checks, runtime calls)
     vram: bool = False                        # graphics driver: stores to A000h mark rows (D9)
     driver_call: bool = False                 # PLINK thunk jump into the graphics driver (D9)
@@ -171,10 +178,38 @@ class Lowering:
             raise LowerError(f"relocated word at +{sorted(bad)} of {self.i}")
 
     def seg_base(self, seg: str) -> str:
+        if seg == "cs" and self.c.cs_slot:
+            # dynamic CS: every register and the CCR (X too) survive
+            self.e("movem.l d7,-(sp)")
+            self.e("move.w ccr,-(sp)")
+            self.e("moveq #0,d7")
+            self.e(f"move.w {self.c.cs_slot},d7")
+            self.e("lsl.l #4,d7")
+            self.e("lea -$7fff(a6),a0")
+            self.e("suba.l d7,a0")
+            self.e("move.w (sp)+,ccr")
+            self.e("movem.l (sp)+,d7")
+            self.stats["dynamic CS base"] += 1
+            return "a0"
         if seg == "cs":
             self.e(f"lea (-({self.c.cs})*16-$7fff,a6),a0")
             return "a0"
         return SEGBASE[seg]
+
+    def cs_word(self) -> str:
+        """The run-time CS as a word source operand."""
+        return self.c.cs_slot or f"#{self.c.cs}"
+
+    def cs_long(self, dst: str, low: str | None = None) -> None:
+        """dst.l = CS zero-extended, or CS << 16 | `low` (an immediate)."""
+        if not self.c.cs_slot:
+            self.e(f"move.l #{self.c.cs if low is None else f'(({self.c.cs})<<16)|{low}'},{dst}")
+            return
+        self.e(f"moveq #0,{dst}")
+        self.e(f"move.w {self.c.cs_slot},{dst}")
+        if low is not None:
+            self.e(f"swap {dst}")
+            self.e(f"move.w #{low},{dst}")
 
     def sub_const(self, d: int, r: str) -> None:
         """r.w -= d (16-bit)."""
@@ -306,7 +341,7 @@ class Lowering:
 
     def getseg(self, s: str, dst: str) -> None:
         if s == "cs":
-            self.e(f"move.l #{self.c.cs},{dst}")
+            self.cs_long(dst)
         else:
             self.e(f"move.w {SEGSLOT[s]}(a6),{dst}")
 
@@ -362,9 +397,15 @@ class Lowering:
         cold, back = f"{self.c.label}_pf{k}", f"{self.c.label}_pr{k}"
         self.e("addq.w #4,d4")
         self.e(f"bvs {cold}")
-        self.e(f"move.l #(({cs})<<16)|{ip},-3(a2,d4.w)")
+        word = f"#{cs}"
+        if cs == self.c.cs and self.c.cs_slot:   # dynamic CS: two word stores
+            word = self.c.cs_slot
+            self.e(f"move.w {word},-3(a2,d4.w)")
+            self.e(f"move.w #{ip},-1(a2,d4.w)")
+        else:
+            self.e(f"move.l #(({cs})<<16)|{ip},-3(a2,d4.w)")
         self.at(back)
-        self.cold += [f"{cold}:", "\tsubq.w #2,d4", f"\tmove.w #{cs},-1(a2,d4.w)",
+        self.cold += [f"{cold}:", "\tsubq.w #2,d4", f"\tmove.w {word},-1(a2,d4.w)",
                       "\taddq.w #2,d4", f"\tmove.w #{ip},-1(a2,d4.w)", f"\tbra {back}"]
         self.stats["far push as one long"] += 1
 
@@ -979,6 +1020,9 @@ class Lowering:
         rot = op in ("rol", "ror", "rcl", "rcr")
         need = self.c.need & FLAG_KINDS[op][0]
         skip = None
+        n = cnt.value & 0x1F if isinstance(cnt, Imm) else None
+        if n == 0:
+            return  # 186+: the count is masked to 5 bits; 0 changes nothing
         if isinstance(a, Mem):
             self.lea(a)
         if op in ("rcl", "rcr"):
@@ -994,15 +1038,19 @@ class Lowering:
             self.e("and.b d1,d7")
             self.e(f"beq {skip}")
             count = "d7"
+        elif n <= 8:
+            count = f"#{n}"
         else:
-            count = "#1"
+            self.e(f"moveq #{n},d7")
+            count = "d7"
+        many = n is not None and n != 1  # an immediate count but 1: OF undefined
         r = self.dest_reg(a) or "d6"
         if r == "d6":
             self.load_dest(a, "d6")
         self.e(f"{m68}.{sz} {count},{r}")
         self.x_cf = isinstance(cnt, Imm) and op in ("shl", "shr", "sar", "rcl", "rcr")
         self.cf_result = self.x_cf
-        computed = {"OF"} & need if op not in ("shl", "sar") else set()
+        computed = {"OF"} & need if op not in ("shl", "sar") and not many else set()
         if rot or computed or isinstance(cnt, Reg):
             self.c.fuse = False
         store = (need - computed) | ({"CF"} if rot and computed else set())
@@ -1048,7 +1096,20 @@ class Lowering:
         self.muldiv("mul")
 
     def op_imul(self):
+        if len(self.i.operands) == 3:
+            self.imul3()
+            return
         self.muldiv("imul")
+
+    def imul3(self) -> None:
+        """186+ `imul r16,r/m16,imm`: the low word of the signed product; CF = OF =
+        the product does not fit 16 bits (SF ZF AF PF undefined, as for imul)."""
+        r, src, k = self.i.operands
+        self.read(src, "d6")
+        self.e(f"muls.w #{hx(k.value & 0xFFFF)},d6")
+        self.mul_flags(["move.w d6,d7", "ext.l d7", "cmp.l d6,d7"])
+        self.putreg(r.name, "d6")
+        self.ccr = set()
 
     def op_div(self):
         self.muldiv("div")
@@ -1337,8 +1398,11 @@ class Lowering:
 
     def op_push(self):
         o = self.i.operands[0]
-        if isinstance(o, Reg) and o.name == "cs":
-            self.push(const=self.c.cs)
+        if isinstance(o, Imm):  # 186+; a relocated segment word adds the load segment
+            self.check_reloc({self.i.size - 2})
+            self.push(const=self.imm(o, self.i.size - 2))
+        elif isinstance(o, Reg) and o.name == "cs":
+            self.push(self.cs_word())
         elif isinstance(o, Reg) and o.name in GREG and o.name not in MIRROR:
             self.push(GREG[o.name])
         elif isinstance(o, Mem) and o.width == 16:
@@ -1372,6 +1436,37 @@ class Lowering:
             return
         self.pop("d6")
         self.write(o, "d6")
+
+    def op_enter(self):
+        """186+ `enter size,level` (level masked to 5 bits): push BP; the frame is
+        the new SP; level - 1 frame pointers copied from [ss:bp-2] down; the frame
+        pushed when level > 0; BP = frame; SP -= size. Mirrored registers: the
+        mirror of x - k is mirror(x) + k."""
+        size, level = (o.value for o in self.i.operands)
+        level &= 0x1F
+        self.e("move.w d5,d7")
+        self.e("eori.w #$7fff,d7")
+        self.push("d7")
+        if level:
+            self.e("move.w d4,d6")           # mirror of the frame
+            for _ in range(level - 1):
+                self.e("addq.w #2,d5")
+                self.push("-1(a2,d5.w)")
+            self.e("move.w d6,d7")
+            self.e("eori.w #$7fff,d7")
+            self.push("d7")
+            self.e("move.w d6,d5")
+        else:
+            self.e("move.w d4,d5")
+        size &= 0xFFFF
+        if size:
+            self.e(f"add.w #{hx(size)},d4")
+
+    def op_leave(self):
+        """186+ `leave`: SP = BP, then pop BP."""
+        self.e("move.w d5,d4")
+        self.pop("d5")
+        self.e("eori.w #$7fff,d5")
 
     def op_cbw(self):
         self.e("ext.w d0")
@@ -1845,6 +1940,14 @@ class Lowering:
         if cs is None:
             self.e(f"cmp.w #{hx(ip)},d7")
             self.e(f"bne {self.c.ret_mismatch}")
+        elif cs == self.c.cs and self.c.cs_slot:
+            # dynamic CS: IP, then the CS word against the residency record
+            self.e(f"cmp.w #{hx(ip)},d7")
+            self.e(f"bne {self.c.far_ret_mismatch}")
+            self.e("move.l d7,d6")
+            self.e("swap d6")
+            self.e(f"cmp.w {self.c.cs_slot},d6")
+            self.e(f"bne {self.c.far_ret_mismatch}")
         else:
             self.e(f"cmp.l #(({cs})<<16)|{hx(ip)},d7")
             self.e(f"bne {self.c.far_ret_mismatch}")
@@ -1882,11 +1985,11 @@ class Lowering:
                 self.e(f"bra {done}")
             self.at(nxt)
         if self.c.program and self.c.complete:
-            self.e(f"move.l #{self.c.cs},d6")
+            self.cs_long("d6")
             self.e("jmp rt_stop_unknown")  # outside the proved table
             self.stats["stop_unknown site"] += 1
         elif self.c.program:
-            self.e(f"move.l #{self.c.cs},d6")
+            self.cs_long("d6")
             self.e(f"{how} rt_dispatch_near")
             self.stats["dispatcher exit"] += 1
         else:
@@ -1945,7 +2048,7 @@ class Lowering:
             self.target_d7(t)
             self.push(const=hx(i.next_ip))
             self.dispatch_near("jsr")
-        self.return_check(i.next_ip, None)
+        self.return_check(i.next_ip, self.c.cs if self.c.far_return else None)
 
     def far_operand(self) -> tuple[str, int] | None:
         t = self.i.operands[0]
@@ -2092,13 +2195,16 @@ class Lowering:
     def op_int3(self):
         self.interrupt(3)
 
-    def vector(self, vec: int) -> str:
-        """d6 operand: the vector, in program mode with CS in the upper word."""
-        return f"#(({self.c.cs})<<16)|{hx(vec)}" if self.c.program else f"#{hx(vec)}"
+    def vector(self, vec: int) -> None:
+        """d6: the vector, in program mode with CS in the upper word."""
+        if self.c.program:
+            self.cs_long("d6", hx(vec))
+        else:
+            self.e(f"move.l #{hx(vec)},d6")
 
     def interrupt(self, vec: int) -> None:
         self.e(f"move.l #{hx(self.i.next_ip)},d7")
-        self.e(f"move.l {self.vector(vec)},d6")
+        self.vector(vec)
         self.e("jsr rt_int" if self.c.program else "jmp T_INT")
 
     def op_into(self):
@@ -2111,7 +2217,7 @@ class Lowering:
 
     def exit_fault(self, vec: int) -> None:
         self.e(f"move.l #{hx(self.i.ip)},d7")
-        self.e(f"move.l {self.vector(vec)},d6")
+        self.vector(vec)
         if self.c.program:
             self.e("jsr rt_fault")
             self.e(f"bra {self.c.retry or self.c.label}")
@@ -2126,7 +2232,7 @@ class Lowering:
 # Vectors the game installs handlers for (docs/external-surface.md); every other
 # software interrupt is a runtime service, which reads no guest flags and leaves
 # those it does not define unchanged in the state block.
-GUEST_VECTORS = {0x00, 0x05, 0x08, 0x23, 0x24}
+GUEST_VECTORS = {0x00, 0x08, 0x0F, 0x15, 0x23, 0x24, 0x3F}  # AH=25h, docs/external-surface.md
 
 
 def signed(v: int) -> int:
@@ -2239,7 +2345,9 @@ def writes(i: Insn) -> tuple[set, set]:
     elif op in ("rol", "ror", "rcl", "rcr", "shl", "shr", "sar"):
         d, u = FLAG_KINDS[op]
         allk = set(d) | set(u)
-        return (allk, allk) if isinstance(i.operands[1], Imm) else (set(), allk)
+        if isinstance(i.operands[1], Imm):
+            return (allk, allk) if i.operands[1].value & 0x1F else (set(), set())
+        return set(), allk
     elif op in ("popf", "sahf", "iret", "daa", "das", "aaa", "aas", "aad") or \
             op == "aam" and i.operands[0].value:
         d = set(STATUS) - ({"OF"} if op == "sahf" else set())

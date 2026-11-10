@@ -35,7 +35,11 @@ from collections import Counter
 from . import cfg, emit, image, irq, support
 from .sem import lift
 
-VERSION = "wc2-gen 2 (ir, 68020)"
+VERSION = "wc2-gen 3 (ir, 68020)"
+# translator/irq.py's footprint proof models SWOTL's SPAZ IRQ0 handler; until it models
+# WC2's handlers (port-plan P4.4) generation runs without it: no irq-footprint.csv, and
+# the sync points are the loop heads alone
+IRQ_PROOF = False
 AUDIT = image.REPO / "tests/audit.csv"
 SUPPORT = "support"
 POLLS = "poll-points.csv"
@@ -51,7 +55,7 @@ def inputs_digest(module: str) -> str:
     files = sorted((image.REPO / "translator").glob("*.py")) + [image.REPO / "tools/wc2_model.py"]
     files += sorted(image.ANNOTATIONS.glob("*.csv"))
     if module not in (SUPPORT, PROGRAM):
-        files.append(M.REF / module)
+        files.append(M.module_path(module))
     for f in files:
         h.update(f.relative_to(image.REPO).as_posix().encode() + b"\0")
         h.update(f.read_bytes())
@@ -143,7 +147,7 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
     units = program.units if program is not None else cfg.build()
     out.mkdir(parents=True, exist_ok=True)
     proof = None
-    if program is None and units:  # WC2: no handler to prove before P2
+    if program is None and units and IRQ_PROOF:
         # I2/I8: the footprint proof on the program with loop heads only gives the
         # sync points (irq.Proof.sync_points); they are leaders of the generated one
         proof = irq.prove(emit.Program(units, sync={}))
@@ -224,8 +228,9 @@ def coverage(units: dict[str, cfg.Unit]) -> int:
         starts = executed.get(name, set())
         tr = sm = hl = un = 0
         for off in starts:
-            if any(lo <= off <= hi for lo, hi in smc.get(name, ())):
-                sm += 1
+            if any(lo <= off <= hi for lo, hi in smc.get(name, ())) or \
+                    name == M.ROOT and M.STUBS[0] <= off < M.STUBS[1]:
+                sm += 1     # a self-modified region or a VROOMM stub cell (two forms)
             elif any(r["module"] == name and int(r["first"], 16) <= off <= int(r["last"], 16)
                      for r in hle):
                 hl += 1

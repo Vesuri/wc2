@@ -18,7 +18,7 @@ def run():
     h = D.Harness(7)
     whole = b""
 
-    def lower_graph(_insns, cs, tag, _end_ip):
+    def lower_graph(_insns, cs, tag, _end_ip, **_extra):   # no cs-slot variant
         insns = []
         at = 0
         while at < len(whole):

@@ -9,10 +9,10 @@ def check():
     with tempfile.TemporaryDirectory(prefix='swotl-key-release-') as directory:
         trace = Path(directory)
         events = ('icount,kind,module,offset,detail\n'
-                  '10,svc,SWOTL.EXE,0x044e0,33\n'
-                  '14,svc_ret,SWOTL.EXE,0x044e2,33\n'
-                  '17,key_up,SWOTL.EXE,0x044e9,n skip=1\n'
-                  '20,irq,SWOTL.EXE,0x044e9,09 svc=2 hits=0\n')
+                  '10,svc,WC2.EXE,0x044e0,33\n'
+                  '14,svc_ret,WC2.EXE,0x044e2,33\n'
+                  '17,key_up,WC2.EXE,0x044e9,n skip=1\n'
+                  '20,irq,WC2.EXE,0x044e9,09 svc=2 hits=0\n')
         (trace / 'events.csv').write_text(events)
         irqs, releases = H.reference_inputs(trace, exact_releases=True)
         assert irqs == [(2, 'R_044E9', 0, 9)] and releases == [(2, 1)]

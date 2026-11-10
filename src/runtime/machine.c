@@ -532,20 +532,57 @@ void rt_trap_c(uint32_t ip)
     rt_stop("trap flag set by POPF/IRET at IP", ip, 0);
 }
 
-/* PLINK overlay record flags bit 15: resident (docs/plink.md). */
-static int resident(uint16_t overlay)
+/* First table row at or above a CS:IP key (binary search). */
+static uint32_t first_row(uint32_t key)
 {
-    if (!overlay) {
-        return 1;
+    uint32_t lo = 0, hi = dispatch_count;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        const struct rt_dispatch_row *r = &dispatch_table[mid];
+        if (((uint32_t)r->cs << 16 | r->ip) < key) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
     }
-    return rd16(lin((uint16_t)load_segment, 0) + overlay_table + 16u * (overlay - 1u)) & 0x8000;
+    return lo;
+}
+
+/* The row of `key` with overlay id `overlay` (0: root, drivers, stub cells). */
+static const struct rt_dispatch_row *find_row(uint32_t key, uint16_t overlay, uint32_t lo)
+{
+    for (; lo < dispatch_count; ++lo) {
+        const struct rt_dispatch_row *r = &dispatch_table[lo];
+        if (((uint32_t)r->cs << 16 | r->ip) != key) {
+            break;
+        }
+        if (r->overlay == overlay) {
+            return r;
+        }
+    }
+    return 0;
 }
 
 /* First table row at or above each recent CS:IP (the table is constant, so
- * nothing invalidates it; residency is still read on every lookup). */
+ * nothing invalidates it). */
 static struct {
     uint32_t key, row1;     /* row1 = row + 1, 0 = empty */
 } lookup_cache[64];
+
+/* VROOMM (docs/vroomm.md): overlay code has rows under its stub's segment and its id;
+ * at run time it runs at a buffer segment, the word 10h of its stub (the manager's own
+ * residency record, 0 when out). A CS no static row has is looked up there. */
+static const struct rt_dispatch_row *overlay_row(uint32_t cs, uint32_t ip)
+{
+    for (uint32_t id = 1; id <= overlay_count; ++id) {
+        uint16_t stub = overlay_stubs[id - 1];
+        if (rd16(lin(stub, 0x10)) == (cs & 0xffff)) {
+            uint32_t key = (uint32_t)stub << 16 | (ip & 0xffff);
+            return find_row(key, (uint16_t)id, first_row(key));
+        }
+    }
+    return 0;
+}
 
 void *rt_lookup(uint32_t cs, uint32_t ip, uint32_t far)
 {
@@ -558,34 +595,22 @@ void *rt_lookup(uint32_t cs, uint32_t ip, uint32_t far)
     if (lookup_cache[slot].row1 && lookup_cache[slot].key == key) {
         lo = lookup_cache[slot].row1 - 1;
     } else {
-        uint32_t hi = dispatch_count;
-        lo = 0;
-        while (lo < hi) {
-            uint32_t mid = (lo + hi) / 2;
-            const struct rt_dispatch_row *r = &dispatch_table[mid];
-            if (((uint32_t)r->cs << 16 | r->ip) < key) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
+        lo = first_row(key);
         lookup_cache[slot].key = key;
         lookup_cache[slot].row1 = lo + 1;
     }
-    for (; lo < dispatch_count; ++lo) {
-        const struct rt_dispatch_row *r = &dispatch_table[lo];
-        if (((uint32_t)r->cs << 16 | r->ip) != key) {
-            break;
-        }
-        if (resident(r->overlay)) {
-            if (far && !r->far) {
-                rt_stop("dispatch: far transfer to a near-only entry at CS:IP", cs & 0xffff,
-                        ip & 0xffff);
-            }
-            return r->code;
-        }
+    const struct rt_dispatch_row *r = find_row(key, 0, lo);
+    if (!r) {
+        r = overlay_row(cs, ip);
     }
-    rt_stop("dispatch: no translated entry at CS:IP", cs & 0xffff, ip & 0xffff);
+    if (!r) {
+        rt_stop("dispatch: no translated entry at CS:IP", cs & 0xffff, ip & 0xffff);
+    }
+    if (far && !r->far) {
+        rt_stop("dispatch: far transfer to a near-only entry at CS:IP", cs & 0xffff,
+                ip & 0xffff);
+    }
+    return r->code;
 }
 
 void rt_ret_mismatch_c(uint32_t ip, uint32_t cs)

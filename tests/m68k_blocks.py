@@ -4,6 +4,14 @@ as `make gen` emits it (program mode: real labels, fused flags, liveness-elided
 stores, return checks, compare chains), run from traced block entries in
 Unicorn 68020 against the original bytes in Unicorn x86-16.
 
+Copied from Secret Weapons of the Luftwaffe (commit pinned in manifest/references.tsv)
+and adapted in X-Wing (per-module load segments; SWOTL's address-pinned regressions and
+native-routine predecessor cases are not copied), then to WC2: the drivers' load
+segments (emit.DRIVER_SEG); VROOMM overlay blocks run at a random buffer CS that
+their stub's word 10h holds (the dynamic CS, docs/translator-design.md); far calls
+through a stub stop at its cell, and the cells and the start-up self-modified
+code (+1DB, +1ED) have their own cases.
+
 Self-modified regions (D16): the cell walk runs from traced entries over the
 run-time bytes of every distinct snapshot image of the region, a RET planted
 a random number of cells on, against the same bytes in x86-16.
@@ -43,6 +51,7 @@ from translator.lower import CCR_BIT, HALF, LOADSEG  # noqa: E402
 from translator.support import HELPERS, equates  # noqa: E402
 
 M = image.M
+SEG0 = {m: LOADSEG + emit.DRIVER_SEG.get(m, 0) for m in emit.TAG}  # what link segments add
 STUBS = emit.RUNTIME + emit.HLE_SERVICES + ("T_RET",)
 STUB_AT = {n: D.STUB + 4 * k for k, n in enumerate(STUBS)}
 STUB_AT["rt_irq_pending"] = D.PENDING  # data, clear (no interrupt posted)
@@ -136,7 +145,7 @@ def block_at(p: emit.Program, mod: str, off: int) -> list[int]:
         if i.op in TRANSFER or k in u.manager_calls:
             return run
         nxt = p.fall.get((mod, k))
-        if nxt is None or nxt in p.leaders:
+        if nxt is None or nxt in p.leaders or nxt[1] not in u.insns:   # or a switch region
             return run
         k = nxt[1]
 
@@ -363,7 +372,7 @@ def walks(p: emit.Program, h, m, addr, stop_names, cases: int,
 
     for (mod, lo, hi), images in region_images(p).items():
         u = p.units[mod]
-        cs = (LOADSEG + u.segment(lo)) & 0xFFFF
+        cs = (SEG0[mod] + u.segment(lo)) & 0xFFFF
         entries = sorted(o for o in u.smc_entries if lo <= o <= hi)
         for data in images:
             for c in range(cases):
@@ -382,7 +391,7 @@ def walks(p: emit.Program, h, m, addr, stop_names, cases: int,
     # first, a middle and the last position
     for (mod, lo, hi), images in region_images(p).items():
         u = p.units[mod]
-        cs = (LOADSEG + u.segment(lo)) & 0xFFFF
+        cs = (SEG0[mod] + u.segment(lo)) & 0xFFFF
         forms = p.smc_forms[(mod, lo, hi)]
         mov, _ = smc._parse(smc.MOV)
         for data in images:
@@ -523,7 +532,7 @@ def cache_cases(p: emit.Program, h, m, addr, stop_names, one, bad, steps: int) -
         if wl not in {lab for lab, *_ in p.cells}:
             continue
         u = p.units[mod]
-        cs = (LOADSEG + u.segment(lo)) & 0xFFFF
+        cs = (SEG0[mod] + u.segment(lo)) & 0xFFFF
         code_at = cs * 16 + u.ip_of(lo)
         forms = p.smc_forms[(mod, lo, hi)]
         entries = sorted(o for o in u.smc_entries if lo <= o <= hi)
@@ -698,13 +707,6 @@ def cross_entry_cases():
     return n, bad
 
 
-def compute_entry_cases():
-    # Synthetic callback bodies are generated from x86; independent Unicorn
-    # x86 supplies expected state for both arms and every predecessor.
-    from test_compute_contract import differential
-    return differential(), []
-
-
 def flag_helper_entries():
     """R18: POPF and IRET callers, then both predecessors of the DF block.
 
@@ -734,12 +736,31 @@ def main(argv=None, on_batch=None) -> int:
     ap.add_argument("--states", type=int, default=2)
     ap.add_argument("--only", default="", help="MODULE+offset of one block (prints its code)")
     ap.add_argument("--walks", type=int, default=40, help="walk cases per region image")
+    ap.add_argument("--shard", default="0/1",
+                    help="k/n: the k-th of n disjoint parts (sampled blocks and the per-block "
+                         "sections by index; the other sections in part 0)")
     args = ap.parse_args(argv)
+    shard_k, shard_n = map(int, args.shard.split("/"))
+    assert 0 <= shard_k < shard_n, args.shard
+    first = shard_k == 0
+
+    def part(xs):
+        """This shard's share of `xs` (every n-th from k)."""
+        return list(xs)[shard_k::shard_n]
     p = emit.Program()
     mods = image.load()
     cache = image.REPO / "tmp/m68k"
     cache.mkdir(parents=True, exist_ok=True)
-    img, addr = program_image(p, cache)
+    # VROOMM stub cells (emit.stub_cells_text): label -> the CS:IP the original runs
+    cell_at = {}
+    for o in p.ovls:
+        for k in [None] + list(range(len(o.entries))):
+            cell_at[emit.cell_label(o, k)] = ((LOADSEG + (o.stub >> 4)) & 0xFFFF,
+                                              0 if k is None else 0x20 + 5 * k)
+    # start-up switch regions (emit.smc_switch_text): label -> CS:IP
+    smc_at = {emit.smc_label(mo, lo): ((SEG0[mo] + p.units[mo].segment(lo)) & 0xFFFF,
+                                       p.units[mo].ip_of(lo)) for mo, lo, _ in p.smc_switch}
+    img, addr = program_image(p, cache, tuple(cell_at) + tuple(smc_at))
     print(f"conditional-over-jump: {len(p.fused_jumps)} emitted sites", flush=True)
     empty_entries = set().union(*(empty_guest_entries(p.module_text(mod)[0]) for mod in p.units))
     by_addr: dict[int, list[str]] = {}
@@ -779,14 +800,19 @@ def main(argv=None, on_batch=None) -> int:
     walks_at = {emit.walk_label(mo, lo) for mo, lo, _ in p.smc_forms}
 
     def block_cases(mod, run, states, force=None, posted=None, copy=False, memory=(), expected=None,
-                    forced_flags=None, fall=frozenset()):
+                    forced_flags=None, fall=frozenset(), patch_code=None):
         """`states` cases of one block; `force`: registers set after the random
         state; `posted` (at a poll point): an interrupt posted, rt_irq modelled as
         taking it ("taken") or as the bench watch leaving it set ("watch"); the
-        poll must call it once with its CS:IP. `memory` adds fixture bytes;
+        poll must call it once with its CS:IP. `memory` adds fixture bytes (or
+        gives them for the case's CS);
         `expected` additionally requires the named generated entry. `fall`: run
-        indices that must fall through (R27 paths; cases taking one are skipped)."""
+        indices that must fall through (R27 paths; cases taking one are skipped).
+        `patch_code`: {offset: bytes} over the block's original bytes (self-modified
+        code). A block of a VROOMM overlay runs at a random buffer CS, which its
+        stub's word 10h holds (the manager's residency record)."""
         u = p.units[mod]
+        ovl = p.overlay(mod, run[0])
         data = reloc[mod]
         last = u.insns[run[-1]]
         lo, hi = run[0], run[-1] + last.size
@@ -797,9 +823,20 @@ def main(argv=None, on_batch=None) -> int:
             assert last.op == "jcc" and u.insns[fused_off].op == "jmp"
             assert p.fall[(mod, run[-1])] == (mod, fused_off)
             hi = fused_off + u.insns[fused_off].size
-        code = bytes(data[lo:hi])
-        cs = (LOADSEG + u.cs[run[0]]) & 0xFFFF
+        code = bytearray(data[lo:hi])
+        for o, b in (patch_code or {}).items():
+            assert lo <= o and o + len(b) <= hi
+            code[o - lo:o - lo + len(b)] = b
+        code = bytes(code)
+        cs = (SEG0[mod] + u.cs[run[0]]) & 0xFFFF
         ip = u.insns[run[0]].ip
+
+        def node_cs(nd):
+            """The CS the original runs node `nd` at in this case."""
+            if ovl is not None and p.overlay(*nd) is ovl:
+                return cs
+            assert p.overlay(*nd) is None, ("successor in another overlay", mod, run[0], nd)
+            return (SEG0[nd[0]] + p.units[nd[0]].cs[nd[1]]) & 0xFFFF
         lab = emit.copy_label if copy else emit.label
         # first address after the block's code
         end = (copy_next if copy else text_next).get((mod, run[-1]))
@@ -808,6 +845,8 @@ def main(argv=None, on_batch=None) -> int:
         made = 0
         while made < states:
             made += 1
+            if ovl is not None:     # above the root image, the stack's RAM below A0000h
+                cs = h.rng.randrange(0x3000, 0x9000)
             regs, flags, flagsx, _ = h.state({"regs": {"cs": cs}, "ip": ip})
             # keep CX small so REP blocks stay short
             regs["cx"] &= 0x3F
@@ -817,7 +856,11 @@ def main(argv=None, on_batch=None) -> int:
             stack = bytearray(h.rng.randrange(256) for _ in range(8))
             for k in (1, 3, 5, 7):
                 stack[k] &= 0xFE
-            patches = [(sp_lin, bytes(stack))] + list(memory)    # fixtures over the stack
+            fixtures = memory(cs) if callable(memory) else memory  # of the case's CS
+            patches = [(sp_lin, bytes(stack))] + list(fixtures)  # fixtures over the stack
+            if ovl is not None:
+                patches.append((((LOADSEG + (ovl.stub >> 4)) * 16 + 0x10) & 0xFFFFF,
+                                cs.to_bytes(2, "little")))
             patches.append((cs * 16 + ip, code))
             case = (regs, flags, flagsx, ip, patches)
             s = State(dict(regs, flagsx=flagsx), dict(flags), h.mem, ip)
@@ -882,7 +925,7 @@ def main(argv=None, on_batch=None) -> int:
             if stop in node_of:  # labels sharing the address: take the one x86 reached
                 for x in by_addr[pc]:
                     nd = node_of.get(x)
-                    if nd and (LOADSEG + p.units[nd[0]].cs[nd[1]]) & 0xFFFF == out["cs"] and \
+                    if nd and node_cs(nd) == out["cs"] and \
                             p.units[nd[0]].insns[nd[1]].ip == out["ip"]:
                         stop = x
                         break
@@ -902,9 +945,13 @@ def main(argv=None, on_batch=None) -> int:
             if stop in node_of:
                 node = node_of[stop]
                 su = p.units[node[0]]
-                mcs, mip = (LOADSEG + su.cs[node[1]]) & 0xFFFF, su.insns[node[1]].ip
+                mcs, mip = node_cs(node), su.insns[node[1]].ip
                 live = p.live_in[node]
                 exits["label"] += 1
+            elif stop in cell_at or stop in smc_at:   # a VROOMM stub, a start-up switch
+                mcs, mip = cell_at.get(stop) or smc_at[stop]
+                live = p.live_out[(mod, run[-1])]
+                exits["stub cell"] += 1
             elif stop == "T_RET":
                 mip = info["d7"]
                 mcs = info["d7.l"] >> 16 if last.op in ("retf", "iret") else cs
@@ -929,7 +976,8 @@ def main(argv=None, on_batch=None) -> int:
                 mip, mcs = info["d7"], cs
                 exits["stop"] += 1
             else:
-                diffs.append(f"stopped at {stop} pc={pc:x}")
+                diffs.append(f"stopped at {stop} pc={pc:x}"
+                             + (" (68k instruction budget exhausted)" if stop is None else ""))
                 mip, mcs = -1, -1
             if stop not in ("rt_int", "rt_fault") and exc is not None:
                 diffs.append(f"x86 raised {exc}, 68k {stop}")
@@ -964,7 +1012,8 @@ def main(argv=None, on_batch=None) -> int:
             if mouts != outs:
                 diffs.append(f"out 68k={mouts} x86={outs}")
             # return protocol after a call
-            if (stop in node_of or stop in walks_at or stop == "rt_dispatch_near") \
+            far = last.op == "callf" or (mod, run[-1]) in p.far_calls   # also push cs; call
+            if (stop in node_of or stop in walks_at or stop in cell_at or stop == "rt_dispatch_near") \
                     and last.op in ("call", "callf") and not diffs:
                 ret_ip = last.next_ip + (2 if run[-1] in u.manager_calls else 0)
                 site = emit.label(mod, run[-1] + last.size + (2 if run[-1] in u.manager_calls else 0))
@@ -972,13 +1021,13 @@ def main(argv=None, on_batch=None) -> int:
                     site += "_bp"
                 # Near IP has an undefined upper word (R5); far CS:IP is packed (R33).
                 for good, bad_cs in ((True, False), (False, False)) + \
-                        (((False, True),) if last.op == "callf" else ()):
+                        (((False, True),) if far else ()):
                     a7 = m.r("a7")
                     native = int.from_bytes(m.e.read(a7, 4), "big")
                     m.e.reg_write(U.M68K["a7"], a7 + 4)
                     popped = ret_ip if good or bad_cs else ret_ip ^ 0x55
                     upper = upper_rng.randrange(0x10000)
-                    if last.op == "callf":
+                    if far:
                         upper = cs ^ 0x55 if bad_cs else cs
                     m.e.reg_write(U.M68K["d7"], upper << 16 | popped)
                     m.e.reg_write(U.M68K["d6"], upper_rng.randrange(0x10000) << 16
@@ -987,7 +1036,7 @@ def main(argv=None, on_batch=None) -> int:
                     saved_inside, m.inside = m.inside, set()
                     m.stop, m.entry = None, None
                     m.e.start(native, 0xFFFFFFFF, 1000)
-                    want = site if good else ("rt_ret_far_mismatch" if last.op == "callf"
+                    want = site if good else ("rt_ret_far_mismatch" if far
                                               else "rt_ret_mismatch")
                     if m.stop != want:
                         diffs.append(f"return protocol: {'right' if good else 'wrong'} "
@@ -1005,11 +1054,124 @@ def main(argv=None, on_batch=None) -> int:
         if on_batch:
             on_batch(sum(v for k, v in count.items() if k != "return checks"), bad)
 
-    for mod, run in picks:
+    for mod, run in part(picks):
         block_cases(mod, run, args.states)
+
+    def cell_cases():
+        """Every VROOMM stub cell (emit.stub_cells_text) on its own bytes, the stub's
+        word 10h a random buffer CS: an entry `EA off seg` with that segment reaches
+        the overlay entry's label, as x86 reaches seg:off; `CD 3F off 00` and the
+        header's `CD 3F` raise INT 3Fh at the cell (rt_int: d6 CS:3Fh, d7 the IP
+        after it), as x86; a wrong offset, segment or opcode stops at the cell."""
+        w = lambda x: x.to_bytes(2, "little")  # noqa: E731
+        for o in p.ovls:
+            seg = (LOADSEG + (o.stub >> 4)) & 0xFFFF
+            for k in [None] + list(range(len(o.entries))):
+                lab = emit.cell_label(o, k)
+                ip = cell_at[lab][1]
+                buf = h.rng.randrange(0x3000, 0x9000)
+                if k is None:
+                    variants = [(b"\xcd\x3f", "rt_int"), (b"\xcd\x3e", None), (b"\xcc\x3f", None)]
+                else:
+                    off = o.entries[k]
+                    variants = [(b"\xea" + w(off) + w(buf), emit.label(M.ROOT, o.code + off)),
+                                (b"\xea" + w(off) + w(buf ^ 0x100), None),
+                                (b"\xea" + w(off ^ 1) + w(buf), None),
+                                (b"\xcd\x3f" + w(off), "rt_int"),
+                                (b"\xcd\x3f" + w(off ^ 0x10), None),
+                                (b"\xcd\x3e" + w(off), None)]
+                for cell, want in variants:
+                    regs, flags, flagsx, _ = h.state({"regs": {"cs": seg}, "ip": ip})
+                    patches = [(seg * 16 + 0x10, w(buf)), (seg * 16 + ip, cell)]
+                    case = (regs, flags, flagsx, ip, patches)
+                    m.inside, m.extra_stops = set(), stop_names
+                    mo, mf, _mfx, _mmem, _mouts, mwrites, info = m.run(addr[lab], case, h.rng, irq=False)
+                    diffs = []
+                    if info["err"] or info["stop"] != (want or "rt_stop_unknown"):
+                        diffs.append(f"stop {info['stop']} err {info['err']}, want {want or 'rt_stop_unknown'}")
+                    if mwrites:
+                        diffs.append(f"writes {sorted(mwrites)[:4]}")
+                    if want is None:
+                        if (info["d6"], info["d7"]) != (seg, ip):
+                            diffs.append(f"stop at {info['d6']:04x}:{info['d7']:04x}, want {seg:04x}:{ip:04x}")
+                    else:
+                        err, out, fl, _umem, ints, _outs, uwrites = h.oracle.run(case, 1)
+                        h.oracle.restore(uwrites | {a for a0, d in patches for a in range(a0, a0 + len(d))})
+                        if want == "rt_int":
+                            if ints[:1] != [0x3F] or info["d6"] != 0x3F or info["d6.l"] >> 16 != seg:
+                                diffs.append(f"INT 68k d6={info['d6.l']:08x} x86={ints}")
+                            if info["d7"] != out["ip"] or out["cs"] != seg:
+                                diffs.append(f"ip 68k={info['d7']:04x} x86={out['cs']:04x}:{out['ip']:04x}")
+                        elif (out["cs"], out["ip"]) != (buf, o.entries[k]) or ints:
+                            diffs.append(f"x86 reached {out['cs']:04x}:{out['ip']:04x} {ints}")
+                        for r in (*D.REGS, "es", "ss", "ds"):
+                            if mo[r] != out[r]:
+                                diffs.append(f"{r} 68k={mo[r]:04x} x86={out[r]:04x}")
+                        for f in sorted(STATUS) + ["DF", "IF"]:
+                            if mf[f] != fl >> FLAG_BIT[f] & 1:
+                                diffs.append(f"{f} 68k={mf[f]} x86={fl >> FLAG_BIT[f] & 1}")
+                    count["stub cells"] += 1
+                    if diffs:
+                        bad.append(f"{lab} {cell.hex()}: {'; '.join(diffs[:6])}")
+                    m.restore(set(mwrites) | {a for a0, d in patches for a in range(a0, a0 + len(d))})
+
+    def smc_cases():
+        """The start-up self-modified code: a switch region (emit.smc_switch_text),
+        entered at its label, runs each listed form as the original on those bytes
+        (every CF PF ZF SF OF), and an unlisted form stops there; an operand region (emit.operand_insn) is read from
+        guest RAM, for every byte value."""
+        decoded = {mo: set(u.insns) for mo, u in p.units.items()}
+        for (mod, lo, hi), forms in sorted(p.smc_switch.items()):
+            lab = emit.smc_label(mod, lo)
+            cs, ip = smc_at[lab]
+            other = next(bytes([b]) + bytes.fromhex(forms[0])[1:] for b in range(0x70, 0x80)
+                         if all(bytes.fromhex(f)[0] != b for f in forms))
+            for form in [bytes.fromhex(f) for f in forms] + [other]:
+                for bits in range(32):
+                    regs, flags, flagsx, _ = h.state({"regs": {"cs": cs}, "ip": ip})
+                    flags.update({f: bits >> j & 1 for j, f in enumerate(("CF", "PF", "ZF", "SF", "OF"))})
+                    patches = [(cs * 16 + ip, form)]
+                    case = (regs, flags, flagsx, ip, patches)
+                    m.inside, m.extra_stops = set(), stop_names
+                    mo, mf, _mfx, _mmem, _mouts, mwrites, info = m.run(addr[lab], case, h.rng, irq=False)
+                    stop, diffs = info["stop"], []
+                    if form == other:
+                        if stop != "rt_stop_unknown" or (info["d6"], info["d7"]) != (cs, ip):
+                            diffs.append(f"reached {stop} {info['d6']:04x}:{info['d7']:04x}, want a stop")
+                    else:
+                        err, out, fl, _umem, ints, _outs, uwrites = h.oracle.run(case, 1)
+                        h.oracle.restore(uwrites | set(range(cs * 16 + ip, cs * 16 + ip + len(form))))
+                        nd = node_of.get(stop)
+                        if nd is None or info["err"] or ((SEG0[nd[0]] + p.units[nd[0]].cs[nd[1]]) & 0xFFFF,
+                                                         p.units[nd[0]].insns[nd[1]].ip) != (out["cs"], out["ip"]):
+                            diffs.append(f"reached {stop} err {info['err']}, x86 {out['cs']:04x}:{out['ip']:04x}")
+                        for r in (*D.REGS, "es", "ss", "ds"):
+                            if mo[r] != out[r]:
+                                diffs.append(f"{r} 68k={mo[r]:04x} x86={out[r]:04x}")
+                        for f in sorted(STATUS) + ["DF", "IF"]:
+                            if mf[f] != fl >> FLAG_BIT[f] & 1:
+                                diffs.append(f"{f} 68k={mf[f]} x86={fl >> FLAG_BIT[f] & 1}")
+                    if mwrites:
+                        diffs.append(f"writes {sorted(mwrites)[:4]}")
+                    count["self-modified forms"] += 1
+                    if diffs:
+                        bad.append(f"{lab} {form.hex()} flags {bits:05b}: {'; '.join(diffs[:6])}")
+                    m.restore(set(mwrites) | set(range(cs * 16 + ip, cs * 16 + ip + len(form))))
+        for mod, lo, hi in sorted(p.smc_operands):
+            run = next(r for mo, r in blocks(p, decoded) if mo == mod and r[0] <= lo and
+                       r[-1] + p.units[mod].insns[r[-1]].size > hi)
+            before = count[mod]
+            for v in range(1 << 8 * (hi - lo + 1)) if hi == lo else (0, 1, 0xFF, 0x7F80):
+                block_cases(mod, run, 1, patch_code={lo: v.to_bytes(hi - lo + 1, "little")})
+            assert count[mod] > before, ("operand region not compared", mod, lo)
+            count["self-modified operands"] += 1
+
+    if not args.only and first:
+        cell_cases()
+        smc_cases()
     # R6: every executed block of a guarded copy with BP at both ends of the
     # range its guard admits and inside it; every guard just inside and outside
-    if not args.only:
+    if not args.only and first:
         for _ws, starts, nodes, rng in p.comps:
             bmin, bmax = 0x7FFF - rng[1], 0x7FFF - rng[0]
             for mod, run in copy_blocks(p, nodes, executed):
@@ -1032,67 +1194,32 @@ def main(argv=None, on_batch=None) -> int:
                                    f"reached {m.stop}, want {want}")
                     count["guard decisions"] += 1
         m.extra_stops = stop_names
-    if not args.only:
+    if not args.only and first:
         n, wbad = walks(p, h, m, addr, stop_names, args.walks,
                          on_batch=(lambda n, failures: on_batch(
                              sum(v for k, v in count.items() if k != "return checks") + n,
                              bad + failures)) if on_batch else None)
         count["walks"] += n
         bad += wbad
-    n, failures = guest_entries(p)
-    count["guest entries"] += n
-    bad += failures
-    n, failures = cross_entry_cases()
-    count["cross predecessors"] += n
-    bad += failures
-    n, failures = compute_entry_cases()
-    count['compute predecessors'] += n
-    bad += failures
-    from test_point_transform import predecessor_cases as point_transform_entries
-    n, failures = point_transform_entries()
-    count['point transform predecessors'] += n
-    bad += failures
-    from test_point_projection import predecessor_cases as point_projection_entries
-    n, failures = point_projection_entries()
-    count['point projection predecessors'] += n
-    bad += failures
-    from test_point_normalise import predecessor_cases as point_normalise_entries
-    n, failures = point_normalise_entries()
-    count['point normalise predecessors'] += n
-    bad += failures
-    from test_compute_reentry import predecessor_cases as compute_reentries
-    n, errors = compute_reentries()
-    count['compute re-entry predecessors'] += n
-    bad.extend(errors)
-    from test_scenery import predecessor_cases as scenery_entries
-    n, failures = scenery_entries()
-    count['scenery clear predecessors'] += n
-    bad += failures
-    from test_polygon_classify import predecessor_cases as polygon_classify_entries
-    n, failures = polygon_classify_entries()
-    count['polygon classify predecessors'] += n
-    bad += failures
-    from test_sprite_packet import predecessor_cases as sprite_packet_entries
-    n, failures = sprite_packet_entries()
-    count['sprite packet predecessors'] += n
-    bad += failures
-    from test_line_pixels import predecessor_cases as line_pixel_entries
-    n, failures = line_pixel_entries()
-    count['line pixel predecessors'] += n
-    bad += failures
-    from test_rasterize import predecessor_cases as rasterize_entries
-    n, failures = rasterize_entries()
-    count['rasterize predecessors'] += n
-    bad += failures
+    if first:
+        n, failures = guest_entries(p)
+        count["guest entries"] += n
+        bad += failures
+        n, failures = cross_entry_cases()
+        count["cross predecessors"] += n
+        bad += failures
+    # (SWOTL's compute-row and native-routine predecessor cases are not copied:
+    # X-Wing has no compute rows until annotations/hle.csv has them, P8.)
     if on_batch:
         on_batch(sum(v for k, v in count.items() if k != 'return checks'), bad)
-    n, failures = flag_helper_entries()
-    count["flag helper predecessors"] += n
-    bad += failures
+    if first:
+        n, failures = flag_helper_entries()
+        count["flag helper predecessors"] += n
+        bad += failures
     # every executed indirect call or jump through a register that can enter a
     # self-modified region, with the register in each region (walk entry)
     if not args.only:
-        for mod, run in allb:
+        for mod, run in part(allb):
             i = p.units[mod].insns[run[-1]]
             if i.op in ("call", "jmp") and isinstance(i.operands[0], Reg):
                 for lo, hi, _walk in p.ctx(mod, run[-1], Counter()).smc_targets:
@@ -1104,46 +1231,18 @@ def main(argv=None, on_batch=None) -> int:
     polls = Counter()
     if not args.only:
         before = Counter(count)
-        for mod, run in allb:
+        for mod, run in part(allb):
             if (mod, run[0]) in p.loop_heads:
                 for posted in ("taken", "watch"):
                     block_cases(mod, run, 1, posted=posted)
         polls = count - before
         count -= polls
-    # Regression: the original's CS:A2B2 table, including every untraced row.
-    # Enter at the call so SI selects each word; compare the x86 transfer and
-    # require a generated entry, not merely a dispatcher with matching CS:IP.
-    if not args.only:
-        mod, site, table = M.ROOT, 0xEC5B, 0xEC62
-        u = p.units[mod]
-        cs = LOADSEG + u.cs[site]
-        words = bytes(reloc[mod][table:table + 16])
-        for k in range(8):
-            target = u.off_of(u.cs[site], int.from_bytes(words[2*k:2*k+2], "little"))
-            block_cases(mod, [site], 2, {"si": 2*k},
-                        memory=[(cs*16 + 0xA2B2, words)], expected=emit.label(mod, target))
-    # The table discovers eight routine bodies: exercise every block, including
-    # rows not selected by the recorded demo, against original x86 bytes.
-    if not args.only:
-        discovered = {M.ROOT: set(range(0xEC72, 0xEE71))}
-        for mod, run in blocks(p, discovered):
-            block_cases(mod, run, 2)
-    # Untraced call-DX sites in the same CS must also reach the cell walk.
-    # Include both range edges (annotations/self-modifying.csv), the reported
-    # entry, and both fallback edges.
-    if not args.only:
-        mod = M.ROOT
-        (first, last), = image.smc_regions()[mod]
-        lo, hi = p.units[mod].ip_of(first), p.units[mod].ip_of(last)
-        for site in (0x4F7B, 0x50A5, 0xEC17):
-            for target in (lo - 1, lo, 0x2BDE, hi, hi + 1):
-                want = (emit.walk_label(mod, first) if lo <= target <= hi
-                        else "rt_dispatch_near")
-                block_cases(mod, [site], 2, {"dx": target}, expected=want)
+    # (SWOTL's address-pinned regressions of its own tables and call-DX sites are
+    # not copied: the curated tables below and R22's call sites cover X-Wing's.)
     # Item 14: every curated table row, then every reachable generated block.
     # Read the actual table words, not the translator's target list, for the
     # required entry. Unknown/return/SMC exits remain checked by block_cases.
-    if not args.only:
+    if not args.only and first:
         roots = set()
         table_rows = 0
         for row in image.rows("tables.csv"):
@@ -1162,7 +1261,7 @@ def main(argv=None, on_batch=None) -> int:
                 targets.add(target)
                 before = count[mod]
                 block_cases(mod, [site], 2, {operand.base: 2*k},
-                            memory=[((LOADSEG + u.cs[site])*16 + operand.disp, words)],
+                            memory=[((SEG0[mod] + u.cs[site])*16 + operand.disp, words)],
                             expected=emit.label(*target))
                 assert count[mod] - before == 2, ("table row not compared", row, k)
                 table_rows += 1
@@ -1187,12 +1286,39 @@ def main(argv=None, on_batch=None) -> int:
         print(f"annotated tables: {table_rows} rows, {len(roots)} targets, "
               f"{sum(off not in executed.get(mod, ()) for mod, off in roots)} untraced targets, "
               f"{len(table_blocks)} reachable blocks checked")
+    # WC2: every proved switch table (an indirect.csv row with switch targets: its
+    # compare chain ends in rt_stop_unknown; 85 of the 112 are in overlays, run at a
+    # buffer CS), from its jump: the table word it reads set to each target's IP must
+    # reach that target's label, a word no row holds the stop.
+    if not args.only:
+        switches = 0
+        for mod, u in p.units.items():
+            for off, i in part(sorted(u.insns.items())):
+                if i.op != "jmp" or not isinstance(i.operands[0], Mem):
+                    continue
+                ctx = p.ctx(mod, off, Counter())
+                if not ctx.complete or not ctx.near_targets:
+                    continue
+                o = i.operands[0]
+                assert o.seg == "cs" and o.width == 16, (mod, off, o)
+                assert not u.ip_of(off) <= o.disp < u.ip_of(off) + i.size + 2, (mod, off)
+                force = {r: 0 for r in (o.base, o.index) if r}
+                missing = next(v for v in range(0x10000) if v not in ctx.near_targets)
+                for ip in list(ctx.near_targets) + [missing]:
+                    before = count[mod]
+                    word = ip.to_bytes(2, "little")
+                    block_cases(mod, [off], 1, force, expected=ctx.near(ip) if ip != missing
+                                else "rt_stop_unknown",
+                                memory=lambda cs, w=word, d=o.disp: [(cs * 16 + d, w)])
+                    assert count[mod] - before == 1, ("switch row not compared", mod, off, ip)
+                switches += 1
+        print(f"proved switch tables: {switches}")
     # R21: every emitted string entry, including guarded copies, can enter
     # either direction body and must return to its own continuation. Existing
     # whole-block cases above retain the original incoming guest edges.
     if not args.only:
         for mod, u in p.units.items():
-            for off, insn in u.insns.items():
+            for off, insn in part(u.insns.items()):
                 if insn.op not in ("movs", "cmps", "stos", "lods", "scas"):
                     continue
                 copies = [False] + ([True] if emit.copy_label(mod, off) in addr else [])
@@ -1207,7 +1333,7 @@ def main(argv=None, on_batch=None) -> int:
     # predecessor blocks above still enter with their own live flag contracts.
     if not args.only:
         for mod, u in p.units.items():
-            for off, insn in u.insns.items():
+            for off, insn in part(u.insns.items()):
                 ctx = p.ctx(mod, off, Counter())
                 if insn.op != "call" or not ctx.smc_targets:
                     continue
@@ -1224,7 +1350,7 @@ def main(argv=None, on_batch=None) -> int:
                             force.update({r: 0 for r in (operand.base, operand.index) if r})
                             if operand.seg != "cs":
                                 force[operand.seg] = 0x5000
-                            seg = ((LOADSEG + u.cs[off]) & 0xFFFF) if operand.seg == "cs" else 0x5000
+                            seg = ((SEG0[mod] + u.cs[off]) & 0xFFFF) if operand.seg == "cs" else 0x5000
                             memory = [(seg*16+operand.disp, target.to_bytes(2, "little"))]
                         expected = next((wl for a, b, wl in ctx.smc_targets if a <= target <= b), None)
                         if expected is None:
@@ -1233,28 +1359,8 @@ def main(argv=None, on_batch=None) -> int:
                         block_cases(mod, [off], 1, force, memory=memory, expected=expected)
                         if emit.copy_label(mod, off) in addr:
                             block_cases(mod, [off], 1, force, memory=memory, expected=expected, copy=True)
-    # R23: changed loop pieces and every decoded incoming predecessor block.
-    # Include arbitrary entry state and each observed placement's guarded copy.
-    if not args.only:
-        layout_nodes = {
-            ("SWOTL.EXE", off) for off in
-            (0xD5DA, 0xD5E0, 0xD5E2, 0xD5EA, 0xD5F6,
-             0xD3E9, 0xD3ED, 0xD3EF, 0xD3F5,
-             0xAEDB, 0xAEE1, 0xAEE3, 0xAEEF)
-        } | {("FLIGHT.OVL", off) for off in (0x133C0, 0x133E9, 0x133EB, 0x133EF)}
-        incoming = {n for n, successors in p.succ.items()
-                    if any(t in layout_nodes for t in successors)}
-        incoming |= {n for n, f in p.fall.items() if f in layout_nodes}
-        for mod, run in blocks(p, {m: set(u.insns) for m, u in p.units.items()}):
-            if not any((mod, o) in layout_nodes | incoming for o in run):
-                continue
-            for value in (0, 1, 0x7FFF, 0x8000, 0xFFFF):
-                force = {r: value for r in ("ax", "bx", "cx", "dx", "si", "di")}
-                force.update(ss=0x7000, sp=0x1000)
-                for copy in (False, True):
-                    if copy and not all(emit.copy_label(mod, o) in addr for o in run):
-                        continue
-                    block_cases(mod, run, 1, force, copy=copy)
+    # (SWOTL's R23 layout nodes are its own addresses and are not copied.)
+    if not args.only and first:
         # R27: outlined jcc blocks take both edges; each outlined range runs from
         # its blocks' starts out of line to the jcc's target or its own exits.
         # A path's registers and the words it loads (probed: the background is
@@ -1265,7 +1371,7 @@ def main(argv=None, on_batch=None) -> int:
         def path_reads(mod, run, force, memory):
             """Linear addresses the x86 path loads under `force` and `memory`."""
             u = p.units[mod]
-            cs = (LOADSEG + u.cs[run[0]]) & 0xFFFF
+            cs = (SEG0[mod] + u.cs[run[0]]) & 0xFFFF
             ip = u.insns[run[0]].ip
             code = bytes(reloc[mod][run[0]:run[-1] + u.insns[run[-1]].size])
             regs, flags, flagsx, _ = h.state({"regs": dict(force, cs=cs), "ip": ip})
@@ -1316,16 +1422,15 @@ def main(argv=None, on_batch=None) -> int:
             count[mod] = before
         if unrun:
             print(f"outlined paths never falling through: {len(unrun)}", unrun[:20])
-        # Direct entry at each zero-code back jump must stop before its target,
-        # while the unrotated exact/copy counterpart remains a real jump.
-        for mod, off, target in (("SWOTL.EXE", 0xD5F6, 0xD5DA),
-                                 ("SWOTL.EXE", 0xD3FD, 0xD3E9),
-                                 ("SWOTL.EXE", 0xAEFF, 0xAEDB),
-                                 ("FLIGHT.OVL", 0x13442, 0x133C0)):
+        # Direct entry at each bypassed jump's zero-code label (retarget_jump_aliases)
+        # must reach the jump's target, in exact code and guarded copies.
+        for source, jump in sorted(p.fused_jumps.items()):
+            mod, off = node_of[jump]
+            target = p.succ[(mod, off)][0]
             for copy in (False, True):
                 lab = emit.copy_label if copy else emit.label
-                if lab(mod, off) in addr:
-                    block_cases(mod, [off], 2, copy=copy, expected=lab(mod, target))
+                if lab(mod, off) in addr and lab(*target) in addr:
+                    block_cases(mod, [off], 2, copy=copy, expected=lab(*target))
     # R32: every fused conditional in exact code and guarded copies, plus
     # every decoded predecessor (taken, fall-through, call/return entries).
     # This adds to the traced-block corpus rather than selecting it down.
@@ -1335,7 +1440,7 @@ def main(argv=None, on_batch=None) -> int:
         incoming |= {n for n, f in p.fall.items() if f in fused_nodes}
         affected = fused_nodes | incoming
         decoded = {m: set(u.insns) for m, u in p.units.items()}
-        for mod, run in blocks(p, decoded):
+        for mod, run in part(blocks(p, decoded)):
             if not any((mod, off) in affected for off in run):
                 continue
             for bits in range(32):
@@ -1343,35 +1448,15 @@ def main(argv=None, on_batch=None) -> int:
                 block_cases(mod, run, 1, forced_flags=flags)
         for _ws, starts, nodes, rng in p.comps:
             bmin, bmax = 0x7FFF - rng[1], 0x7FFF - rng[0]
-            for mod, run in copy_blocks(p, nodes, decoded):
+            for mod, run in part(copy_blocks(p, nodes, decoded)):
                 if not any((mod, off) in affected for off in run):
                     continue
                 for bp in (bmin, bmax, h.rng.randrange(bmin, bmax + 1)):
                     for bits in range(32):
                         flags = {f: bits >> k & 1 for k, f in enumerate(("CF", "PF", "ZF", "SF", "OF"))}
                         block_cases(mod, run, 1, {"bp": bp}, copy=True, forced_flags=flags)
-        # Preserve the invalid-copy input as an exact-path regression and
-        # verify that the real region entry rejects it before any copy runs.
-        mod, first, last, bp = "FLIGHT.OVL", 0x159E7, 0x15A29, 0x020B
-        run = next(run for m_, run in blocks(p, decoded)
-                   if m_ == mod and run[0] == first and run[-1] == last)
-        for bits in range(32):
-            flags = {f: bits >> k & 1 for k, f in enumerate(("CF", "PF", "ZF", "SF", "OF"))}
-            block_cases(mod, run, 1, {"bp": bp, "ss": 0x57C2}, forced_flags=flags)
-        entry = (mod, 0x1538F)
-        component = next(c for c in p.comps if (mod, first) in c[2])
-        assert entry in component[1]
-        bmin, bmax = 0x7FFF - component[3][1], 0x7FFF - component[3][0]
-        assert not bmin <= bp <= bmax
-        fast, exact = emit.copy_label(*entry), emit.label(*entry)
-        m.e.reg_write(U.M68K["d5"], upper_rng.randrange(0x10000) << 16 | bp ^ 0x7FFF)
-        m.extra_stops = {addr[fast]: fast, addr[exact]: exact}
-        m.inside, m.stop, m.entry = set(), None, None
-        m.e.start(addr[exact + "_bpg"], 0xFFFFFFFF, 1000)
-        if m.stop != exact:
-            bad.append(f"R32 invalid copy BP {bp:04x} reached {m.stop}, want {exact}")
-        count["guard decisions"] += 1
-        m.extra_stops = stop_names
+        # (SWOTL's invalid-copy regression at its FLIGHT.OVL+159E7 is not copied;
+        # X-Wing has no guarded copies until annotations/bp-regions.csv has rows.)
     # R33: returns and all decoded predecessors, including untraced entries.
     # Wrap/cleanup/flag combinations are independently covered by the x86
     # boundary corpus; these cases cover the emitted block and copy contexts.
@@ -1380,17 +1465,18 @@ def main(argv=None, on_batch=None) -> int:
         affected = returns | {n for n, ss in p.succ.items() if any(t in returns for t in ss)}
         affected |= {n for n, f in p.fall.items() if f in returns}
         decoded = {mod: set(u.insns) for mod, u in p.units.items()}
-        for mod, run in blocks(p, decoded):
+        for mod, run in part(blocks(p, decoded)):
             if any((mod, off) in affected for off in run):
                 block_cases(mod, run, 1, {"sp": 0x120})
                 block_cases(mod, run, 1, {"sp": 0x121})
         for _ws, _starts, nodes, rng in p.comps:
-            for mod, run in copy_blocks(p, nodes, decoded):
+            for mod, run in part(copy_blocks(p, nodes, decoded)):
                 if any((mod, off) in affected for off in run):
                     for bp in (0x7FFF - rng[1], 0x7FFF - rng[0]):
                         block_cases(mod, run, 1, {"bp": bp, "sp": 0x120}, copy=True)
     total = sum(v for k, v in count.items() if k != "return checks")
-    print(f"blocks {len(picks)} of {len(allb)} executed; cases {total}", dict(count))
+    print(f"shard {args.shard}: blocks {len(part(picks))} of {len(picks)} sampled of {len(allb)} "
+          f"executed; cases {total}", dict(count))
     print(f"poll cases {sum(polls.values()) - polls['return checks']} (interrupt posted)")
     print("exits", dict(exits))
     if skipped:

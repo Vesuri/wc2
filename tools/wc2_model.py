@@ -25,8 +25,8 @@ RUNS = REPO / "tmp/pc-runs"
 ROOT = "WC2.EXE"
 OVL_TABLE = 0  # SWOTL's PLINK table; WC2's VROOMM model replaces it (P2.1, P4.2)
 MANAGER = (None, None)  # SWOTL's PLINK manager entry; no WC2 equivalent
-SCOPE: list[str] = []  # 68020 generation: P4 (port-plan)
 X86_SCOPE = [ROOT, "TM.DRV", "SUPERTM.DRV", "STRAX.DRV"]  # decode and IR: P3
+SCOPE = list(X86_SCOPE)  # 68020 generation: P4
 OUT_OF_SCOPE: list[str] = []
 
 
@@ -325,6 +325,11 @@ def code_ranges(ref: Path = REF, ovls: list[Overlay] | None = None) -> list[Code
         lo, hi = driver_entry((ref / "GAMEDAT" / f).read_bytes(), index)
         out.append(CodeRange(f, f, lo, hi, 0))
     return out
+
+
+def module_path(name: str, ref: Path = REF) -> Path:
+    """The installed file of a module (the drivers are in GAMEDAT)."""
+    return ref / "GAMEDAT" / name if name in DRIVERS else ref / name
 
 
 def load_modules(ref: Path = REF) -> dict[str, Module]:

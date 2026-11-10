@@ -24,3 +24,20 @@ Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
    whether those have
    WC1 counterparts and whether the Amiga WC1 has a matching native routine. Acceptance: a
    table of hot WC2 modules with their WC1 PC and Amiga WC1 counterparts, MEASURED.
+9. IRQ handler footprint proof for WC2 (port-plan P4.4, moved to P5 as in X-Wing): `irq.py`
+   is SPAZ's IRQ0 proof (MS C, PLINK classes); WC2's timer handler calls the sound driver
+   through a far pointer set at run time, and the proof pairs with P5's host-run monitor.
+   Until then interrupts are taken at the loop-head poll points only (`gen.IRQ_PROOF`
+   off). Acceptance: `IRQ_PROOF` on, `build/gen/irq-footprint.csv` proves every handler
+   WC2 installs (INT 08h, 0Fh and the drivers' entries), the host-run monitor finds no
+   access outside it, and its sabotage is caught.
+10. EMS model (C3; designed in [translator-design.md](translator-design.md), "WC2 EMS
+    model"): build it before the first profile (port-plan P5.4). Acceptance: guarded
+    frame accesses touch the mapped page without a copy, the guard edges are in the x86
+    and 68020 differentials with a sabotage plant, and the host lockstep still passes.
+11. Flag liveness through the dispatcher (P7): 59 PUSHF and 2 INT sites read the whole
+    FLAGS word and make every flag live at the dispatcher, so `tests/audit.csv` allows
+    1,917 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in
+    `annotations/flags.csv` (DERIVED by reading, as X-Wing's) shrink it. Acceptance: the
+    pairs listed with their evidence, the audit counts lowered to the new measurement, the
+    68020 block differential passing.

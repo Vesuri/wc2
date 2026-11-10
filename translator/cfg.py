@@ -18,7 +18,7 @@ functions after a RETF, the driver entry tables, the interrupt handlers), `runti
 and the switch and traced targets of `indirect.csv`. Follows fall-through and direct
 near and far transfers; stops at returns and indirect jumps, and after a near call to a
 routine of `noreturn.csv`. A far target in a stub segment at an entry (20h + 5k) is the
-overlay's entry k; in a root code segment, the root; anything else (no literal far
+overlay's entry k (`stub_calls` keeps the stub cell it goes through, emit.py); in a root code segment, the root; anything else (no literal far
 transfer in a driver; `jmp far FFFF:0000` in the root) is not followed. A start is
 reached with one CS. Self-modified regions are not decoded statically (D16): flow into
 one is recorded as an entry of the region, and the successors of each of its listed
@@ -52,6 +52,7 @@ class Unit:
     manager_calls: dict[int, str] = field(default_factory=dict)  # SWOTL's PLINK calls: none
     smc_entries: dict[int, str] = field(default_factory=dict)  # region entry -> reason
     far_targets: dict[int, tuple[str, int]] = field(default_factory=dict)  # site -> (module, offset)
+    stub_calls: dict[int, tuple[int, int]] = field(default_factory=dict)  # site -> (stub, entry k)
     seeds: dict[int, str] = field(default_factory=dict)
 
     @property
@@ -142,6 +143,7 @@ class _Descent:
             if rem or not 0 <= k < len(o.entries):
                 raise CfgError(f"{mod}+{at:05X}: far target {f} in stub {f.seg:04X} is no entry")
             target, cs = (M.ROOT, o.code + o.entries[k]), o.code >> 4
+            self.units[mod].stub_calls[at] = (o.stub, k)
         elif f.seg in self.root_segs and f.seg * 16 + f.off < M.ROOT_CODE_END:
             target, cs = (M.ROOT, f.seg * 16 + f.off), f.seg
         else:

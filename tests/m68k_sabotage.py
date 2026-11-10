@@ -10,6 +10,7 @@ make test's boundary run (RECORD) is reused wherever a plant's case matches it.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import inspect
 import io
 import os
@@ -50,6 +51,9 @@ real_outline_cold = E.Program.outline_cold
 real_cold_return = E.cold_return
 real_retried = E.retried
 real_copy_exits = E.copy_exits
+real_cs_slot = E.cs_slot
+real_stub_cells = E.Program.stub_cells_text
+real_smc_switch = E.Program.smc_switch_text
 RECORD = Path(__file__).resolve().parent.parent / "tmp/test/x86-side-boundary.pkl"
 
 
@@ -330,13 +334,39 @@ def table_target_omitted(self, out):
             f"jmp {lab}", "jmp rt_stop_unknown") for line in out]
 
 
-def untraced_table_row_omitted(self, out):
-    """The last row of the untraced selector table must reach native output."""
-    if self.c.label != E.label("SWOTL.EXE", 0x0534a):
+def only(op, fn):
+    """A plant in the lowering of one x86 operation (the 80186 forms)."""
+    def plant(self, out):
+        return fn(self, out) if self.i.op == op else out
+    return plant
+
+
+def imul3_unsigned(self, out):
+    return [x.replace("\tmuls.w #", "\tmulu.w #") for x in out] if len(self.i.operands) == 3 else out
+
+
+def enter_no_copy_step(self, out):
+    return [x for x in out if x != "\taddq.w #2,d5"]
+
+
+def leave_keeps_bp(self, out):
+    return [x for x in out if not x.startswith("\tmove.w -1(a2,d4.w),d5")]
+
+
+def push_imm_zero(self, out):
+    if not isinstance(self.i.operands[0], L.Imm):
         return out
-    assert self.c.complete and self.c.near_targets
-    lab = self.c.near(self.c.near_targets[-1])
-    return [line.replace(f"jsr {lab}", "jsr rt_stop_unknown") for line in out]
+    return [re.sub(r"^\tmove\.w #[^,]+,-1\(a2,d4\.w\)$", "\tmove.w #0,-1(a2,d4.w)", x) for x in out]
+
+
+def shift_imm_count_one(self, out):
+    cnt = self.i.operands[1] if len(self.i.operands) > 1 else None
+    if self.i.op not in ("rol", "ror", "rcl", "rcr", "shl", "shr", "sar") \
+            or not isinstance(cnt, L.Imm) or cnt.value & 0x1F in (0, 1):
+        return out
+    return [re.sub(r"^\t(moveq #\d+,d7|(as|ls|ro|rox)[lr]\.[bw] #\d+,)", lambda m: (
+        "\tmoveq #1,d7" if m.group(1).startswith("moveq") else "\t" + m.group(1).rsplit("#", 1)[0] + "#1,"), x)
+        for x in out]
 
 
 def walk_entry_flag(self, out):
@@ -579,6 +609,29 @@ def wide_bp_range(insns):
     return r and (max(r[0] - 1, -0x8000), min(r[1] + 1, 0x7FFF))
 
 
+def lines_plant(real, pattern, repl):
+    """A Program text method whose lines get one substitution (WC2's cells, switch)."""
+    def run(self, *a, **k):
+        out = real(self, *a, **k)
+        new = [re.sub(pattern, repl, x) for x in out]
+        assert new != out, pattern
+        return new
+    return run
+
+
+WC2_PLANTS = {   # WC2's VROOMM cells, dynamic CS and start-up switch (emit.py)
+    "cell segment": lambda: setattr(E.Program, "stub_cells_text", lines_plant(
+        real_stub_cells, r"^\tcmp\.w (\(-.*\)),d7$", r"\tcmp.w d7,d7")),
+    "cell int ip": lambda: setattr(E.Program, "stub_cells_text", lines_plant(
+        real_stub_cells, r"^\tmove\.l #(\$?\w+),d7$", r"\tmove.l #\1-2,d7")),
+    "cs slot": lambda: setattr(E, "cs_slot", lambda o: E.word_at(E.lin_expr(E.stub_seg(o), 0x12))),
+    "switch form": lambda: setattr(E.Program, "smc_switch_text", lines_plant(
+        real_smc_switch, r"^\tbne (\w+_f1)$", r"\tnop")),
+    "far return near": lambda: setattr(L.Lowering, "run", lambda self: (
+        setattr(self, "c", dataclasses.replace(self.c, far_return=False)), real_run(self))[1]),
+}
+
+
 SABOTAGE = [
     ("jb/jae swapped", sub(r"\bbcs\b", "bcc"), "forms,boundary"),
     ("TOP off by one", top_off_by_one, "boundary"),
@@ -693,7 +746,11 @@ SABOTAGE = [
     ("FLAGS-to-CCR table one entry off", ("helpers", "__sahf_ccr(pc,", "__sahf_ccr+1(pc,"),
      "boundary"),
     ("proved near table omits a target", table_target_omitted, "program"),
-    ("untraced annotated table row omitted", untraced_table_row_omitted, "program"),
+    ("imul r,rm,imm flags of the unsigned product", imul3_unsigned, "boundary"),
+    ("enter copies one frame pointer", only("enter", enter_no_copy_step), "boundary"),
+    ("leave keeps BP", only("leave", leave_keeps_bp), "boundary"),
+    ("push imm pushes 0", only("push", push_imm_zero), "boundary"),
+    ("shift by an immediate counts 1", shift_imm_count_one, "boundary"),
     ("cell cache: a run stores one cell more", walk_plant("\tlsr.w #2,d6", "\tlsr.w #2,d6\n\taddq.w #1,d6"),
      "walk"),
     ("cell cache: offsets wrapping at 16 bits stored as one run", walk_plant("\tbvs .wrap", "\tnop"),
@@ -723,6 +780,12 @@ SABOTAGE = [
     ("walk lower endpoint rejected", walk_low_endpoint_rejected, "program"),
     ("string direction reads CX instead of DF",
      sub(r"^\ttst\.b G_DF\(a6\)$", "\ttst.b d1"), "boundary"),
+    ("CS slot read one word off", sub(r"\(-\$9ff00-1,a6\)", "(-$9ff10-1,a6)"), "boundary"),
+    ("stub cell ignores the stub's segment", "cell segment", "program"),
+    ("stub cell INT reports the cell's IP", "cell int ip", "program"),
+    ("overlay CS read from the stub's word 12h", "cs slot", "program"),
+    ("start-up switch runs its first form", "switch form", "program"),
+    ("push cs; call returns as near", "far return near", "program"),
 ]
 
 
@@ -749,6 +812,8 @@ class PlantHarness(D.Harness):
 def plant(k: int) -> tuple[int, int, int, int]:
     """Plant SABOTAGE[k] and run its corpus: (mismatches, cases, x86 sides replayed, of)."""
     name, fn, corpus = SABOTAGE[k]
+    if corpus in PROGRAM_CORPORA and not _base_text:    # this worker's unplanted text, once
+        _base_text.append(program_text())
     D.Harness.keep_failing = False      # planted mismatches: no batch is kept
     if isinstance(fn, tuple):   # flag helpers (translator/support.py)
         D.HELPERS = real_helpers.replace(fn[1], fn[2])
@@ -814,6 +879,8 @@ def plant(k: int) -> tuple[int, int, int, int]:
         L.Lowering.op_jcc = jump_passes_every_flag
     elif fn == "divide source":     # Lowering.muldiv_source (R9)
         L.Lowering.muldiv_source = lambda self, o, div: real_muldiv_source(self, o, False)
+    elif fn in WC2_PLANTS:
+        WC2_PLANTS[fn]()
     elif corpus == "walk":  # smc.walk (R7)
         S.walk = fn
     else:
@@ -823,6 +890,8 @@ def plant(k: int) -> tuple[int, int, int, int]:
             total, failures = B.cross_entry_cases()
             return len(failures), total, 0, 0
         if corpus in ("program", "walk"):
+            if program_text() == _base_text[0]:
+                return NO_TARGET
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 B.main(["--blocks", "1500", "--states", "1"], on_batch=completed_program_batch)
@@ -852,6 +921,9 @@ def plant(k: int) -> tuple[int, int, int, int]:
         E.cold_return = real_cold_return
         E.retried = real_retried
         E.copy_exits = real_copy_exits
+        E.cs_slot = real_cs_slot
+        E.Program.stub_cells_text = real_stub_cells
+        E.Program.smc_switch_text = real_smc_switch
         R.bp_range = real_bp_range
         S.walk = real_walk
         F.carry_ccr = real_carry_ccr
@@ -876,36 +948,52 @@ def slow_first(k: int) -> tuple:
     return ("," not in corpus and callable(fn), "boundary" not in corpus)
 
 
-# WC2: the program and walk corpora are the generated program's blocks; with no
-# module in scope (port-plan P2) there is none, so those plants are deferred,
-# printed, and never counted as caught.
+# WC2: plants whose target the generated program does not contain are deferred,
+# printed, and never counted as caught: the program and walk corpora with no module
+# in scope; any program or walk plant that leaves the generated text unchanged
+# (plant: NO_TARGET), such as the cell-walk and cache plants with no cell-walk region
+# or the outline plants with no outline.csv row.
 PROGRAM_CORPORA = ("program", "walk")
+NO_TARGET = (-1, 0, 0, 0)
+_base_text: list = []
 
 
-def deferred(k: int) -> bool:
-    return not image.SCOPE and SABOTAGE[k][2] in PROGRAM_CORPORA
+def program_text() -> dict:
+    p = E.Program()
+    return {m: p.module_text(m)[0] for m in p.units}
+
+
+def deferred(k: int) -> str:
+    """Why plant k is not run, or ""."""
+    return "no generated program" if not image.SCOPE and SABOTAGE[k][2] in PROGRAM_CORPORA else ""
 
 
 def main() -> int:
-    missed = []
+    missed, untargeted = [], []
     replayed = cases = 0
     held = [k for k in range(len(SABOTAGE)) if deferred(k)]
     run = sorted(set(range(len(SABOTAGE))) - set(held), key=slow_first)
-    with ProcessPoolExecutor(min(len(run), os.cpu_count() or 1)) as pool:
+    jobs = int(os.environ.get("SABOTAGE_JOBS", 0)) or os.cpu_count() or 1   # each holds a program
+    with ProcessPoolExecutor(min(len(run), jobs)) as pool:
         futures = {k: pool.submit(plant, k) for k in run}
         for k, (name, _fn, corpus) in enumerate(SABOTAGE):
             if k in held:
-                print(f"{name:36} {corpus:15} deferred: no generated program (P2)", flush=True)
+                print(f"{name:36} {corpus:15} deferred: {deferred(k)}", flush=True)
                 continue
             bad, total, r, n = futures[k].result()
+            if (bad, total, r, n) == NO_TARGET:
+                untargeted.append(k)
+                print(f"{name:36} {corpus:15} deferred: the planted program text is unchanged",
+                      flush=True)
+                continue
             replayed, cases = replayed + r, cases + n
             print(f"{name:36} {corpus:15} mismatches {bad} of {total}", flush=True)
             if not bad:
                 missed.append(name)
     print(f"x86 side replayed from {RECORD.name}: {replayed} of {cases} cases")
-    if held:
-        print(f"deferred: {len(held)} plants on {', '.join(PROGRAM_CORPORA)}; "
-              f"run: {len(run)}, caught: {len(run) - len(missed)}")
+    if held or untargeted:
+        print(f"deferred: {len(held) + len(untargeted)} plants (their target is not generated); "
+              f"run: {len(run) - len(untargeted)}, caught: {len(run) - len(untargeted) - len(missed)}")
     if missed:
         print("not caught:", ", ".join(missed))
     return 1 if missed else 0

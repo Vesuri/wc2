@@ -2,6 +2,7 @@ module,offset,seg_ip,name,class,executed,evidence
 WC2.EXE,0x00000,0000:0000,_start,startup,1,"INFERRED name; DERIVED body: MZ entry (c0): DGROUP 1976h into cs:[23Ch], AH=30h, saves PSP, env, calls the vector save at 016B, runs the _INIT_ table"
 WC2.EXE,0x00113,0000:0113,_exit_path,exit,0,"INFERRED name; DERIVED body: walks the _EXIT_ records (DS:AD94..AD9A) through 01DB, then three far cleanup hooks [AA3C], [AA40], [AA44], falls into __terminate"
 WC2.EXE,0x00133,0000:0133,__terminate,exit,0,"INFERRED name; DERIVED body: restores the saved vectors (01AE), checksums DS:0..2Fh against 0D5Ch and prints 'Null pointer assignment', AH=4Ch; never returns (annotations/noreturn.csv)"
+WC2.EXE,0x00162,0000:0162,ZeroDivision,startup,0,"INFERRED name (Borland c0); DERIVED body: the INT 00h handler __savevectors installs (AX=2500h, DS:DX = CS:0162 at +001A3): CX=0Eh bytes at DS:48h, exits through 022C with code 3"
 WC2.EXE,0x0016b,0000:016B,__savevectors,startup,1,"INFERRED name; DERIVED body: AH=35h for INT 0, 4, 5, 6 into DS:74..; AH=25h installs the divide handler"
 WC2.EXE,0x001ae,0000:01AE,__restorezero,exit,0,"INFERRED name; DERIVED body: AH=25h restores INT 0, 4, 5, 6 from DS:74.."
 WC2.EXE,0x001db,0000:01DB,__run_table,startup,1,INFERRED name; DERIVED body: walks 6-byte startup/exit records by priority (byte FFh = done); used for _INIT_ (+244DC) and _EXIT_ (+244F4)
