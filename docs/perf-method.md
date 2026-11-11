@@ -31,7 +31,8 @@ its binding rules: [speed-plan.md](speed-plan.md).
   or unresolved indirect transfers fail loudly instead of inventing a ratio.
 - **Counts**: `tools/host_census.py MILESTONE [--labels L…] [--strops]
   [--vram]` (host run between milestone snapshots: label executions, string-op
-  elements, A0000h writers and rows per frame); `amiga/perf_frames.gdb` (frame
+  elements, A0000h writers and rows per frame); `amiga/perf_slice.gdb` (WC2: 100 fields of
+  the intro animation from IRQ0 tick 300, port-plan P5.4); `amiga/perf_frames.gdb` (frame
   period and a capture, [speed-plan.md](speed-plan.md) §4).
 - **Call tree**: `tools/profile_tree.py ELF CAPTURE... [--gen] [--json]`: self and
   inclusive cycles per guest routine and runtime symbol, call edges, over consecutive

@@ -314,7 +314,9 @@ P5 (open-work 9). 5 is built: lazy pages, ES accesses on the store page ("WC2 EM
 
 Status: 1–3 pass (`make test-host`: m1 and m1b in lockstep, services inside IRQ0's handler
 compared relocated, design D8; `make test-amiga` at m1b on the 68030 model, 32 MB Zorro III
-Fast RAM for the diagnostic image). 4 waits on open-work 9 (open-work 10, the EMS model, is built).
+Fast RAM for the diagnostic image). 4 is measured ([feasibility.md](feasibility.md),
+"Translated cost on the target": the intro animation on the 50 MHz 68030; flight about 2×
+short of its frame rate by estimate). P5 closes with open-work 9; the EMS model is built.
 
 ### P6. Whole game (gate 6)
 

@@ -190,7 +190,7 @@ def main():
     ap.add_argument("captures", nargs="+")
     ap.add_argument("--gen", type=Path, default=P.DEFAULT_GEN, help="generated .s directory (call targets)")
     ap.add_argument("--objdump", default="m68k-amiga-elf-objdump")
-    ap.add_argument("--frame", default="R_044E2", help="label counted as drawn frames")
+    ap.add_argument("--frame", default="plat_present", help="label counted as drawn frames")
     ap.add_argument("--json", type=Path, help="write self/inclusive/calls/edges")
     ap.add_argument("--top", type=int, default=60)
     ap.add_argument("--tree-min", type=float, default=0.4)

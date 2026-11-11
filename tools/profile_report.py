@@ -25,16 +25,19 @@ import subprocess
 
 import numpy as np
 
-PREFIX = {"R": "SWOTL.EXE", "SPZ": "SPAZ.OVL", "VGA": "RTSVGA.OVL", "FE": "FRONTEND.OVL",
-          "CMP": "CAMPAIGN.OVL", "NCP": "NOTCAMP.OVL", "FLT": "FLIGHT.OVL",
-          "RPL": "REPLAY.OVL", "PNL": "PANEL.OVL"}
-GUEST = re.compile(r"^(R|SPZ|VGA|FE|CMP|NCP|FLT|RPL|PNL)_([0-9A-F]{5})(\w*)$")
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from translator.emit import TAG  # noqa: E402  (module -> label prefix)
+
+PREFIX = {t: m for m, t in TAG.items()}
+_TAGS = "|".join(sorted(PREFIX, key=len, reverse=True))
+GUEST = re.compile(rf"^({_TAGS})_([0-9A-F]{{5}})(\w*)$")
 # labels inside their instruction X: after a poll point (emit.poll), a segment
 # check, CS store hook, far push (R29), repeated segment load (R30), stack run
 # (R31, reuse.stack_runs) or string direction join (lower.py)
 INSIDE = re.compile(r"_(np|sr\d+|hr\d+|pr\d+|gr\d+|kr\d+|dfend|dispatchend)$")
 # return-check trampolines (translator/emit.py mismatch_stub): generated code
-TRAMPOLINE = re.compile(r"^(R|SPZ|VGA|FE|CMP|NCP|FLT|RPL|PNL)_rm\d+$")
+TRAMPOLINE = re.compile(rf"^({_TAGS})_rm\d+$")
 DEFAULT_GEN = Path(__file__).resolve().parents[1] / "build/gen"
 IRQ_MARKER = 0x7FFFFFFF
 OUTSIDE = 0x7FFFFFFE     # absolute PC below the first hunk (native build)
@@ -103,9 +106,15 @@ def decode(path):
         if i != count or pc != NO_PC:
             raise ValueError(f"field {f}: invalid record boundary")
         pcs, cost = hunk_relative(pcs, sections[0] if sections else 0), np.array(cost, dtype=np.int64)
-        if abs(int(cost.sum()) - cycles) > max(100, cycles // 1000):
+        # the first and last fields can be partial: left out. Within a field the
+        # records can miss up to 2% (Chip bus or blitter waits booked to no
+        # instruction): reported as unattributed; more is an invalid capture.
+        miss = cycles - int(cost.sum())
+        edge = abs(miss) > max(100, cycles // 1000) and f in (0, fields - 1)
+        if abs(miss) > max(100, cycles // 1000) and not edge and not 0 < miss <= cycles // 50:
             raise ValueError(f"field {f}: accounted {cost.sum()} vs {cycles}")
-        out.append((cycles, idle, pcs, cost))
+        if not edge:
+            out.append((cycles, idle, pcs, cost))
         size = word()
         word()                              # screenshot kind
         skip(size)
@@ -211,11 +220,17 @@ def main():
         for lab in args.count:
             counted[lab].append(int((pcs == by_name[lab]).sum()))
 
+    unattributed = sum(c for c, _ in field_cycles) - sum(pc_cycles.values())
+    if unattributed > 0:
+        pc_cycles["unattributed"] = unattributed
     total = sum(pc_cycles.values())
     cls, module, routine, instr, func, rolec = (Counter() for _ in range(6))
     routine_calls = Counter()
     executed = Counter()        # guest instructions executed (label PCs), per module
     for pc, c in pc_cycles.items():
+        if pc == "unattributed":
+            cls["unattributed (field cycles no record carries)"] += c
+            continue
         if pc == NO_PC:
             cls["no PC (outside the executable and ROM)"] += c
             continue

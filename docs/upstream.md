@@ -146,3 +146,5 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | P5: EMS store access: `rt_ems_es` sets a1 to the ES base displaced onto a non-live page's store page (`rt_ems_es_c` returns the displacement) | `src/runtime/{ems.c,rt_entry.s}`, `translator/lower.py` (docstring) | wc2 |
 | P5: the differential's `rt_ems_es` stub moves the access to a shadow and inverts the guest bytes; a1 may end displaced; plant "EMS access ignores the base rt_ems_es gives" | `tests/{m68k_diff,m68k_sabotage}.py` | wc2 |
 | P5: the EMS profile counts generated accesses on store pages | `tools/ems_frame_profile.py` | wc2 |
+| P5: the profile report takes WC2's label prefixes (`emit.TAG`), leaves out partial first and last fields, and reports field cycles no record carries (up to 2% a field) | `tools/profile_report.py` | wc2 |
+| P5: the call tree counts `plat_present` as drawn frames by default | `tools/profile_tree.py` | wc2 |

@@ -13,9 +13,10 @@ Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
 6. Feasibility report for the owner ([feasibility.md](feasibility.md): the quiet flight
    frame and FM channel use are in; P2 measured the overlay and EMS paging and the drivers:
    [vroomm.md](vroomm.md), [drivers.md](drivers.md), [external-surface.md](external-surface.md)).
-   Open: code size, those inputs written into the report, the engine's relation to WC1 (supplied disks in `tmp/wc1/`), a combat frame's
-   cost, the translated cost (port-plan P5.4). Acceptance: the doc with measured inputs,
-   checked against D1 (68030 minimum).
+   The translated cost is in (port-plan P5.4: the intro animation on the 50 MHz 68030, flight
+   about 2× short by estimate). Open: code size, those inputs written into the report, the
+   engine's relation to WC1 (supplied disks in `tmp/wc1/`), a combat frame's cost.
+   Acceptance: the doc with measured inputs, checked against D1 (68030 minimum).
 7. `SPEECH.S00` codec (in scope, D3): disk entries flagged `E0` grow to twice their
    size when installed; needed by the installer (D7, port-plan P8.2). Acceptance: `tools/origin_pak.py verify` rebuilds
    it byte-exactly.
