@@ -458,9 +458,11 @@ port_out:
 	movem.l	(a7)+,d0-d1/a1
 	rts
 
-; EMS model (ems.c, lower.py ems_guard): the frame pages an ES access meets
-; (d7.w offset, d6.l bytes, 0: the whole ES window) or a DS or SS load's window
-; meets are copied in. Every register kept (the callers keep the CCR).
+; EMS model (ems.c, lower.py ems_guard): before an ES access (d7.w offset, d6.l
+; bytes, 0: the whole ES window), a1 = the ES base plus rt_ems_es_c's displacement
+; (the access runs on the store page, or on the frame with its pages copied in);
+; after a DS or SS load, the frame pages its window meets are copied in. Every
+; other register kept; the callers keep d6, d7 and the CCR.
 rt_ems_es:
 	movem.l	d0-d1/a0-a1,-(a7)
 	addq.b	#1,rt_irq_mask		; an interrupt's maps wait
@@ -469,7 +471,14 @@ rt_ems_es:
 	jsr	rt_ems_es_c
 	addq.l	#8,a7
 	subq.b	#1,rt_irq_mask
+	move.l	d0,d6
 	movem.l	(a7)+,d0-d1/a0-a1
+	moveq	#0,d7
+	move.w	G_ES(a6),d7
+	lsl.l	#4,d7
+	lea	-$7fff(a6),a1
+	suba.l	d7,a1
+	adda.l	d6,a1
 	rts
 rt_ems_seg:
 	movem.l	d0-d1/a0-a1,-(a7)

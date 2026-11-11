@@ -31,14 +31,6 @@ Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
    off). Acceptance: `IRQ_PROOF` on, `build/gen/irq-footprint.csv` proves every handler
    WC2 installs (INT 08h, 0Fh and the drivers' entries), the host-run monitor finds no
    access outside it, and its sabotage is caught.
-10. EMS model, no-copy access (C3; [translator-design.md](translator-design.md), "WC2 EMS
-    model"): the lazy pages are built (copies to m1b 82 MB → 20.9 MB, MEASURED,
-    `tools/ems_frame_profile.py`). Open: a guarded ES access whose page is not live runs
-    on its store page instead of copying it in (the instruction's lowering with the ES
-    base redirected, a far transfer or an ES load excepted), and DOS reads into the
-    frame go to the store. Acceptance: the copies by cause measured before and after,
-    the access path in the 68020 differential with a sabotage plant, the host lockstep
-    and the Amiga replay passing.
 11. Flag liveness through the dispatcher (P7): 59 PUSHF and 2 INT sites read the whole
     FLAGS word and make every flag live at the dispatcher, so `tests/audit.csv` allows
     1,917 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in

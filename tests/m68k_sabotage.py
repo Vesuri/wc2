@@ -635,6 +635,9 @@ WC2_PLANTS = {   # WC2's VROOMM cells, dynamic CS and start-up switch (emit.py)
 SABOTAGE = [
     ("jb/jae swapped", sub(r"\bbcs\b", "bcc"), "forms,boundary"),
     ("EMS guard misses ES D001h", sub(r"^\tcmp\.w #\$d001,G_ES\(a6\)$", "\tcmp.w #$d002,G_ES(a6)"), "boundary"),
+    ("EMS access ignores the base rt_ems_es gives", sub(r"^\tjsr rt_ems_es$",
+     "\tjsr rt_ems_es\n\tmoveq #0,d7\n\tmove.w G_ES(a6),d7\n\tlsl.l #4,d7\n"
+     "\tlea -$7fff(a6),a1\n\tsuba.l d7,a1"), "boundary"),
     ("EMS DS/SS load check misses D001h", sub(r"^\tcmp\.w #\$d001,(d[0-7])$", r"\tcmp.w #$d002,\1"), "boundary"),
     ("TOP off by one", top_off_by_one, "boundary"),
     ("word at its byte address", word_at_byte_address, "boundary"),

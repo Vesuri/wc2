@@ -226,27 +226,39 @@ diffs directly); relocated words in instructions are emitted as
   ([external-surface.md](external-surface.md) "EMS", MEASURED). To m1b generated code
   reads the frame 5,455 times (10,910 bytes), all through ES = E000h, page 0, in the
   EMS heap routines (+15183..+159CF); copying every mapped page in and out moved
-  82 MB (MEASURED, `tools/ems_frame_profile.py`). Built (lazy pages): the logical
-  pages' storage after the state block (reversed, as guest RAM) is the truth and a
-  frame page holds its mapped page's bytes only while it is live (`ems.c`). A map
-  writes a live page back and leaves the new one in the store; the page is copied in
-  on its first access:
+  82 MB (MEASURED, `tools/ems_frame_profile.py`). Built (lazy pages, store access):
+  the logical pages' storage after the state block (reversed, as guest RAM) is the
+  truth and a frame page holds its mapped page's bytes only while it is live
+  (`ems.c`). A map writes a live page back and leaves the new one in the store:
   - before every instruction that accesses memory through ES (`lower.py ems_guard`):
-    `cmp.w #$d001,G_ES(a6)` / `bcc` out of line, where `rt_ems_es` copies in the
-    pages the access meets (d7 offset, d6 bytes; 0 for a string instruction: the
-    whole ES window); X kept, the CCR saved where flags enter in it;
+    `cmp.w #$d001,G_ES(a6)` / `bcc` out of line to `rt_ems_es` (d7 offset, d6
+    bytes; 0 for a string instruction: the whole ES window), which sets a1 for the
+    access: an access within one frame page whose page is in the store only (not
+    live, no live alias) gets the ES base displaced onto the store page and runs
+    there without a copy; anything else (a string, a wrap at FFFFh, a live page)
+    gets the plain base with the pages copied in. So a1 is the plain ES base only
+    while ES is below D001h; the access follows its guard's return label, which no
+    register formation crosses (`reuse.py`). X kept, the CCR saved where flags
+    enter in it;
   - DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
     service's return and an interrupt's (`rt_ems_segments`) copy in the pages their
     windows meet, and a map copies in at once a page DS or SS addresses;
-  - the runtime's accessors (`runtime.h` `rt_frame`: DOS reads into the frame).
+  - the runtime's accessors copy in (`runtime.h` `rt_frame`: DOS reads into the frame).
   Captures show a page not yet copied in from its store page (`host_run.frame_view`).
-  To m1b the model copies 20.9 MB (MEASURED, same tool); the lockstep passes. The 68020
+  To m1b (MEASURED, same tool, copies by cause): lazy pages alone copied 20.7 MB (ES
+  copy-in 8.2 MB, write-back at maps 10.4 MB, DS/SS copy-in 2.2 MB); with store
+  access 5,389 of the 5,455 generated accesses run on a store page and the model
+  copies 5.7 MB, all from DS/SS loads (copy-in 2.8 MB, their write-back at maps
+  2.9 MB); runtime accessors copy nothing. The lockstep passes. The 68020
   differential runs every one-instruction case that accesses through ES or loads DS
   or SS a second time with the guards (`ems` variant), ES (or the loaded register)
   at one of the compare's edges (D000h, D001h, DFFFh, E000h, EFFFh, F000h, FFFFh) on
-  both sides, and checks the runtime calls (`m68k_diff.ems_diffs`); plants "EMS guard
-  misses ES D001h" and "EMS DS/SS load check misses D001h". Open (open-work 10): a
-  guarded access that runs on the store page itself, without a copy.
+  both sides, and checks the runtime calls (`m68k_diff.ems_diffs`); its `rt_ems_es`
+  stub moves each non-string access's bytes to a shadow and inverts the guest
+  bytes, so an access that does not use the a1 it leaves fails. Plants "EMS guard
+  misses ES D001h", "EMS access ignores the base rt_ems_es gives", "EMS DS/SS load
+  check misses D001h"; dropping the displacement in `rt_entry.s` fails the m1b
+  lockstep. Whether the DS/SS copies matter is the first target profile's (P5.4).
 - Memory (D15 = b): Fast RAM required (1.36 MB code at R34 + 1.06 MiB guest RAM);
   the A1200 model runs with 8 MiB Fast; development runs set `--cpu=68030`
   (`AMIGA_CPU`, ~3× the 68020: logo at 80 vs 252 frames); timing runs

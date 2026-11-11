@@ -568,10 +568,14 @@ class Lowering:
     def ems_guard(self) -> None:
         """Before an instruction that accesses memory through ES: when ES is
         D001h or above (its window may meet the frame E0000h-EFFFFh), the
-        runtime copies in the frame pages the access meets (rt_ems_es: d7 =
-        offset, d6 = bytes; 0 for a string instruction, the whole window), out
-        of line. Keeps every register, X, and the CCR where flags enter in it.
-        DS and SS are checked at their loads instead (putseg)."""
+        runtime sets a1 for the access (rt_ems_es: d7 = offset, d6 = bytes; 0
+        for a string instruction, the whole window), out of line: the ES base
+        displaced onto the mapped page's store, or the plain base with the
+        frame pages copied in. So a1 is the plain ES base only while ES is below
+        D001h; every access at or above runs right after its guard (a label: no
+        formation carries over it, reuse.py). Keeps every other register, X,
+        and the CCR where flags enter in it. DS and SS are checked at their
+        loads instead (putseg)."""
         i = self.i
         if i.op in ("lea", "nop"):
             return

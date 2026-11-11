@@ -143,3 +143,6 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | P5: the EMS test's guest reports each frame access to the model first (`rt_ems_touch`); an alias's writes reach a page mapped again (`map_slot`) | `tests/test_ems.py`, `src/runtime/ems.c` | wc2 |
 | P5: the REP test's lowering takes the harness's Ctx fields (`ems`) | `tests/test_rep_lowering.py` | wc2 |
 | P5: the replay harness stops on a frame access (`rt_ems_touch` stub) | `tests/test_replay_events.py` | wc2 |
+| P5: EMS store access: `rt_ems_es` sets a1 to the ES base displaced onto a non-live page's store page (`rt_ems_es_c` returns the displacement) | `src/runtime/{ems.c,rt_entry.s}`, `translator/lower.py` (docstring) | wc2 |
+| P5: the differential's `rt_ems_es` stub moves the access to a shadow and inverts the guest bytes; a1 may end displaced; plant "EMS access ignores the base rt_ems_es gives" | `tests/{m68k_diff,m68k_sabotage}.py` | wc2 |
+| P5: the EMS profile counts generated accesses on store pages | `tools/ems_frame_profile.py` | wc2 |

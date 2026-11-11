@@ -57,6 +57,7 @@ CODE = 0x400000
 STUB = 0x300000
 STACK = 0x380000
 PENDING = STATE + 0x800     # rt_irq_pending
+SHADOW = 0xF00000           # EMS store stand-in: guest host byte h's shadow is h + SHADOW
 STUBS = ("T_JUMP", "T_CALL", "T_JUMPF", "T_CALLF", "T_INT", "T_FAULT", "T_HALT", "T_END",
          "rt_in8", "rt_in16", "rt_out8", "rt_out16", "T_RET", "T_TRAP", "rt_ems_es", "rt_ems_seg")
 STUB_AT = {n: STUB + 4 * k for k, n in enumerate(STUBS)}
@@ -205,6 +206,7 @@ class M68k:
         e.write(STUB, b"\x4a\xfc\x4e\x75" * len(self.stub_at))  # illegal; rts
         e.map(STACK - 0x10000, 0x20000)
         e.map(CODE, 0x800000)
+        e.map(GUEST_LO + SHADOW, TOP + 1 - GUEST_LO)
         self.writes: set[int] = set()
         self.outs: list = []
         self.stop: str | None = None
@@ -216,11 +218,16 @@ class M68k:
         self.irq_calls: list | None = None
         self.irq_keep = False
         self.ems_calls: list = []   # (stub, d6, d7, G_ES) of rt_ems_es / rt_ems_seg
+        self.redirects: list = []   # (host byte, bytes) an rt_ems_es call moved to the shadow
+        self.redirect = 0           # the displacement the last rt_ems_es call gave a1
 
         @U.MEM_CB
         def write(h, kind, addr, size, value, user):
             if GUEST_LO <= addr <= TOP:
                 self.writes.update(range(TOP - addr - size + 1, TOP - addr + 1))
+            elif GUEST_LO + SHADOW <= addr <= TOP + SHADOW:
+                a = addr - SHADOW
+                self.writes.update(range(TOP - a - size + 1, TOP - a + 1))
             return True
 
         by_addr = {a: n for n, a in self.stub_at.items()}
@@ -254,6 +261,8 @@ class M68k:
             elif n in ("rt_ems_es", "rt_ems_seg"):
                 st = self.e.read(STATE, 16)
                 self.ems_calls.append((n, self.r("d6"), self.r("d7"), int.from_bytes(st[4:6], "big")))
+                if n == "rt_ems_es":
+                    self.ems_base(int.from_bytes(st[4:6], "big"))
                 self.e.reg_write(U.M68K["pc"], addr + 2)
             elif n in ("rt_out8", "rt_out16"):
                 w = 8 if n == "rt_out8" else 16
@@ -274,6 +283,27 @@ class M68k:
 
     def r(self, name: str) -> int:
         return self.e.reg_read(U.M68K[name])
+
+    def ems_base(self, es: int) -> None:
+        """rt_ems_es (rt_entry.s): a1 = the ES base plus a displacement. Here an
+        access within the window (not a string, no wrap; ES F000h: none) moves to
+        a shadow copy of its bytes and the guest bytes are inverted, so an access
+        that does not run through the a1 the call left reads or writes the wrong
+        bytes; the bytes go back before the next call (one copy is current, as
+        the store or the frame is in ems.c) and when run() ends."""
+        for h, n in reversed(self.redirects):
+            self.e.write(h, self.e.read(h + SHADOW, n))
+        self.redirects = []
+        n, off = self.r("d6") & 0xFFFF, self.r("d7") & 0xFFFF
+        self.redirect = 0
+        if n and off + n <= 0x10000 and es != 0xF000:
+            h = TOP - (es * 16 + off) - n + 1
+            data = self.e.read(h, n)
+            self.e.write(h + SHADOW, data)
+            self.e.write(h, bytes(b ^ 0xFF for b in data))
+            self.redirects.append((h, n))
+            self.redirect = SHADOW
+        self.e.reg_write(U.M68K["a1"], TOP - es * 16 - 0x7FFF + self.redirect)
 
     def gread(self, a: int, n: int) -> bytes:
         """Guest bytes a..a+n-1 in guest order."""
@@ -324,9 +354,11 @@ class M68k:
         e.reg_write(U.M68K["sr"], 0)  # user mode first: a7 is then the USP
         e.reg_write(U.M68K["a7"], sp)
         self.writes, self.outs, self.stop = set(), [], None
-        self.ems_calls = []
+        self.ems_calls, self.redirects, self.redirect = [], [], 0
         self.entry = entry if skip_entry else None
         err = e.start(entry, 0xFFFFFFFF, 4_000_000)
+        for h, n in reversed(self.redirects):
+            e.write(h, e.read(h + SHADOW, n))
         out = {r: (self.r(M68[r]) ^ MIRROR.get(r, 0)) & 0xFFFF for r in REGS}
         st = e.read(STATE, 16)
         for s, at in (("es", 12), ("ss", 14), ("ds", 16)):
@@ -341,7 +373,7 @@ class M68k:
                 "d7.l": self.r("d7"),
                 "irq": irq_diffs(f, st[16 - 8], e.read(PENDING, 1)[0]),
                 "a7": self.r("a7"), "segbase": {a: self.r(a) for a in ("a1", "a2", "a3")},
-                "ems": list(self.ems_calls)}
+                "ems": list(self.ems_calls), "redirect": self.redirect}
         mem = {a: self.gread(a, 1)[0] for a in sorted(self.writes)}
         return out, f, fx, mem, list(self.outs), set(self.writes), info
 
@@ -640,7 +672,9 @@ class Harness(X.Harness):
         for sname, a in (("es", "a1"), ("ss", "a2"), ("ds", "a3")):
             if mo[sname] != out[sname]:
                 diffs.append(f"{sname} 68k={mo[sname]:04x} x86={out[sname]:04x}")
-            if info["segbase"][a] != TOP - out[sname] * 16 - 0x7FFF:
+            base = TOP - out[sname] * 16 - 0x7FFF
+            if info["segbase"][a] != base and not (   # an ES access left a1 displaced
+                    a == "a1" and info["redirect"] and info["segbase"][a] == base + info["redirect"]):
                 diffs.append(f"{sname} base {info['segbase'][a]:x}")
         # CS:IP
         far = stop in ("T_JUMPF", "T_CALLF") or stop == "T_RET" and last in ("retf", "iret")

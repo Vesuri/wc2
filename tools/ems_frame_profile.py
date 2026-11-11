@@ -6,7 +6,8 @@ Runs tests/host_run.py's lockstep check with a memory hook on the frame
 the runtime separately: accesses and bytes, the segment value behind each
 (DS, ES or SS, whichever addresses the frame; several when ambiguous), the
 page the access falls in and whether it straddles a 16 KB page, and the
-hottest code labels. The runtime's map copies are counted by the hook.
+hottest code labels; generated accesses that run on a store page directly
+(rt_ems_es's displacement). The EMS model's own copies are counted by cause.
 
 It also simulates a lazy policy on the same run (bytes it would copy): a frame
 page holds its mapped page's bytes ("live") only while a segment register's
@@ -181,6 +182,15 @@ def main() -> None:
             return True
 
         self.e.hook_range(H.U.HOOK_MEM_WRITE, copied, lo, store_hi)
+
+        @H.U.MEM_CB
+        def in_store(h, access, addr, size, value, user):
+            if where(self.r("pc")).startswith(tags):     # generated code on a store page
+                stats["gen"]["store accesses"] += 1
+                stats["gen"]["store bytes"] += size
+            return True
+
+        self.e.hook_range(H.U.HOOK_MEM_READ | H.U.HOOK_MEM_WRITE, in_store, store_lo, store_hi)
         return original_run(self, script, timeout)
 
     H.Host.run = run
@@ -188,8 +198,10 @@ def main() -> None:
     print(f"lockstep: {'ok' if not problems else problems[:3]}")
     for kind in ("gen", "rt"):
         c = stats[kind]
-        print(f"{kind}: {c['accesses']} accesses, {c['bytes']} bytes, "
+        print(f"{kind}: {c['accesses']} frame accesses, {c['bytes']} bytes, "
               f"{stats['straddle'][kind]} straddle a 16 KB page")
+    print(f"gen: {stats['gen']['store accesses']} accesses on store pages (no copy), "
+          f"{stats['gen']['store bytes']} bytes")
     print("lazy policy (simulated):", dict(sim),
           "bytes", sum(v for k, v in sim.items() if k != "maps"))
     print("access policy (simulated):", dict(sim2), "bytes", sum(sim2.values()))

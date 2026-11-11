@@ -293,7 +293,7 @@ boundary cases and sabotage plants; `docs/upstream.md` lists what came over.
 
 Status: 1–3 and 6 as built ([translator-design.md](translator-design.md), "WC2: VROOMM
 overlays and dynamic CS"; the CS is the stub's word 10h, not a state-block slot). 4 moves to
-P5 (open-work 9). 5 is built with lazy pages ("WC2 EMS model"); access without a copy is open-work 10.
+P5 (open-work 9). 5 is built: lazy pages, ES accesses on the store page ("WC2 EMS model").
 
 ### P5. First vertical slice (gate 5)
 

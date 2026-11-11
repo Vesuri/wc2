@@ -9,7 +9,8 @@
 /* Store pages live after the state block (RT_EMS_PAGES): they are the truth.
  * A frame page holds its mapped page's bytes only while it is live (EMS model,
  * docs/translator-design.md): a map writes a live page back and leaves the new
- * one in the store; it is copied in on the first access to it, which the
+ * one in the store. An ES access to a page in the store goes there directly
+ * (rt_ems_es_c); other accesses copy it in first, which the
  * runtime's own accessors (rt_ems_touch, runtime.h) and the translator's guard
  * before every ES access (rt_ems_es) report, or at once while DS or SS
  * addresses it (their accesses are not guarded: rt_ems_segments). A page mapped
@@ -178,11 +179,29 @@ void rt_ems_touch(uint32_t a, uint32_t n)
 }
 
 /* Translator guard (lower.py ems_guard): ES >= D001h before an access of `bytes`
- * at ES:offset; bytes 0: a string instruction, the whole ES window. */
-void rt_ems_es_c(uint32_t offset, uint32_t bytes)
+ * at ES:offset; bytes 0: a string instruction, the whole ES window. Returns the
+ * displacement the access adds to the ES base (rt_entry.s rt_ems_es): an access
+ * that lies within one frame page whose mapped page is in the store only (not
+ * live, no live alias) goes to the store page itself, without a copy; anything
+ * else has its frame pages copied in and runs on the frame (0). */
+int32_t rt_ems_es_c(uint32_t offset, uint32_t bytes)
 {
-    uint32_t base = lin(G_ES, 0);
+    uint32_t base = lin(G_ES, 0), first = lin(EMS_FRAME, 0);
     offset &= 0xffff;
+    if (bytes && offset + bytes <= 0x10000) {
+        uint32_t a = base + offset, z = a + bytes - 1;
+        if (a >= first && z < first + EMS_PHYS * RT_EMS_PAGE &&
+            (a - first) / RT_EMS_PAGE == (z - first) / RT_EMS_PAGE) {
+            uint8_t k = (uint8_t)((a - first) / RT_EMS_PAGE);
+            int alias = 0;
+            for (int j = 0; j < EMS_PHYS; ++j) {
+                alias |= j != k && mapped[j] == mapped[k] && live[j];
+            }
+            if (mapped[k] && !live[k] && !alias) {
+                return (int32_t)(store(mapped[k]) - frame_page(k));
+            }
+        }
+    }
     if (!bytes) {
         rt_ems_touch(base, 0x10000);
     } else if (offset + bytes > 0x10000) {        /* the word at FFFFh wraps to 0 */
@@ -191,6 +210,7 @@ void rt_ems_es_c(uint32_t offset, uint32_t bytes)
     } else {
         rt_ems_touch(base + offset, bytes);
     }
+    return 0;
 }
 
 /* DS or SS may address the frame (a load of D001h or above, a service, an
