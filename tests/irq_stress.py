@@ -165,7 +165,7 @@ class Stress:
         h, s = self.h, self.h.syms
         b = lambda n: h.mem(s[n], 1)[0]
         return bool(h.state(11, 1)) and not b("rt_irq0_running") and not b("rt_irq_mask") \
-            and not b("rt_opl_pair") and b("irq_head") == b("rt_irq_tail") and not b("rt_bench") \
+            and not b("rt_opl_pair") and not b("rt_irq_hold") and b("irq_head") == b("rt_irq_tail") and not b("rt_bench") \
             and h.guest_vector(8)
 
     def inject(self, addr: int, event: bool) -> bool:

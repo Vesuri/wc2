@@ -323,9 +323,13 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   (below SS:SP at a service, and the FLAGS image of an `annotations/flags.csv`
   PUSHF, until the guest rewrites it); at m1b-logo the A0000h window and the
   DAC; machine bytes the guest read hold reference values; every guest
-  access against the IRQ0 footprint (`tests/irq_monitor.py`, irq-plan I3:
-  handler accesses inside it, main accesses meeting it only from sync
-  instructions, IF clear or services; record `tmp/test/irq-monitor-<run>.json`).
+  access against the IRQ footprint (`tests/irq_monitor.py`, irq-plan I3:
+  handler accesses inside it, runtime classes placed from their words at entry and
+  as the handler stores them, the irq-bounds.csv bounds at entry and return, main
+  accesses meeting it only from sync instructions, IF clear or services, no
+  generated write into a buffer byte between two handler reads of it; record
+  `tmp/test/irq-monitor-<run>.json`; sabotage `irq-footprint`, `irq-sync`,
+  `irq-bounds`).
   `make test-amiga`: the same at m1b-logo on the A1200 model (FS-UAE,
   `amiga/milestone.gdb.in`), plus the shown screen (bitplanes, colour
   table) decoded against the reference framebuffer and DAC.
@@ -415,7 +419,7 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   until it returns, the PIC's in-service IRQ0, irq-plan I4; on the Amiga the CIA-B
   tick runs it at once through `rt_irq_interrupt` when `rt_irq0_ready`: IF set, none
   running, no runtime service (`rt_irq_mask`) or main-thread OPL index/data pair
-  (`rt_opl_pair`), nothing posted, not `BENCH`; a stop raised in it unwinds through
+  (`rt_opl_pair`) or held sync access (`rt_irq_hold`), nothing posted, not `BENCH`; a stop raised in it unwinds through
   `rt_irq_abort` and is raised at the next poll; a tick posted while it could not run
   is taken by the next CIA tick before its own, `rt_irq0_take`; host runs inject recorded ticks
   the same way with `host_run.py --stress SEED`, `tests/irq_stress.py`, I6), another
@@ -448,14 +452,25 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   reference takes interrupts only at sync points, `build/gen/poll-points.csv`, IRQ0
   edges only the gate held raised again in order, `dosbox-x-swotl-irq0-backlog.patch`;
   references are re-recorded when the sync set changes, irq-plan RC3).
-- IRQ0 footprint (irq-plan I2, `translator/irq.py`, run by `make gen`): the guest
-  handler's memory, ports, IF changes, hooks and runtime calls, register
-  transparency proved over the lifted IR; every main-code access classified
-  masked, disjoint, sync (may meet the footprint) or monitored, with segment
-  registers per (entry, DS, SS) context. A sync access to a handler-written
-  byte lowers to one memory-touching 68k instruction, no compute row holds a
-  sync access, bounded G variables keep their bound, else generation fails.
-  Output `build/gen/irq-footprint.csv`; `t-irq-footprint` and its sabotage.
+- IRQ footprint (irq-plan I2, `translator/irq.py`, run by `make gen`, `gen.IRQ_PROOF`):
+  every handler WC2 installs (INT 08h at WC2.EXE+0FD10 and +148E0, INT 0Fh at +06F3F;
+  the INT 08h handler calls STRAX.DRV and the EMS pointer resolver): its memory,
+  ports, IF changes, runtime calls (INT 67h's map, save and restore), register
+  transparency proved over the lifted IR. Classes: link paragraphs, `abs:` paragraphs,
+  runtime classes `[C:a-b]` (segments read from those words, placed at run time);
+  segment 0, the EMS resolver's null result on its failure paths, is no class: a
+  store through it fails the proof, a read is a runtime row the monitor fails.
+  Every main-code access classified masked, disjoint, sync (may meet a fixed class of
+  the footprint) or monitored, with segment registers per (entry, DS, SS) context; the
+  sync accesses and IF edges are the poll points (`build/gen/poll-points.csv`). A sync
+  access to a handler-written byte lowers to one memory-touching 68k instruction, or
+  to straight-line code bracketed by `st`/`sf rt_irq_hold` (the CIA tick waits across
+  it, as an x86 instruction is never interrupted: LES of a far pointer, ADC to memory;
+  `build/gen/irq-hold.csv`); no compute row holds a sync access, else generation fails. Assumptions the handlers
+  rest on are `annotations/irq-bounds.csv` rows (checked at every handler entry and
+  return in host runs); monitored accesses the host runs found meeting the footprint
+  are `annotations/irq-sync.csv` rows. Output `build/gen/irq-footprint.csv`;
+  `t-unit-test_irq_footprint` and `t-sab-irq`.
 - HLE (`annotations/hle.csv`, G3): at a range's first instruction
   `jsr rt_hle_<service>`; NE skips to the instruction after `last`, EQ runs
   the guest code. `args`: up to two guest word registers (not SP, BP), in d7

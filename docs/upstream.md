@@ -59,7 +59,6 @@ P0: every one fails before it for the reason given). Enter each into `make test`
 |---|---|---|
 | `test_pointer_model` | WC2's pointer rows in `annotations/pointer.csv` (`pointer.c` is inactive without them) | P6 |
 | `test_cell_cache` | none applies: WC2's self-modified regions are switches and operand reads, with no cell cache (no `_walk_plant` in `build/gen`, MEASURED at P5) | — |
-| `test_irq_footprint` | an INT 08h handler row in `entries.csv` | P4.4 |
 | `test_profile_tools` | generated guest call targets | P4 |
 | `m68k_sabotage` plants on `program` and `walk` (37): `tests/m68k_blocks.py` needs generated blocks, and it imports SWOTL's compute and scene predecessor tests (`test_compute_contract` and others, not imported): drop those for WC2's | a module in scope (P1.4 brings the loader model only) | P2 |
 | `test_audio`, `test_fm_effect_asm` | TFH and SWOTL's effect capture: rewritten for WC2's effects | P6b.2 |
@@ -148,3 +147,9 @@ it applies upstream (`up`), is WC2 only (`wc2`) or is a rename (`ren`).
 | P5: the EMS profile counts generated accesses on store pages | `tools/ems_frame_profile.py` | wc2 |
 | P5: the profile report takes WC2's label prefixes (`emit.TAG`), leaves out partial first and last fields, and reports field cycles no record carries (up to 2% a field) | `tools/profile_report.py` | wc2 |
 | P5: the call tree counts `plat_present` as drawn frames by default | `tools/profile_tree.py` | wc2 |
+| P5: the IRQ footprint proof for WC2's handlers (`HANDLERS`: INT 08h +0FD10 and +148E0, INT 0Fh +06F3F): Borland C contexts keyed by constant argument words, leaf-loop unrolling, REP MOVS/STOS as one access, the byte-pair value, narrowing by bounded operands and the slot a register was loaded from, `or`/`and r,r` keeping r, the remainder of a constant divisor, an FFh widening step, facts kept across INT 67h and strongly updated by a store through their form; `irq-bounds.csv` tables; `abs:` classes placed; segment 0 (a null far pointer) no class; `Main.ret_words` for jump-returns; declared sync rows for unreached or implicit accesses | `translator/irq.py`, `annotations/irq-bounds.csv`, `annotations/irq-sync.csv` | wc2 (handlers, rows), up (analysis) |
+| P5: a sync access to handler-written memory that lowers to more than one 68k access in straight-line code runs under `rt_irq_hold` (`st`/`sf`; `irq.Proof.held`, `build/gen/irq-hold.csv`); `rt_irq0_ready` and `rt_irq0_take` wait for it | `translator/{irq,emit,gen}.py`, `src/runtime/{machine.c,runtime.h}`, `tests/{m68k_blocks,irq_stress}.py` | up |
+| P5: `IRQ_PROOF` on | `translator/gen.py` | wc2 |
+| P5: the host-run monitor for WC2: runtime classes placed from their words at entry and as the handler stores them, irq-bounds.csv bounds at entry and return, the buffer rule outside the EMS frame, no delivery a problem; sabotages `irq-footprint`, `irq-sync`, `irq-bounds`; `deliver_int` pops the pending service (VROOMM's INT 3Fh never returns through `rt_exit`) | `tests/irq_monitor.py`, `tests/host_run.py` | wc2 (rows, INT 3Fh), up (checks) |
+| P5: `test_irq_footprint` re-pointed at WC2 (the INT 0Fh plants, the ports, the tick write, the sound-state sync row, the held instructions and their plants); in `make test` and `t-sab-irq` | `tests/test_irq_footprint.py`, `Makefile` | wc2 |
+| P5: the BIOS model byte F000:FFFE = FCh (AT; MEASURED, the reference) | `src/runtime/machine.c` | wc2 |

@@ -152,7 +152,7 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
 	test_rep_replay test_replay_chords test_replay_events test_smc_flow \
 	test_dos_sda test_dos_search test_ems test_far_return_protocol test_file_dates \
-	test_host_launch test_irq_in_service test_mouse_irq test_interrupt_frame_mask \
+	test_host_launch test_irq_footprint test_irq_in_service test_mouse_irq test_interrupt_frame_mask \
 	test_key_chords test_keyboard_prefix test_host_replay_visits test_replay_hooks \
 	test_replay_run_isolation
 # The program block test in parts (tests/m68k_blocks.py --shard); BLOCK_JOBS bounds
@@ -167,7 +167,7 @@ test: gen-check
 	@$(MAKE) -s -k -j$(JOBS) $(TESTS)
 
 test-sabotage: gen-check
-	@$(MAKE) -s -k -j$(JOBS) t-sab-x86 t-sab-m68k
+	@$(MAKE) -s -k -j$(JOBS) t-sab-x86 t-sab-m68k t-sab-irq
 
 t-lint:
 	$(call RUN,lint,$(PYTHON) -m translator.check lint)
@@ -194,6 +194,8 @@ t-sab-x86:
 	$(call RUN,sabotage-x86,$(PYTHON) tests/x86_sabotage.py)
 t-sab-m68k:
 	$(call RUN,sabotage-m68k,$(PYTHON) tests/m68k_sabotage.py)
+t-sab-irq:
+	$(call RUN,sabotage-irq,$(PYTHON) tests/test_irq_footprint.py --sabotage)
 
 # Host image: the generated program and the runtime for tests/host_run.py (P5).
 AMIGA_TOOLCHAIN ?= $(HOME)/.local/opt

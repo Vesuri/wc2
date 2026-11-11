@@ -185,6 +185,7 @@ void rt_start(uint8_t *mem)
     mcb(psp_seg - 1, 'Z', psp_seg, TOP_SEG - psp_seg, "WC2\0\0\0\0\0");
     mcb(TOP_SEG, 'M', 0x0008, 0x2c00, "SC      ");  /* reference: link to upper memory */
     wr8(lin(MEDIA_SEG, MEDIA_OFF), 0xf8);          /* reference: drive C: media descriptor */
+    wr8(lin(0xf000, 0xfffe), 0xfc);                /* reference: the BIOS model byte (AT) */
     psp(psp_seg);
     rt_dos_init();
     rt_input_init();
@@ -432,9 +433,11 @@ static void int1a(uint16_t cs, uint16_t ip)
  * by register pops. */
 volatile uint8_t rt_irq0_running;
 /* Runtime services in progress (rt_entry.s entries); rt_opl_pair: the main
- * thread wrote the OPL index and not yet the data. Either holds the CIA tick
- * pending (docs/irq-plan.md I6). */
-volatile uint8_t rt_irq_mask, rt_opl_pair;
+ * thread wrote the OPL index and not yet the data; rt_irq_hold: a generated
+ * instruction that meets handler-written memory in more than one 68k access
+ * runs (irq.Proof.check_atomic, an x86 instruction is never interrupted). Each
+ * holds the CIA tick pending (docs/irq-plan.md I6). */
+volatile uint8_t rt_irq_mask, rt_opl_pair, rt_irq_hold;
 volatile uint8_t rt_irq_interrupting;    /* inside rt_irq_interrupt (rt_stop) */
 /* IRQ0 deliveries: guest handler runs (both entries) and BIOS ticks, for
  * fixtures comparing them with the ticks the platform posted or ran. */
@@ -534,7 +537,7 @@ void rt_irq0_enter(void)
  * vector; else the tick is posted for the next poll. */
 int rt_irq0_ready(void)
 {
-    return G_IF && !rt_irq0_running && !rt_irq_mask && !rt_opl_pair &&
+    return G_IF && !rt_irq0_running && !rt_irq_mask && !rt_opl_pair && !rt_irq_hold &&
            irq_head == rt_irq_tail && !rt_bench && guest_vector(8);
 }
 
@@ -543,7 +546,7 @@ int rt_irq0_ready(void)
  * (keys drain at service entry), so the order is kept. */
 int rt_irq0_take(void)
 {
-    if (!G_IF || rt_irq0_running || rt_irq_mask || rt_opl_pair || rt_bench ||
+    if (!G_IF || rt_irq0_running || rt_irq_mask || rt_opl_pair || rt_irq_hold || rt_bench ||
             !guest_vector(8) || irq_head == rt_irq_tail ||
             rt_irq_ring[irq_head % RT_IRQ_RING] != 8) {
         return 0;

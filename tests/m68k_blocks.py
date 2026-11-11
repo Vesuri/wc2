@@ -55,6 +55,7 @@ SEG0 = {m: LOADSEG + emit.DRIVER_SEG.get(m, 0) for m in emit.TAG}  # what link s
 STUBS = emit.RUNTIME + emit.HLE_SERVICES + ("T_RET",)
 STUB_AT = {n: D.STUB + 4 * k for k, n in enumerate(STUBS)}
 STUB_AT["rt_irq_pending"] = D.PENDING  # data, clear (no interrupt posted)
+STUB_AT["rt_irq_hold"] = D.PENDING + 2  # data: a held sync access sets and clears it
 TRANSFER = {"jmp", "jmpf", "jcc", "call", "callf", "ret", "retf", "iret", "int", "int3", "into",
             "loop", "loope", "loopne", "jcxz", "hlt"}
 
@@ -935,6 +936,8 @@ def main(argv=None, on_batch=None) -> int:
             if info["err"]:
                 diffs.append(f"68k error {info['err']} stop={stop} pc={pc:x}")
             diffs += info["irq"]
+            if m.e.read(D.PENDING + 2, 1)[0]:
+                diffs.append("rt_irq_hold left set")
             loop = int((mod, run[0]) in p.loops)   # emit.poll_stub: d6 bit 0 at a loop head
             if posted and calls != [(cs << 16 | loop, ip)]:
                 diffs.append(f"poll: rt_irq calls {[(hex(a), hex(b)) for a, b in calls]}, "

@@ -36,13 +36,13 @@ from . import cfg, emit, image, irq, support
 from .sem import lift
 
 VERSION = "wc2-gen 3 (ir, 68020)"
-# translator/irq.py's footprint proof models SWOTL's SPAZ IRQ0 handler; until it models
-# WC2's handlers (port-plan P4.4) generation runs without it: no irq-footprint.csv, and
-# the sync points are the loop heads alone
-IRQ_PROOF = False
+# translator/irq.py's footprint proof of WC2's handlers (INT 08h, 0Fh): it writes
+# irq-footprint.csv and gives the sync points
+IRQ_PROOF = True
 AUDIT = image.REPO / "tests/audit.csv"
 SUPPORT = "support"
 POLLS = "poll-points.csv"
+HOLD = "irq-hold.csv"
 OUTLINE = "outline-sites.csv"
 FOOTPRINT = "irq-footprint.csv"
 PROGRAM = "program"  # assembly root: equates, runtime xrefs, includes, dispatch table
@@ -152,7 +152,7 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
         # sync points (irq.Proof.sync_points); they are leaders of the generated one
         proof = irq.prove(emit.Program(units, sync={}))
     prog = program if program is not None else emit.Program(
-        units, sync=proof.sync_points() if proof else {})
+        units, sync=proof.sync_points() if proof else {}, held=proof.held if proof else set())
     total, per = Counter(), {}
     files: list[str] = []
     texts: dict[str, list[str]] = {}
@@ -181,6 +181,8 @@ def generate(out: Path, program: emit.Program | None = None) -> tuple[dict[str, 
     # hardware interrupts only there, so the host can replay them exactly
     (out / POLLS).write_text("module,offset,kind\n" + "".join(
         f"{m},0x{o:05x},{prog.sync[(m, o)]}\n" for m, o in sorted(prog.loop_heads)))
+    # the sync instructions emitted under rt_irq_hold (irq.Proof.check_atomic)
+    (out / HOLD).write_text("module,offset\n" + "".join(f"{m},0x{o:05x}\n" for m, o in sorted(prog.held)))
     # R27 sites for tools/outline_sites.py: jcc, its fall-through range, target,
     # the instruction after whose run the range goes
     (out / OUTLINE).write_text("label,first,last,target,ends,place,outlined\n" + "".join(

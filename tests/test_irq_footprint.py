@@ -1,11 +1,15 @@
-"""IRQ0 footprint proof (docs/irq-plan.md I2, translator/irq.py).
+"""IRQ footprint proof (docs/irq-plan.md I2, translator/irq.py) for WC2's handlers.
 
-The proof holds on the program, matches build/gen/irq-footprint.csv and keeps
-the facts the later steps rest on (handler-written game variables, ports, the
-813C readers as sync accesses), and the host monitor's song-buffer rule holds per
-byte (tests/irq_monitor.py song_races). --sabotage (plants only): each plant edits one
-decoded instruction (or the compute rows) and must fail the proof with its message;
-each song-rule plant must fail song_rule."""
+The proof holds on the program, matches build/gen/irq-footprint.csv and keeps the
+facts the later steps rest on (every handler in irq.HANDLERS proved, the ports,
+the INT 08h handler's tick counts as handler-written, the sound-state poll at
+WC2.EXE+4565A a sync access), the sync instructions that meet handler-written
+memory in more than one 68k access (LES of the sequencer's far pointers, ADC to
+memory) are held (irq-hold.csv) and bracketed by `st`/`sf rt_irq_hold` in the
+generated text, and the host monitor's buffer rule holds per byte
+(tests/irq_monitor.py buffer_races). --sabotage: each plant edits one decoded
+instruction of the INT 0Fh handler (the smallest) and must fail its analysis with
+its message; each buffer-rule and hold plant must fail its check."""
 from pathlib import Path
 import argparse
 import dataclasses
@@ -13,22 +17,19 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from translator import emit, irq
+from translator import cfg, emit, irq
 sys.path.insert(0, str(ROOT / 'tests'))
 import irq_monitor
 
-SPAZ = 'SPAZ.OVL'
-# G spans the handler writes (irq-plan Facts): song counters, tick, timer slots, dword
-WRITTEN_G = {(0x6564, 0x658a), (0x813c, 0x813d), (0x9bca, 0x9bcb), (0x9c44, 0x9ca9),
-             (0x9d32, 0x9d33), (0x9d34, 0x9d35)}
-TICK_READERS = [('FLIGHT.OVL', 0x122a), ('FLIGHT.OVL', 0x123b), ('SWOTL.EXE', 0x0180),
-                ('SWOTL.EXE', 0x3682), ('SWOTL.EXE', 0x3f94)]
+EXE = 'WC2.EXE'
+SB = (EXE, 0x06F3F)        # the INT 0Fh handler
+TICKS = (0xD130, 0xD137)   # WC2.EXE+0FD70..+0FD7C: two tick dwords
+HELD = {(EXE, 0x12A0A), (EXE, 0x12A2A), (EXE, 0x12B6F)}   # LES, LES, ADC (make gen)
 
 
 def edit(prog, node, **change):
     u = prog.units[node[0]]
-    i = u.insns[node[1]]
-    u.insns[node[1]] = dataclasses.replace(i, **change)
+    u.insns[node[1]] = dataclasses.replace(u.insns[node[1]], **change)
 
 
 def operand(prog, node, k, **change):
@@ -38,80 +39,76 @@ def operand(prog, node, k, **change):
     edit(prog, node, operands=tuple(ops))
 
 
-def handler_main_variable(prog):
-    # inc word es:[9BCA] -> es:[9DC0], a dword main code steps with add/adc
-    operand(prog, (SPAZ, 0x0804), 0, disp=0x9dc0)
-    return None, 'G:9DC0..9DC1 in 2 68k memory accesses'
-
-
-def split_rmw(prog):
-    # mov word ds:[813C],0 -> adc word ds:[813C],0 (load, add, store)
-    edit(prog, ('SWOTL.EXE', 0x403b), op='adc')
-    return None, 'SWOTL.EXE+0403B: adc word ds:[0x813c], 0x0 meets handler-written G:813C..813D'
-
-
 def unsaved_register(prog):
     # push bx -> push cx: bx is popped from a slot that never held it
-    operand(prog, (SPAZ, 0x07cd), 0, name='cx')
-    return None, 'bx'
+    operand(prog, (EXE, 0x06F40), 0, name='cx')
+    return 'bx'
 
 
 def undeclared_port(prog):
-    # EOI out 20h -> out 21h
-    operand(prog, (SPAZ, 0x0a80), 0, value=0x21)
-    return None, 'port'
+    # add ax,0Eh -> 0Fh: the DSP status read at 22Fh
+    operand(prog, (EXE, 0x06F5A), 1, value=0xF)
+    return 'not in PORTS'
 
 
-def compute_row_tick(prog):
-    # a compute row over FLIGHT's tick reset (mov word ds:[813C],0)
-    return {('FLIGHT.OVL', 0x1224)}, 'compute row FLIGHT.OVL+01224 contains sync access FLIGHT.OVL+01224'
+def far_return(prog):
+    # the handler's IRET -> RETF: the frame's flags word is left behind
+    edit(prog, (EXE, 0x070FD), op='retf')
+    return 'return'
 
 
-def compute_exit_body(prog):
-    # a row with exits is checked on its proved body: a sync access in it (the
-    # 9C20 write after B52D) still rejects
-    row = ('SWOTL.EXE', 0x10c08)
-    region = prog.compute_bodies[row]
-    prog.compute_bodies[row] = region._replace(body=region.body | {('SWOTL.EXE', 0x10cde)})
-    return {row}, 'compute row SWOTL.EXE+10C08 contains sync access SWOTL.EXE+10CDE'
-
-
-def slot_bound(prog):
-    # mov byte ds:[9C20],2Ah -> 40h: the handler would count past 9CA9
-    operand(prog, ('SWOTL.EXE', 0x10be5), 1, value=0x40)
-    return None, 'SWOTL.EXE+10BE5: mov byte ds:[0x9c20], 0x40 writes G:9C20 outside'
-
-
-PLANTS = {'handler-main-variable': handler_main_variable, 'split-rmw': split_rmw,
-          'unsaved-register': unsaved_register, 'undeclared-port': undeclared_port,
-          'compute-row-tick': compute_row_tick, 'compute-exit-body': compute_exit_body,
-          'slot-bound': slot_bound}
+PLANTS = {'unsaved-register': unsaved_register, 'undeclared-port': undeclared_port,
+          'far-return': far_return}
 
 
 def check(proof):
     proof.raise_errors()
-    written = {(lo, hi) for (cls, lo, hi, kind) in proof.fp.mem if cls == 'G' and kind == 'w'}
-    assert written == WRITTEN_G, sorted(written)
+    assert set(proof.fps) == set(irq.HANDLERS), sorted(proof.fps)
+    for e, fp in proof.fps.items():
+        assert not fp.errors and fp.nodes, (irq.site(e), fp.errors[:3])
     ports = {p for p, _ in proof.fp.ports}
-    assert ports == {0x20, 0x388, 0x389}, ports
-    assert proof.paras['G'] == 0x43cd, proof.paras
+    assert {0x20, 0x388, 0x389, 0x22C, 0x22E} <= ports <= set(irq.PORTS), sorted(ports)
+    written = [(lo, hi) for (cls, lo, hi, kind) in proof.fp.mem if cls == '1976' and kind == 'w']
+    missing = [a for a in range(TICKS[0], TICKS[1] + 1) if not any(lo <= a <= hi for lo, hi in written)]
+    assert not missing, f'tick bytes not handler-written: {[hex(a) for a in missing]}'
     sync = {(n, cls, lo) for n, cls, lo, *_ in proof.sync}
-    for n in TICK_READERS:
-        assert (n, 'G', 0x813c) in sync, n
-    assert (('SWOTL.EXE', 0x455c), '188A', 0) in sync   # irq-sync.csv
+    assert ((EXE, 0x4565A), '1976', 0xA530) in sync     # irq-sync.csv
+    assert HELD <= proof.held <= {n for n, *_ in proof.sync}, sorted(proof.held)
     csv = ROOT / 'build/gen/irq-footprint.csv'
     if csv.exists():
         want = csv.read_text().splitlines()[1:]
         assert proof.rows() == want, 'build/gen/irq-footprint.csv is stale: run make gen'
+        assert emit.held_points() == proof.held, 'build/gen/irq-hold.csv is stale: run make gen'
+        texts = {m: (ROOT / f'build/gen/{m}.s').read_text() for m in {n[0] for n in proof.held}}
+        held_text(texts, proof.held)
     return len(proof.sync)
 
 
-def song_rule(races=irq_monitor.song_races):
-    """Song bytes 100-103 read in ticks 10-20, byte 200 in ticks 10-500 (one song):
-    a generated write of a byte inside its own read window races; after its last
-    read (c62's reload of played bytes), before its first, or from a service, not."""
-    reads = {a: [10, 20, 35] for a in range(100, 104)}
-    reads[200] = [10, 500, 35]
+def held_text(texts, held):
+    """Each held instruction's code starts with `st rt_irq_hold` and ends with
+    `sf rt_irq_hold` before the next label, with neither in between."""
+    for mod, off in sorted(held):
+        lines = texts[mod].split('\n')
+        at = next((k for k, x in enumerate(lines) if x.startswith(emit.label(mod, off) + ':')), None)
+        assert at is not None, f'{irq.site((mod, off))}: no label in the generated text'
+        np = emit.label(mod, off) + '_np:'     # a sync point: its poll test comes first
+        if any(x.startswith(np) for x in lines[at + 1:at + 8]):
+            at = next(k for k in range(at + 1, at + 8) if lines[k].startswith(np))
+        body = []
+        for x in lines[at + 1:]:
+            if x and not x[0].isspace():
+                break
+            body.append(x.strip())
+        assert body and body[0] == 'st rt_irq_hold' and body[-1] == 'sf rt_irq_hold' and \
+            'rt_irq_hold' not in ' '.join(body[1:-1]), f'{irq.site((mod, off))} is not held: {body[:3]}'
+
+
+def buffer_rule(races=irq_monitor.buffer_races):
+    """Buffer bytes 100-103 read in ticks 10-20, byte 200 in ticks 10-500: a
+    generated write of a byte inside its own read window races; after its last
+    read (a reload of played bytes), before its first, or from a service, not."""
+    reads = {a: [10, 20, 'b'] for a in range(100, 104)}
+    reads[200] = [10, 500, 'b']
     w = lambda lin, tick, generated=True: (lin, 2, 'site', generated, tick)
     assert len(races(reads, [w(102, 15)])) == 1, 'write inside a byte\'s read window passed'
     assert len(races(reads, [w(199, 300)])) == 1, 'write reaching a byte still read passed'
@@ -120,30 +117,33 @@ def song_rule(races=irq_monitor.song_races):
     return 5
 
 
-def merged_window(reads, writes):   # the pre-I8 rule: one extent and window per song
-    lo, hi = min(reads), max(reads)
-    first, last = min(r[0] for r in reads.values()), max(r[1] for r in reads.values())
-    return [w for w in writes if w[3] and lo <= w[0] + w[1] - 1 and w[0] <= hi and first <= w[4] <= last]
+def hold_plants():
+    """Each held instruction's generated text with its st or its sf dropped."""
+    held = emit.held_points()
+    texts = {m: (ROOT / f'build/gen/{m}.s').read_text() for m in {n[0] for n in held}}
+    n = sorted(held)[0]
+    lines = texts[n[0]].split('\n')
+    at = next(k for k, x in enumerate(lines) if x.startswith(emit.label(*n) + ':'))
+    for name, drop in (('hold: no st', '\tst rt_irq_hold'), ('hold: no sf', '\tsf rt_irq_hold')):
+        k = lines.index(drop, at)
+        yield name, {**texts, n[0]: '\n'.join(lines[:k] + lines[k + 1:])}, held
 
 
-SONG_PLANTS = {
-    'song rule: merged window': merged_window,
-    'song rule: first read only': lambda reads, writes: [
+BUFFER_PLANTS = {
+    'buffer rule: first read only': lambda reads, writes: [
         w for w in writes if w[3] and any(a in reads and reads[a][0] <= w[4] for a in range(w[0], w[0] + w[1]))],
-    'song rule: no races': lambda reads, writes: [],
+    'buffer rule: no races': lambda reads, writes: [],
 }
 
 
-def plant(name):
-    prog = emit.Program()
-    rows, expect = PLANTS[name](prog)
-    try:
-        irq.Proof(prog, compute_rows=rows).raise_errors()
-    except irq.Violation as error:
-        if expect not in str(error):
-            raise AssertionError(f'{name}: caught without {expect!r}: {str(error)[:400]}')
-        return str(error).splitlines()[1][:160]
-    raise AssertionError(f'{name} escaped')
+def plant(units, name):
+    prog = emit.Program(units, sync={})
+    expect = PLANTS[name](prog)
+    fp = irq.Handler(prog, SB).run()
+    hit = [e for e in fp.errors if expect in e]
+    if not hit:
+        raise AssertionError(f'{name} escaped ({len(fp.errors)} errors: {fp.errors[:3]})')
+    return hit[0][:160]
 
 
 if __name__ == '__main__':
@@ -152,15 +152,24 @@ if __name__ == '__main__':
     args = ap.parse_args()
     if args.sabotage:
         for name in PLANTS:
-            print('caught', name, plant(name), flush=True)
-        for name, races in SONG_PLANTS.items():
+            print('caught', name, plant(cfg.build(), name), flush=True)
+        for name, races in BUFFER_PLANTS.items():
             try:
-                song_rule(races)
+                buffer_rule(races)
             except AssertionError as error:
                 print('caught', name, error, flush=True)
             else:
                 raise AssertionError(f'{name} escaped')
+        for name, texts, held in hold_plants():
+            try:
+                held_text(texts, held)
+            except AssertionError as error:
+                print('caught', name, error, flush=True)
+            else:
+                raise AssertionError(f'{name} escaped')
+        print('all plants caught')
     else:
-        proof = irq.Proof(emit.Program())
-        print('irq footprint:', check(proof), 'sync accesses;', proof.summary())
-        print('irq monitor song rule:', song_rule(), 'cases')
+        clean = irq.Handler(emit.Program(cfg.build(), sync={}), SB).run()
+        assert not clean.errors, clean.errors[:3]     # the plants' control
+        n = check(irq.Proof(emit.Program(cfg.build(), sync={})))
+        print(f'irq footprint: {n} sync accesses, buffer rule {buffer_rule()} cases: ok')

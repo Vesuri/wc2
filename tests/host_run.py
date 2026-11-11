@@ -237,6 +237,9 @@ SABOTAGE = {
     "keyon": "rt_out8 counts no AdLib key-on edge (its addq dropped)",
     "overlay": "the overlay stub table zeroed (machine.c overlay_row finds no overlay CS)",
     "pit": "one PIT latch answered with the counter's low byte off by one",
+    "irq-footprint": "the monitor's footprint without the INT 08h handler's tick-count write row (I3)",
+    "irq-sync": "the monitor's footprint without sync rows (I3)",
+    "irq-bounds": "the monitor's irq-bounds.csv bounds one lower at their top (I3)",
 }
 
 
@@ -393,6 +396,19 @@ class Host:
         self.pending: list = []
         self.pending_vec: list = []
 
+        # a vector the guest owns (VROOMM's INT 3Fh): rt_int's service part ends
+        # where its guest handler starts (deliver_int); that IRET may return
+        # elsewhere (rt_ret_far_mismatch), never through rt_exit, so the handler
+        # and what follows are guest code, not a service
+        @U.CODE_CB
+        def int_guest(h, addr, size, user):
+            if self.pending and self.u32(self.r("a7")) == self.pending[-1]:
+                self.pending.pop()
+                self.pending_vec.pop()
+                self.in_service = bool(self.pending)
+
+        e.hook_range(U.HOOK_CODE, int_guest, self.syms["deliver_int"], self.syms["deliver_int"])
+
         # IRQ0's guest handler runs on the private stack (rt_irq_async, I4): the
         # interrupted SS:SP for the relocated service compare (compare_services)
         self.irq_stack: list[tuple[int, int]] = []
@@ -454,8 +470,8 @@ class Host:
             e.hook_range(U.HOOK_CODE, irq_entry, self.syms[n], self.syms[n])
 
         # I3: every guest access against the IRQ0 footprint (tests/irq_monitor.py)
-        self.irq = irq_monitor.Monitor(self, GUEST_BYTES) if irq_monitor.FOOTPRINT.exists() \
-            else NoMonitor()
+        self.irq = irq_monitor.Monitor(self, GUEST_BYTES, sabotage=sabotage) \
+            if irq_monitor.FOOTPRINT.exists() else NoMonitor()
 
         @U.CODE_CB
         def irq_deliver(h, addr, size, user):

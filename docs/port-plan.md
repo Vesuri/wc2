@@ -292,8 +292,11 @@ boundary cases and sabotage plants; `docs/upstream.md` lists what came over.
    - the G1 header and G2 lint pass.
 
 Status: 1–3 and 6 as built ([translator-design.md](translator-design.md), "WC2: VROOMM
-overlays and dynamic CS"; the CS is the stub's word 10h, not a state-block slot). 4 moves to
-P5 (open-work 9). 5 is built: lazy pages, ES accesses on the store page ("WC2 EMS model").
+overlays and dynamic CS"; the CS is the stub's word 10h, not a state-block slot). 4 is built
+in P5 (`gen.IRQ_PROOF`: INT 08h at WC2.EXE+0FD10 and +148E0, INT 0Fh at +06F3F, the INT 08h
+handler's calls into STRAX.DRV and the EMS resolver; "IRQ footprint" in
+[translator-design.md](translator-design.md)). 5 is built: lazy pages, ES accesses on the
+store page ("WC2 EMS model").
 
 ### P5. First vertical slice (gate 5)
 
@@ -316,7 +319,9 @@ Status: 1–3 pass (`make test-host`: m1 and m1b in lockstep, services inside IR
 compared relocated, design D8; `make test-amiga` at m1b on the 68030 model, 32 MB Zorro III
 Fast RAM for the diagnostic image). 4 is measured ([feasibility.md](feasibility.md),
 "Translated cost on the target": the intro animation on the 50 MHz 68030; flight about 2×
-short of its frame rate by estimate). P5 closes with open-work 9; the EMS model is built.
+short of its frame rate by estimate). Gate 5 passes: the IRQ footprint proof is on, the
+host-run monitor finds no access outside it at m1 and m1b (0 problems; 122 and 699 handler
+runs, 44 and 116 sync sites hit, MEASURED), and its sabotages are caught.
 
 ### P6. Whole game (gate 6)
 

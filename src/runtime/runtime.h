@@ -202,8 +202,9 @@ void rt_bios_int08(void);
  * rt_irq_interrupt (rt_entry.s) when rt_irq0_ready, else posts vector 08h;
  * production (I8) then runs the posted ticks it may take (rt_irq0_take).
  * rt_irq0_running: a handler runs (either entry); rt_irq_mask: runtime services
- * in progress; rt_opl_pair: the main thread's OPL index/data pair is open. */
-extern volatile uint8_t rt_irq0_running, rt_irq_mask, rt_opl_pair, rt_irq_interrupting;
+ * in progress; rt_opl_pair: the main thread's OPL index/data pair is open;
+ * rt_irq_hold: a generated non-atomic sync instruction runs. */
+extern volatile uint8_t rt_irq0_running, rt_irq_mask, rt_opl_pair, rt_irq_hold, rt_irq_interrupting;
 int rt_irq0_ready(void);
 int rt_irq0_take(void);
 void rt_irq_interrupt(void);

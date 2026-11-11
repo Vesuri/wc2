@@ -48,7 +48,8 @@ RET, UNKNOWN, SMC = "ret", "unknown", "smc"
 TERMINAL = {"jmp", "jmpf", "ret", "retf", "iret", "hlt"}
 RUNTIME = ("rt_int", "rt_irq", "rt_fault", "rt_halt", "rt_trap", "rt_in8", "rt_in16", "rt_out8", "rt_out16",
            "rt_ret_mismatch", "rt_ret_far_mismatch", "rt_dispatch_near", "rt_dispatch_far", "rt_stop_unknown",
-           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg")
+           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg",
+           "rt_irq_hold")
 # G3 native replacements (annotations/hle.csv): runtime service rt_hle_<service>
 # at a range's first instruction; NE skips the range to the instruction after
 # `last`, EQ runs the guest code. `args`: up to two guest word registers, in
@@ -110,11 +111,17 @@ def stop_label(mod: str, off: int) -> str:
 
 
 SYNC = "build/gen/poll-points.csv"   # make gen: module, offset, kind (irq.Proof.sync_points)
+HOLD = "build/gen/irq-hold.csv"      # make gen: module, offset (irq.Proof.check_atomic held)
 
 
 def sync_points(path=None) -> dict[tuple[str, int], str]:
     with (Path(path) if path else image.REPO / SYNC).open() as f:
         return {(r["module"], int(r["offset"], 16)): r["kind"] for r in csv.DictReader(f)}
+
+
+def held_points(path=None) -> set[tuple[str, int]]:
+    with (Path(path) if path else image.REPO / HOLD).open() as f:
+        return {(r["module"], int(r["offset"], 16)) for r in csv.DictReader(f)}
 
 
 def poll(lab: str, always: bool = False) -> list[str]:
@@ -368,8 +375,12 @@ class Program:
     def __init__(self, units: dict[str, cfg.Unit] | None = None, components: bool = True,
                  diagnostic_hooks: dict[tuple[str, int], int] | None = None,
                  diagnostic_reps: dict[tuple[str, int], int] | None = None,
-                 sync: dict[tuple[str, int], str] | None = None):
+                 sync: dict[tuple[str, int], str] | None = None,
+                 held: set[tuple[str, int]] | None = None):
         # I8 sync points (irq.Proof.sync_points; default: make gen's poll-points.csv)
+        # and the sync instructions run under rt_irq_hold (irq.Proof.check_atomic;
+        # default: make gen's irq-hold.csv with its poll points, none without them)
+        self.held = (held_points() if sync is None else set()) if held is None else held
         self.sync = sync_points() if sync is None else sync
         self.diagnostic_hooks = diagnostic_hooks or {}
         self.diagnostic_reps = diagnostic_reps or {}
@@ -1214,7 +1225,11 @@ class Program:
                 raise LowerError(f"{mod}+{o:05X}: HLE hook where the CCR holds live flags")
             if (mod, o) in self.loop_heads:
                 visit(o)
-            lines.extend(lw.out)
+            if (mod, o) in self.held:   # the CIA tick waits across it (st/sf keep the CCR)
+                lines += ["\tst rt_irq_hold", *lw.out, "\tsf rt_irq_hold"]
+                stats["held sync access"] += 1
+            else:
+                lines.extend(lw.out)
             stubs += lw.cold
             if lw.ccr_only:
                 self.ccr_only[lab(mod, o)] = set(lw.ccr_only)
