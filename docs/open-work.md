@@ -15,24 +15,29 @@ Items are in work order; numbers are identifiers and are not reused.
 13. Host lockstep at m3 and m4 (the pilot file, the first flight frames; `STRAX.DRV`
     resident): the surfaces those traces show. WC2's INT 15h handler at WC2.EXE+0FD93 runs
     as often as IRQ1 (1064 times each, MEASURED, [external-surface.md](external-surface.md)),
-    so the BIOS keyboard intercept is INFERRED; it joins the footprint proof. Input: INT 16h,
-    INT 33h (the mouse, copied) and the game port at 201h (the joystick, copied). Acceptance:
-    m3 and m4 in lockstep with 0 monitor problems; each new surface has a caught sabotage
-    plant.
+    and is the BIOS keyboard intercept (DERIVED by reading: `cmp ah,4Fh`, a key table at
+    CS:01DCh, a far call through DS:D150h). `rt_keyboard_irq` does not call it, so the
+    Amiga build's keys do nothing (the owner's a1200-030 run, 2026-11-12); it joins the
+    footprint proof. Input: INT 16h, INT 33h (the mouse, copied) and the game port at 201h
+    (the joystick, copied). Start from X-Wing `6e1e46b` (a handler's call through a
+    pointer), `d761b39`, `9c59569` (port-plan "Sibling: X-Wing"). Acceptance: m3 and m4 in
+    lockstep with 0 monitor problems; each new surface has a caught sabotage plant.
 14. PIT sabotage that changes the run: `tests/host_run.py --sabotage pit` flips one latch's
     low bit and is caught at neither m1 nor m1b (0 problems, MEASURED in `66e6de5`).
     Acceptance: a pit plant caught at m1b, with its effect stated.
 15. Host lockstep at m5 and m6 (the flight route, the save and the load): DOS writes into
     `GAMEDAT` (`SAVEGAME.WC2`, `TEMPGLOB.000`, `MEM.$$$`, `AUTO.$$$`, `TAPE.TMP`) through
-    SWOTL's I/O windows, any DOS or EMS function the traces show that the runtime lacks.
-    Acceptance: m5 and m6 in lockstep with 0 monitor problems.
+    SWOTL's I/O windows, any DOS or EMS function the traces show that the runtime lacks
+    (X-Wing has AH=0Eh, find-first directories, error 9 on a free; its dead-stack
+    exemptions need an owner decision here). Acceptance: m5 and m6 in lockstep with 0 monitor problems.
 16. Coverage beyond m6 (port-plan P6.2): reference milestones for every flight scene type,
     the ships flown, cinematics, menus, saves and the ending path; later missions start
     from saves recorded under the reference, kept as local fixture inputs. Acceptance: the
     milestones in `reference/milestones.csv`, each recorded twice byte-identically
     (`tools/reference.py`).
 17. Gate 6 (port-plan P6.3–4): `make test-host-all` lockstep over all milestones,
-    `make test-amiga-replay` on a few, a `play_walk.sh` smoke into flight. Acceptance:
+    `make test-amiga-replay` on a few, a `play_walk.sh` smoke into flight; start from X-Wing
+    `2b047e5`, `423b2dd`, `33d685a`, `c737385`. Acceptance:
     every overlay and driver translated, zero unclassified executed instructions (G6), the
     HLE share reported, lockstep clean over all milestones.
 
@@ -65,7 +70,8 @@ Items are in work order; numbers are identifiers and are not reused.
 11. Flag liveness through the dispatcher: 59 PUSHF and 2 INT sites read the whole
     FLAGS word and make every flag live at the dispatcher, so `tests/audit.csv` allows
     1,917 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in
-    `annotations/flags.csv` (DERIVED by reading, as X-Wing's) shrink it. Acceptance: the
+    `annotations/flags.csv` (DERIVED by reading) shrink it; start from X-Wing's four
+    overlay-manager rows (the same Borland overlay manager). Acceptance: the
     pairs listed with their evidence, the audit counts lowered to the new measurement, the
     68020 block differential passing.
 

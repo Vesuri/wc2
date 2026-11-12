@@ -466,6 +466,27 @@ user's improved slave.
 If feasible, extract the translator and the generic runtime into AmigaXDev, with SWOTL and
 WC2 as its two consumers. `docs/upstream.md` lists what has diverged by then.
 
+## Sibling: X-Wing
+
+X-Wing copied the same SWOTL commit for Borland 80186 code and is a phase ahead (gate 6 at
+X-Wing `b7c8a8c`); WC2 took its front end, lowering, host lockstep and Amiga replay to its
+P5 (`2de0225`, [upstream.md](upstream.md) "From X-Wing"). X-Wing keeps the mirror table
+("Sibling: Wing Commander 2" in its `docs/port-plan.md`). Before building a runtime
+surface, a test harness feature or a translator feature, check both tables and start from
+the other port's commit. Hashes as of X-Wing `0eec632`.
+
+| Work | Where it is | Use here |
+|---|---|---|
+| DOS: AH=2Fh (`002ff01`; built twice, WC2 `737004c` adds the DOSBox-X test), AH=0Eh (`32bbd04`), find-first of directories and dot entries (`e952d8b`), free of a segment with no MCB is error 9 (`9958487`); INT 16h enhanced keys (`9ee47eb`) | X-Wing P6 | take each when a WC2 trace shows the call |
+| An interrupt handler's far call through a pointer into other code (`irq-hooks.csv`, hooked entries and bounds) in `translator/irq.py`, the I3 monitor's request counting (`6e1e46b`); interrupt-level sync rows for flights (`d761b39`) | X-Wing P6 | open-work 13: WC2's INT 15h handler calls through DS:D150h. Compare with WC2's `irq.py` (`66e6de5`, the hold) before either changes it |
+| Host lockstep: flight logs in bounded memory (`9c59569`), parallel runs from the entry (`2b047e5`), a run that reaches its timeout says so (`e556fcb`) | X-Wing P6 | open-work 13–17 |
+| Service registers and RAM from dead stack may differ, the replay's exempt table (`40030a3`, `3dca119`, `892b8d5`) | X-Wing P6, X-Wing owner decisions 2026-11-09 and 2026-11-10 | open-work 15–17, after an owner decision here |
+| Code the traces missed translated, indirect-coverage review (`423b2dd`, `33d685a`) | X-Wing P6 | open-work 17 |
+| Amiga replay in the host run's modes for every milestone (`c737385`), the shown frame at a mid-frame label (`a3f71a9`), the program on `C:` (`b2c1c29`) | X-Wing P6 | open-work 17, 18 |
+| Flag save/restore pairs in the Borland overlay manager (`annotations/flags.csv`, 4 rows, DERIVED) | X-Wing P2–P4 | open-work 11: the same overlay manager, so its rows probably map onto WC2's sites (INFERRED until compared) |
+| Copy-free EMS (`bfaebe3`, `c31004f`), the IRQ footprint for several handlers with the atomic hold (`66e6de5`), the smoke in SWOTL's form (`737004c`) | WC2 P5 | X-Wing's open-work 2 starts from the EMS model |
+| SB DSP, DMA channel 1 and IRQ 7; Amiga display and input; effect capture and FM gates | neither yet | WC2 builds the SB model first (open-work 12; X-Wing's P10); display and input go to whichever port lands them first; the FM gates are adapted once and shared (X-Wing's P7) |
+
 ## Copy map (SWOTL `658fc60` → here)
 
 | SWOTL | Treatment |

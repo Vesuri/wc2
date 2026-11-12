@@ -51,6 +51,9 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
   passes; never weaken a check, oracle or tolerance.
 - Fixes to files imported from Secret Weapons of Luftwaffe are logged in
   `docs/upstream.md` (one row each) so they can move between the ports.
+- Before building a runtime surface, harness feature or translator feature, check the
+  sibling tables (`docs/port-plan.md` "Sibling: X-Wing" and X-Wing's mirror) and start
+  from the other port's commit; add a row when either port lands shared work.
 - `docs/open-work.md` is the only work queue: open items with acceptance checks, removed
   in the commit that completes them; measured dead ends stay. History belongs in git.
 - Names have one source of truth (`disasm/symbols.csv`, once it exists). Addresses use the
@@ -68,7 +71,7 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 |---|---|
 | [docs/open-work.md](docs/open-work.md) | always first: the work queue |
 | [docs/design.md](docs/design.md) | choosing target, scope or approach; owner decisions |
-| [docs/port-plan.md](docs/port-plan.md) | starting a phase; what to copy from Secret Weapons of Luftwaffe and why |
+| [docs/port-plan.md](docs/port-plan.md) | starting a phase; what to copy from Secret Weapons of Luftwaffe and why; what X-Wing has built |
 | [docs/upstream.md](docs/upstream.md) | changing a file imported from Secret Weapons of Luftwaffe |
 | [docs/translator-design.md](docs/translator-design.md), [docs/translation-lessons.md](docs/translation-lessons.md), [docs/x86-notes.md](docs/x86-notes.md) | translator work (SWOTL's contracts; facts SWOTL's until re-derived) |
 | [docs/amiga-arch.md](docs/amiga-arch.md), [docs/amiga-lessons.md](docs/amiga-lessons.md), `src/platform/amiga/framework/README.md` | Amiga platform work |
