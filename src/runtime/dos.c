@@ -762,6 +762,10 @@ void rt_int21(uint16_t cs, uint16_t ip)
     case 0x1a:
         set_dta(G_DS, rt_r.dx);
         break;
+    case 0x2f:  /* current DTA in ES:BX, nothing else changed (reference: host-m2) */
+        rt_r.bx = dta_off;
+        G_ES = dta_seg;
+        break;
     case 0x1b:  /* reference: allocation info of drive C: */
         SET_AL(rt_r.ax, 0x40);
         rt_r.cx = 0x0200;
