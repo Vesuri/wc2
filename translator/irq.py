@@ -2158,6 +2158,27 @@ class Main:
 # -- classification --------------------------------------------------------------
 MEMLINE = re.compile(r"\((?:[^()]*,)?a[0-3](?:[,)])")
 FLOWLINE = re.compile(r"^\S+:|^\s*(?:b[a-z]{2}|bra|bsr|jmp|jsr|db[a-z]{1,2}|rt[sde]|trap\w*|ifd|endif)\b")
+STACKLINE = re.compile(r"\((?:[^()]*,)?a2(?:[,)])")    # the guest stack (SS base)
+
+
+def hold_span(lines: list[str]) -> int | None:
+    """Lines of a sync access's lowering the emitter brackets with rt_irq_hold:
+    all of them when straight-line with more than one memory line; with control
+    flow, the straight-line prefix to its last memory line when it holds more
+    than one and every memory line after it touches only the guest stack (a far
+    call's pointer loads, then its return frame); else None (atomic as it is, or
+    not holdable)."""
+    mem = [k for k, x in enumerate(lines) if MEMLINE.search(x) and not x.strip().startswith("lea")]
+    flow = [k for k, x in enumerate(lines) if FLOWLINE.search(x)]
+    if len(mem) <= 1:
+        return None
+    if not flow:
+        return len(lines)
+    head = [k for k in mem if k < flow[0]]
+    if len(head) > 1 and all(STACKLINE.search(lines[k]) and not MEMLINE.search(
+            STACKLINE.sub("", lines[k])) for k in mem if k > head[-1]):
+        return head[-1] + 1
+    return None
 
 
 def accesses(i):
@@ -2318,9 +2339,10 @@ class Proof:
 
     def check_atomic(self):
         """A sync access to a handler-written byte lowers to one memory-touching 68k
-        line, or to straight-line code the emitter brackets with rt_irq_hold (held:
-        the tick waits across it, as an x86 instruction is never interrupted: LES of
-        a far pointer, ADC to memory); a lowering with control flow fails."""
+        line, or to code whose memory lines but stack pushes the emitter brackets with
+        rt_irq_hold (held, hold_span: the tick waits across them, as an x86
+        instruction is never interrupted: LES of a far pointer, ADC to memory, a far
+        call through memory); any other lowering fails."""
         from .lower import lower
         prog = self.prog
         self.held = set()
@@ -2334,7 +2356,7 @@ class Proof:
                 self.errors.append(f"{site(n)}: lowering for the atomicity check failed: {e}")
                 continue
             mem = [x for x in lines if MEMLINE.search(x) and not x.strip().startswith("lea")]
-            if len(mem) > 1 and not any(FLOWLINE.search(x) for x in lines):
+            if hold_span(lines) is not None:
                 self.held.add(n)
             elif len(mem) != 1:
                 self.errors.append(f"{site(n)}: {i} meets handler-written {cls}:{lo:04X}..{hi:04X} "

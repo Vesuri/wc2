@@ -22,6 +22,7 @@
 #include "replay_clocks.h"
 uint16_t replay_pit_count(uint32_t ch);   /* tests/amiga_replay.c */
 uint8_t replay_vga_status(void);
+uint8_t replay_dsp_status(uint32_t port);
 #endif
 
 struct DosLibrary *DOSBase = 0;
@@ -412,6 +413,25 @@ uint8_t plat_vga_status(void)
     int vblank = v < top || v >= top + 200;
     return (uint8_t)((vblank ? 0x09 : 0) | (h < 0x38 || h >= 0xd8 ? 0x01 : 0));
 #endif
+}
+
+/* The DSP answers at once: the model's status (ports.c). */
+uint8_t plat_dsp_status(uint32_t port, uint32_t value)
+{
+#ifdef WC2_REPLAY
+    (void)value;
+    return replay_dsp_status(port);     /* the reference's reads (tests/amiga_replay.c) */
+#else
+    (void)port;
+    return (uint8_t)value;
+#endif
+}
+
+/* Speech on Paula and IRQ 7's delivery are open-work 19: a block stops. */
+void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
+{
+    (void)rate;
+    rt_stop("Sound Blaster block: no Amiga speech yet (linear, length)", linear, length);
 }
 
 /* Diagnostic key script (argument KEYS=when:key,...; when is a frame from

@@ -28,14 +28,17 @@ static const char environment[] =
 #define TOP_SEG 0x9fff          /* reference: first segment past DOS memory */
 #define PARENT_PSP 0x0701       /* reference: COMMAND.COM */
 
-/* Reference interrupt vectors the game reads (INT 21h AH=35h) or chains to. */
+/* Reference interrupt vectors the game reads (INT 21h AH=35h, or through a far
+ * pointer still null in the intro: WC2.EXE+4FD75, +4FE2E compare the words at
+ * 0000:0047, 0000:001D; host-m2) or chains to. */
 #define MOUSE_INT74_SEG 0xf000
 #define MOUSE_INT74_OFF 0xcfa0
 
 static const struct { uint8_t vector; uint16_t seg, off; } vectors[] = {
     {0x00, 0xf000, 0xca60}, {0x04, 0x0070, 0x000e}, {0x05, 0xf000, 0xff54},
-    {0x06, 0xf000, 0xca60}, {0x08, 0xf000, 0xfea5}, {0x09, 0xf000, 0xe987},
-    {0x0f, 0x0070, 0x000e}, {0x10, 0xc000, 0x00ee}, {0x13, 0xf000, 0xcee0},
+    {0x06, 0xf000, 0xca60}, {0x07, 0xf000, 0xca60}, {0x08, 0xf000, 0xfea5},
+    {0x09, 0xf000, 0xe987}, {0x0f, 0x0070, 0x000e}, {0x10, 0xc000, 0x00ee},
+    {0x11, 0xf000, 0xcb20}, {0x12, 0xf000, 0xcb40}, {0x13, 0xf000, 0xcee0},
     {0x15, 0xf000, 0xcba0}, {0x16, 0xf000, 0xcf40}, {0x1a, 0xf000, 0xcbe0},
     {0x1b, 0xf000, 0xd140}, {0x1c, 0xf000, 0xcc00}, {0x21, 0xf000, 0xd080},
     {0x22, 0xf000, 0xdac8}, {0x23, 0x0701, 0x0128}, {0x24, 0x0701, 0x0110},
@@ -485,6 +488,12 @@ uint32_t rt_irq_c(uint32_t d6, uint32_t ip)
             bench_post();
         }
         uint8_t vector = irq & 0x7f;
+        if (vector == 0x0f) {       /* IRQ 7: the DSP block ended (platform.h plat_sb_block) */
+            if (!rt_sb_playing) {
+                rt_stop("IRQ 7 without a DSP block playing (CS, IP)", cs, ip);
+            }
+            rt_sb_playing = 0;
+        }
         if (vector == 8 && guest_vector(vector)) {
             irq_settle();
             return 1;               /* rt_irq_async (I4) */

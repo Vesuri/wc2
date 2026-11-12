@@ -1226,7 +1226,11 @@ class Program:
             if (mod, o) in self.loop_heads:
                 visit(o)
             if (mod, o) in self.held:   # the CIA tick waits across it (st/sf keep the CCR)
-                lines += ["\tst rt_irq_hold", *lw.out, "\tsf rt_irq_hold"]
+                from .irq import hold_span
+                k = hold_span(lw.out)
+                if k is None:
+                    raise LowerError(f"{mod}+{o:05X}: held sync access with no hold span")
+                lines += ["\tst rt_irq_hold", *lw.out[:k], "\tsf rt_irq_hold", *lw.out[k:]]
                 stats["held sync access"] += 1
             else:
                 lines.extend(lw.out)

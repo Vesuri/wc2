@@ -36,7 +36,7 @@ help:
 	@echo "  make test               lint, decoder, x86 (forms, blocks, space, boundary) and 68020 (forms, blocks, space, boundary) differentials, the program block test, guards, gen-check"
 	@echo "  make test-sabotage      planted faults must fail the x86 and 68020 differentials"
 	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/wc2.elf"
-	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1 and m1b (tests/host_run.py)"
+	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1, m1b and m2 (tests/host_run.py)"
 	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
@@ -235,7 +235,7 @@ host: gen-check build/host/wc2.elf
 
 # Gate 5 (docs/port-plan.md P5): lockstep against the host references
 # (tools/reference.py --host), one run per milestone, in parallel.
-HOST_MILESTONES = m1 m1b
+HOST_MILESTONES = m1 m1b m2
 t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 5400)
 test-host: host

@@ -85,8 +85,9 @@ def check(proof):
 
 
 def held_text(texts, held):
-    """Each held instruction's code starts with `st rt_irq_hold` and ends with
-    `sf rt_irq_hold` before the next label, with neither in between."""
+    """Each held instruction's code starts with `st rt_irq_hold` and has its one
+    `sf rt_irq_hold` where irq.hold_span puts it: after its last line before the
+    next label, or after a far call's pointer loads (then only stack pushes)."""
     for mod, off in sorted(held):
         lines = texts[mod].split('\n')
         at = next((k for k, x in enumerate(lines) if x.startswith(emit.label(mod, off) + ':')), None)
@@ -99,8 +100,10 @@ def held_text(texts, held):
             if x and not x[0].isspace():
                 break
             body.append(x.strip())
-        assert body and body[0] == 'st rt_irq_hold' and body[-1] == 'sf rt_irq_hold' and \
-            'rt_irq_hold' not in ' '.join(body[1:-1]), f'{irq.site((mod, off))} is not held: {body[:3]}'
+        inner = [x for x in body if x not in ('st rt_irq_hold', 'sf rt_irq_hold')]
+        k = irq.hold_span(['\t' + x for x in inner])
+        assert k is not None and body == ['st rt_irq_hold', *inner[:k], 'sf rt_irq_hold', *inner[k:]], \
+            f'{irq.site((mod, off))} is not held: {body[:3]}'
 
 
 def buffer_rule(races=irq_monitor.buffer_races):

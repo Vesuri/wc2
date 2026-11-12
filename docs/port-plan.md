@@ -343,6 +343,10 @@ runs, 44 and 116 sync sites hit, MEASURED), and its sabotages are caught.
      - the SB DSP (reset, version as SB 2.0, time constant, 8-bit DMA, speaker);
      - DMA channel 1;
      - IRQ 7 at the end of each block, timed by the sample rate.
+     - Status: host lockstep at m2 (`make test-host`), the DSP commands the game sends
+       (14h, 40h, D1h; no version query in m2–m6, MEASURED), blocks checked against the
+       reference's port log, INT 0Fh runs under the footprint monitor; the Amiga's
+       speech and IRQ 7 are P6b.2.
 2. Coverage scripts (`reference/coverage.csv`): every flight scene type, the ships flown,
    cinematics, menus, saves and the ending path. Later missions start from saves recorded
    under the reference, as local fixture inputs.
@@ -485,7 +489,8 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Amiga replay in the host run's modes for every milestone (`c737385`), the shown frame at a mid-frame label (`a3f71a9`), the program on `C:` (`b2c1c29`) | X-Wing P6 | open-work 17, 18 |
 | Flag save/restore pairs in the Borland overlay manager (`annotations/flags.csv`, 4 rows, DERIVED) | X-Wing P2–P4 | open-work 11: the same overlay manager, so its rows probably map onto WC2's sites (INFERRED until compared) |
 | Copy-free EMS (`bfaebe3`, `c31004f`), the IRQ footprint for several handlers with the atomic hold (`66e6de5`), the smoke in SWOTL's form (`737004c`) | WC2 P5 | X-Wing's open-work 2 starts from the EMS model |
-| SB DSP, DMA channel 1 and IRQ 7; Amiga display and input; effect capture and FM gates | neither yet | WC2 builds the SB model first (open-work 12; X-Wing's P10); display and input go to whichever port lands them first; the FM gates are adapted once and shared (X-Wing's P7) |
+| SB DSP (14h, 40h, D1h), DMA channel 1 and IRQ 7 for host lockstep: `ports.c`, `plat_dsp_status` and `plat_sb_block`, the DSP status replay, the block oracle from `sound.csv`, INT 0Fh runs in the IRQ monitor, sabotages `sb-block`, `sb-irq`, `dsp-status`; `irq.hold_span` (a far call through a handler-written pointer held over its loads); the monitor's EMS copy rule | WC2 P6 (`git log -S plat_sb_block`) | to X-Wing (its P10) |
+| Amiga display and input; effect capture and FM gates; SB speech on Paula | neither yet | display and input go to whichever port lands them first; the FM gates are adapted once and shared (X-Wing's P7) |
 
 ## Copy map (SWOTL `658fc60` → here)
 

@@ -264,6 +264,7 @@ extern uint8_t rt_opl_keyon[9];     /* per channel: key-on edges, wrapping (FM r
 extern uint8_t rt_music_skip;        /* 1: HLE music_skip skips song starts */
 extern uint16_t rt_deliver_cs, rt_deliver_ip;
 extern void *rt_deliver_code;
+extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 clears it */
 /* Gameport (port 201h), set by the platform before rt_start: 0 answers as the
  * reference's absent joystick; 1 is stick A, whose axis one-shots time out
  * after rt_joystick_axis[] (X, Y) reads following the trigger and whose

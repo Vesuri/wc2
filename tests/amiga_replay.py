@@ -81,6 +81,7 @@ def prepare(name, out, trace):
     services = H.reference_services(trace)
     retrace = H.port_runs(trace, (0x3DA,))
     pit = H.port_runs(trace, (0x40,))
+    dsp = [H.port_runs(trace, (port,)) for port in (0x22C, 0x22E)]
     points = sorted({t[0] for t, _ in script['keys']} |
                     {t[0] for t in script['snapshots']} | {lab for _, lab, _, _ in irqs} | {c.label for c in reps})
     ids = {lab: i for i, lab in enumerate(points)}
@@ -133,7 +134,9 @@ def prepare(name, out, trace):
             f'#define REPLAY_POINTS {len(points)}u\n#define REPLAY_IRQS {len(irqs)}u\n'
             f'#define REPLAY_SERVICES {len(services)}u\n#define REPLAY_STEPS {len(steps)}u\n'
             f'#define REPLAY_RETRACE {len(retrace)}u\n#define REPLAY_VGA_READS {reads}u\n'
-            f'#define REPLAY_PIT {len(pit)}u\n#define REPLAY_PIT_READS {pit_reads}u\n')
+            f'#define REPLAY_PIT {len(pit)}u\n#define REPLAY_PIT_READS {pit_reads}u\n'
+            f'#define REPLAY_DSP_WRITE {len(dsp[0])}u\n#define REPLAY_DSP_DATA {len(dsp[1])}u\n'
+            f'#define REPLAY_DSP_READS {sum(n for runs in dsp for _, _, n in runs)}u\n')
     stream = rep_stream(rep_replay.compact(reps), ids)
     text += ('struct replay_rep { uint32_t service, hits; uint16_t point, cx, si, di, end_cx, end_si, end_di, restart, repeat; };\n'
              f'#define REPLAY_REPS {len(reps)}u\n'
@@ -144,6 +147,9 @@ def prepare(name, out, trace):
     text += array('struct replay_step', 'replay_script', steps)
     text += array('struct replay_retrace', 'replay_retrace', retrace)
     text += array('struct replay_retrace', 'replay_pit', pit)
+    # an empty table still needs a row (the count says none)
+    text += array('struct replay_retrace', 'replay_dsp_write', dsp[0] or [(0, 0, 0)])
+    text += array('struct replay_retrace', 'replay_dsp_data', dsp[1] or [(0, 0, 0)])
     text += (f'#define REPLAY_HASH_STEP {HASH_STEP}u\n#define REPLAY_FINAL_HASH {hashes[-1]}u\n'
              'static const uint32_t replay_service_hashes[] = {\n' +
              ','.join(map(str, hashes[HASH_STEP - 1::HASH_STEP])) + '};\n')
@@ -157,7 +163,7 @@ def prepare(name, out, trace):
         f'#define REPLAY_FILE_DATE {stamp[1]}u\n')
     (out / 'expected.json').write_text(json.dumps(dict(
         services=len(services), interrupts=len(irqs), steps=len(steps), vga_reads=reads,
-        pit_reads=pit_reads)))
+        pit_reads=pit_reads, dsp_reads=sum(n for runs in dsp for _, _, n in runs))))
     print(f'{name}: {len(points)} diagnostic points, {len(irqs)} interrupts, {len(services)} service events, '
           f'{len(reps)} REP slices, {reads} VGA status reads, {pit_reads} PIT reads', flush=True)
 

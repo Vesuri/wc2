@@ -24,9 +24,14 @@ Checks every guest memory access of a host run against I2's footprint
   handler's first and last read of that byte fails (buffer_races); a write after
   the last read (a reload of bytes already played) is no race. The EMS page frame
   is left out of that rule: its bytes change page with every map (INT 67h, a
-  service), so a linear byte is no buffer identity; frame reads are counted.
-The Sound Blaster's IRQ 7 (INT 0Fh) is not modelled by the runtime (ports.c), so
-no host run delivers it; the record counts deliveries per handler entry.
+  service), so a linear byte is no buffer identity; frame reads are counted. The
+  frame bytes ems.c's `copy` moves inside a handler (a page shown at its first
+  access or segment load, a write-back at a page map: the frame keeps showing
+  its mapped page's bytes) are the EMS model's, counted, not footprint accesses.
+The Sound Blaster's IRQ 7 (INT 0Fh, ports.c's DSP blocks) is delivered at a poll
+point from rt_irq on the interrupted stack, as the reference takes it; its handler
+runs are checked as IRQ0's, the stack window from its frame. The record counts
+deliveries per handler entry.
 Records the sync sites hit, IF-clear accesses, services and buffers in
 tmp/test/irq-monitor-<run>.json.
 """
@@ -36,6 +41,7 @@ import bisect
 import csv
 import json
 import re
+import struct
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -66,6 +72,14 @@ def buffer_races(reads: dict[int, list], writes) -> list[str]:
                            f"at {who} (tick {tick}, byte read in ticks {r[0]}-{r[1]})")
                 break
     return out
+
+
+def stack_depth(footprint: Path = FOOTPRINT) -> int:
+    """The handlers' proved stack depth below the frame (the footprint's stack row)."""
+    for r in csv.DictReader(footprint.open()):
+        if r["kind"] == "stack":
+            return -int(r["first"], 16)
+    raise ValueError(f"{footprint}: no stack row")
 
 
 def bound_rows():
@@ -118,6 +132,7 @@ class Monitor:
         self.sym_name = [n for _, n in named]
         self.backs = {host.syms[n] for n in ("rt_irq_async_back", "rt_irq_interrupt_back")
                       if n in host.syms}   # the second: I6 builds
+        self.poll_back = host.syms["rt_irq_back"]   # rt_irq's other guest handlers
         self.loadseg = None
         self.mask = None
         self.intervals = {"r": ([], []), "w": ([], [])}   # runtime classes: starts, (end, class)
@@ -131,12 +146,14 @@ class Monitor:
         self.services = Counter()
         self.runtime_reads = Counter()
         self.frame_reads = 0
+        self.frame_service = 0     # frame bytes ems.c's copy moved inside a handler
         self.buffer_reads: dict[int, list] = {}  # linear -> [first tick, last tick, class]
         self.buffer_span = (1, 0)
         self.buffer_writes: list[tuple[int, int, str, bool, int]] = []
         self.checked_bounds = 0
         self.pending_place = False
         self.problems: list[str] = []
+        self.failed: set[str] = set()
 
     # -- layout --------------------------------------------------------------
     def para(self, cls: str):
@@ -237,25 +254,34 @@ class Monitor:
         return self.site(self.node(pc)) if self.h.code[0] <= pc < self.h.code[1] else self.symbol(pc)
 
     def fail(self, text: str):
-        if len(self.problems) < LIMIT:
-            self.problems.append(f"irq monitor: {text}")
+        """Each distinct problem once (a site in a loop repeats it), LIMIT of them."""
+        text = f"irq monitor: {text}"
+        key = re.sub(r" \(tick \d+[^)]*\)", "", text)
+        if key not in self.failed and len(self.problems) < LIMIT:
+            self.failed.add(key)
+            self.problems.append(text)
 
     # -- events from host_run -------------------------------------------------
     def deliver(self) -> bool:
         """deliver_guest reached: a handler delivery when it returns to
         rt_irq_async_back (sync) or rt_irq_interrupt_back (async, I6)."""
-        if self.h.u32(self.h.r("a7")) not in self.backs:
+        back = self.h.u32(self.h.r("a7"))
+        cs, ip = (int.from_bytes(self.h.mem(self.h.syms[n], 2), "big")
+                  for n in ("rt_deliver_cs", "rt_deliver_ip"))
+        # IRQ 7 from rt_irq: the frame on the interrupted stack (IVT 0Fh's handler)
+        sb = back == self.poll_back and self.h.gmem(0x0F * 4, 4) == struct.pack("<HH", ip, cs)
+        if back not in self.backs and not sb:
             return False
         if self.mask is None:
             self.layout()
+        if self.in_handler:
+            self.fail(f"handler {cs:04X}:{ip:04X} entered inside a handler (tick {self.tick})")
         g = self.h.guest_regs(8)
-        if (g["ss"], g["sp"]) != PRIVATE_STACK:
+        if not sb and (g["ss"], g["sp"]) != PRIVATE_STACK:
             self.fail(f"handler entered on {g['ss']:04X}:{g['sp']:04X}, not the private stack "
                       f"(tick {self.tick})")
         top = g["ss"] * 16 + g["sp"]
         self.k = (top - self.depth, top + 5)
-        cs, ip = (int.from_bytes(self.h.mem(self.h.syms[n], 2), "big")
-                  for n in ("rt_deliver_cs", "rt_deliver_ip"))
         self.entries[f"{cs:04X}:{ip:04X}"] += 1
         self.check_bounds("entry")
         self.entry_segs = self.segments()
@@ -313,6 +339,9 @@ class Monitor:
                         r[1] = self.tick
                         lo, hi = self.buffer_span
                         self.buffer_span = (a, a) if lo > hi else (min(lo, a), max(hi, a))
+                continue
+            if EMS_FRAME[0] <= a < EMS_FRAME[1] and self.symbol(self.h.r("pc")) == "copy":
+                self.frame_service += 1     # ems.c's page copy: the frame shows its mapped page
                 continue
             self.fail(f"handler {'write' if write else 'read'} of {a:05X} outside the footprint "
                       f"at {self.where()} (tick {self.tick})")
@@ -380,7 +409,7 @@ class Monitor:
                       if_clear=dict(sorted(self.masked.items())),
                       services=dict(sorted(self.services.items())),
                       runtime_class_reads=dict(sorted(self.runtime_reads.items())),
-                      frame_reads=self.frame_reads,
+                      frame_reads=self.frame_reads, frame_service=self.frame_service,
                       buffer_bytes=len(self.buffer_reads),
                       service_buffer_writes=sorted({w for _, _, w, g, _ in self.buffer_writes if not g}))
         if out is not None:
@@ -390,5 +419,6 @@ class Monitor:
               f"{len(self.found)} sync sites hit, {sum(self.masked.values())} IF-clear and "
               f"{sum(self.services.values())} service accesses, {self.checked_bounds} bound checks, "
               f"{len(self.buffer_reads)} buffer bytes, {self.frame_reads} frame reads, "
+              f"{self.frame_service} frame bytes copied by the EMS model, "
               f"{len(problems)} problems")
         return problems

@@ -18,6 +18,9 @@ DATA = '''
 #define REPLAY_VGA_READS 0u
 #define REPLAY_PIT 0u
 #define REPLAY_PIT_READS 0u
+#define REPLAY_DSP_WRITE 0u
+#define REPLAY_DSP_DATA 0u
+#define REPLAY_DSP_READS 0u
 struct replay_point_info { uint32_t cs, ip, slot; };
 struct replay_irq { uint32_t service, point, hits, vector; };
 struct replay_step { uint32_t point, hits, kind; int32_t value; uint32_t release; };
@@ -27,6 +30,8 @@ static const struct replay_irq replay_irqs[] = {{0,0,1,8},{0,0,1,8},{1,1,0,9}};
 static const struct replay_step replay_script[] = {{2,1,0,0,0}};
 static const struct replay_retrace replay_retrace[] = {{0,0,0}};
 static const struct replay_retrace replay_pit[] = {{0,0,0}};
+static const struct replay_retrace replay_dsp_write[] = {{0,0,0}};
+static const struct replay_retrace replay_dsp_data[] = {{0,0,0}};
 #define REPLAY_HASH_STEP 1u
 #define REPLAY_FINAL_HASH SERVICE_HASH
 static const uint32_t replay_service_hashes[] = {SERVICE_HASH};

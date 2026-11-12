@@ -19,6 +19,8 @@
 	xdef	plat_timer_rate
 	xdef	plat_pit_count
 	xdef	plat_vga_status
+	xdef	plat_dsp_status
+	xdef	plat_sb_block
 	xdef	plat_mouse
 	xdef	plat_present
 	xdef	plat_palette
@@ -70,6 +72,10 @@ plat_timer_rate:	nop
 plat_pit_count:	nop
 	rts
 plat_vga_status:	nop
+	rts
+plat_dsp_status:	nop
+	rts
+plat_sb_block:	nop
 	rts
 plat_mouse:	nop
 	rts

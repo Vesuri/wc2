@@ -77,7 +77,7 @@ def main() -> int:
                         help="log every OPL register write (trace/opl.csv) and Sound Blaster DSP/DMA access "
                              "(trace/sound.csv) with emulated ms")
     parser.add_argument("--replay-ports", action="store_true",
-                        help="record PIT counter and 3DAh reads, run-length coded (trace/replay-ports.csv)")
+                        help="record PIT counter, 3DAh and SB DSP status (22Ch, 22Eh) reads, run-length coded (trace/replay-ports.csv)")
     parser.add_argument("--probes", default="",
                         help="MODULE+HEX:N=name,...: log entry ms and N far-call stack words (trace/probe.csv)")
     parser.add_argument("--polls", type=Path,

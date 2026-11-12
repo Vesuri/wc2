@@ -45,6 +45,15 @@ uint16_t plat_pit_count(uint32_t ch);
 /* VGA input status (port 3DAh): bit 3 in the vertical retrace, bit 0 in any
  * blanking, as the beam stands now. */
 uint8_t plat_vga_status(void);
+/* Sound Blaster DSP status read (port 22Ch write status, 22Eh data status):
+ * `value` is the DSP model's answer (ports.c); the platform may report the
+ * device still busy (22Ch bit 7 set) or its data not yet there (22Eh bit 7
+ * clear), as the reference DSP's timing does. Returns the byte read. */
+uint8_t plat_dsp_status(uint32_t port, uint32_t value);
+/* Sound Blaster block: `length` 8-bit unsigned mono samples at guest linear
+ * `linear` (guest RAM order, runtime.h rd8) played at `rate` Hz; when the last
+ * has played the platform posts vector 0Fh (IRQ 7, rt_irq_ring). */
+void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate);
 /* Mouse counts since the last call (right and down positive) and the
  * buttons held (bit 0 left, 1 right, 2 middle). */
 uint32_t plat_mouse(int32_t *dx, int32_t *dy);

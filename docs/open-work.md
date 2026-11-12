@@ -6,12 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-12. Host lockstep at m2 (the intro, [pc-reference-loop.md](pc-reference-loop.md)): the SB
-    DSP (reset, version as SB 2.0, time constant, 8-bit DMA, speaker), DMA channel 1, and
-    IRQ 7 at each block's end timed by the sample rate, delivering INT 0Fh to
-    WC2.EXE+06F3F under the footprint proof (port-plan P6.1 "Sound"). Acceptance:
-    `make test-host` in lockstep at m2 with 0 monitor problems and INT 0Fh handler runs
-    counted, and an SB sabotage plant caught.
 13. Host lockstep at m3 and m4 (the pilot file, the first flight frames; `STRAX.DRV`
     resident): the surfaces those traces show. WC2's INT 15h handler at WC2.EXE+0FD93 runs
     as often as IRQ1 (1064 times each, MEASURED, [external-surface.md](external-surface.md)),
@@ -49,8 +43,11 @@ Items are in work order; numbers are identifiers and are not reused.
     flight frame from generated code and the smoke flies with keyboard and joystick input.
 19. Audio on Paula (port-plan P6b.2): FM music through SWOTL's `fm_paula.c`, effects priced
     by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,
-    channel ownership stated. Acceptance: the FM checks and their sabotage pass; the Chip
-    cost MEASURED.
+    channel ownership stated. The Amiga `plat_sb_block` stops today: it plays the block
+    and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
+    1.4 ms of it, [pc-reference-loop.md](pc-reference-loop.md)), and production delivers
+    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8). Acceptance: the FM checks and
+    their sabotage pass; the intro's speech plays on the Amiga build; the Chip cost MEASURED.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).

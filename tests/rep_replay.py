@@ -7,6 +7,7 @@ trace/rep.csv), so an interrupt taken inside one lands at a slice boundary; the 
 replays those boundaries at the REP's poll point (tests/host_run.py)."""
 import csv
 from dataclasses import dataclass
+import fcntl
 import hashlib
 import os
 from pathlib import Path
@@ -127,6 +128,15 @@ def host_image(labels):
     elf = out / f'wc2-{link.hexdigest()[:12]}.elf'
     if elf.exists():
         return elf
+    out.mkdir(parents=True, exist_ok=True)
+    with (out / 'build.lock').open('w') as lock:    # parallel host runs build it once
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not elf.exists():
+            _build(out, elf, labels, objects)
+    return elf
+
+
+def _build(out, elf, labels, objects):
     vasm = str(os.environ.get('VASM') or Path.home() / '.local/vasmm68k_mot')
     if not (out / 'program.o').exists():
         units = cfg.build()
@@ -152,4 +162,3 @@ def host_image(labels):
     subprocess.run([str(toolchain / 'bin/m68k-amiga-elf-ld'), '-Ttext=0x10000', '-e', '_start',
                     '-o', str(elf), *(str(p) for p in objects), str(out / 'program.o'),
                     str(out / 'rep.o')], check=True)
-    return elf

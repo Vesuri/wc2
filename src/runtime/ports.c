@@ -1,6 +1,6 @@
 /* I/O ports the game touches (docs/external-surface.md), as devices of the
  * reference machine: PIC, PIT, AdLib, joystick, the VGA DAC and input status,
- * the Sound Blaster DSP's detection. Any other port stops. */
+ * the Sound Blaster DSP and its DMA channel 1. Any other port stops. */
 #include "runtime.h"
 #include "platform.h"
 
@@ -86,26 +86,63 @@ static void pit_data(uint8_t ch, uint8_t v)
     }
 }
 
-/* Sound Blaster DSP at 220h (reference/dosbox-x.conf, BLASTER A220): the
- * game's detection (through its port helpers, WC2.EXE +6CB6, +6CC2, +6CCB) resets it (226h 1, 0), reads the ready bit
- * (22Eh) and the AAh answer (22Ah), checks the write status (22Ch) before
- * each command byte and sends 40h A3h (time constant) and D1h (speaker on).
- * Reads answer as the reference's; playback is P6's (speech, D3). */
+/* Sound Blaster DSP at 220h (reference/dosbox-x.conf, BLASTER A220 I7 D1) and
+ * its DMA channel 1, as far as the game drives them (every reference milestone
+ * m2-m6, MEASURED: DSP commands 40h, 14h, D1h; DMA mode 49h, page 5). The
+ * detection (through its port helpers, WC2.EXE +6CB6, +6CC2, +6CCB) resets the
+ * DSP (226h 1, 0), reads the ready bit (22Eh) and the AAh answer (22Ah), checks
+ * the write status (22Ch) before each command byte and sends 40h A3h (time
+ * constant) and D1h (speaker on). The speech plays blocks: DMA channel 1
+ * programmed (mask, flip-flop, mode, address, page, count, unmask), then 14h
+ * with the length; the DSP raises IRQ 7 when the block has played, and the
+ * game's INT 0Fh handler (WC2.EXE +6F3F) programs the next. Status reads
+ * answer as the model stands; plat_dsp_status adds the device's timing. */
 static uint8_t dsp_reset, dsp_ready;
+static uint8_t dsp_command, dsp_args, dsp_arg[2];   /* a command awaiting argument bytes */
+static uint8_t dsp_time_constant;
+uint8_t rt_sb_playing;      /* a block started and its IRQ 7 not yet taken (machine.c) */
+
+/* 8237 channel 1: base address and count (lo, hi through the flip-flop),
+ * page (83h), mode (0Bh), single mask (0Ah; masked at reset). */
+static uint8_t dma_flip, dma_masked = 1, dma_mode;
+static uint16_t dma_address, dma_count;
+static uint8_t dma_page;
 
 static uint8_t dsp_in(uint16_t port)
 {
+    uint8_t v;
     switch (port) {
-    case 0x22e: return dsp_ready ? 0xaa : 0x2a;   /* bit 7: data available */
+    case 0x22e: v = dsp_ready ? 0xaa : 0x2a; break;   /* bit 7: data available */
     case 0x22a:
         if (!dsp_ready) {
             rt_stop("DSP data read with none available", port, 0);
         }
         dsp_ready = 0;
         return 0xaa;
-    case 0x22c: return 0x2a;                     /* bit 7 clear: ready for a byte */
+    case 0x22c: v = 0x2a; break;                     /* bit 7 clear: ready for a byte */
+    default: rt_stop("unsupported DSP port in", port, 0);
     }
-    rt_stop("unsupported DSP port in", port, 0);
+    return plat_dsp_status(port, v);
+}
+
+/* 14h's length is complete: the block from channel 1's address. */
+static void dsp_dma_block(uint32_t length)
+{
+    if (dma_masked || dma_mode != 0x49) {
+        rt_stop("DSP block without DMA channel 1 ready (mask, mode)", dma_masked, dma_mode);
+    }
+    if ((uint32_t)dma_count + 1 < length || (uint32_t)dma_address + length > 0x10000) {
+        rt_stop("DSP block beyond DMA channel 1's count or page (count, length)", dma_count, length);
+    }
+    if (rt_sb_playing) {
+        rt_stop("DSP block while one plays (length)", length, 0);
+    }
+    if (dsp_time_constant == 0) {
+        rt_stop("DSP block without a time constant", length, 0);
+    }
+    rt_sb_playing = 1;
+    plat_sb_block((uint32_t)dma_page << 16 | dma_address, length,
+                  1000000u / (256u - dsp_time_constant));
 }
 
 static void dsp_out(uint16_t port, uint8_t v)
@@ -121,10 +158,55 @@ static void dsp_out(uint16_t port, uint8_t v)
         }
         return;
     }
-    if (port == 0x22c && (v == 0x40 || v == 0xa3 || v == 0xd1)) {
-        return;     /* the detection's time constant and speaker on */
+    if (dsp_args) {
+        dsp_arg[--dsp_args] = v;
+        if (dsp_args) {
+            return;
+        }
+        if (dsp_command == 0x40) {
+            dsp_time_constant = dsp_arg[0];
+        } else {            /* 14h: length - 1, lo then hi */
+            dsp_dma_block((uint32_t)(dsp_arg[1] | dsp_arg[0] << 8) + 1);
+        }
+        return;
     }
-    rt_stop("unsupported DSP command (port, value)", port, v);
+    switch (v) {
+    case 0x40: dsp_command = v; dsp_args = 1; return;    /* time constant */
+    case 0x14: dsp_command = v; dsp_args = 2; return;    /* 8-bit single-cycle DMA output */
+    case 0xd1: return;                                   /* speaker on */
+    }
+    rt_stop("unsupported DSP command", v, 0);
+}
+
+static void dma_out(uint16_t port, uint8_t v)
+{
+    switch (port) {
+    case 0x02:
+        dma_address = dma_flip ? (uint16_t)((dma_address & 0xff) | v << 8)
+                               : (uint16_t)((dma_address & 0xff00) | v);
+        dma_flip ^= 1;
+        return;
+    case 0x03:
+        dma_count = dma_flip ? (uint16_t)((dma_count & 0xff) | v << 8)
+                             : (uint16_t)((dma_count & 0xff00) | v);
+        dma_flip ^= 1;
+        return;
+    case 0x0a:
+        if ((v & 3) == 1) {
+            dma_masked = (v & 4) != 0;
+            return;
+        }
+        break;
+    case 0x0b:
+        if ((v & 3) == 1) {
+            dma_mode = v;
+            return;
+        }
+        break;
+    case 0x0c: dma_flip = 0; return;
+    case 0x83: dma_page = v; return;
+    }
+    rt_stop("unsupported DMA write (port, value)", port, v);
 }
 
 /* A counter read: the latched count's next byte (lo first in access 3). */
@@ -165,6 +247,9 @@ void rt_port_out(uint32_t port, uint32_t value, uint32_t width)
         case 0x40: case 0x41: case 0x42: pit_data((uint8_t)(port - 0x40), v); return;
         case 0x43: pit_control(v); return;
         case 0x226: case 0x22c: dsp_out((uint16_t)port, v); return;
+        case 0x02: case 0x03: case 0x0a: case 0x0b: case 0x0c: case 0x83:
+            dma_out((uint16_t)port, v);
+            return;
         case 0x3c7: case 0x3c8: case 0x3c9: rt_dac_out((uint16_t)port, v); return;
         case 0x201:                 /* joystick one-shots */
             joystick_latch[0] = rt_joystick_axis[0];

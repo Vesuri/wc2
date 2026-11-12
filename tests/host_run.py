@@ -13,8 +13,10 @@ at the translator's poll points, the PIT and VGA status reads recorded):
   registers at entry and at return (the tracer's svc/svc_ret events);
 - at the milestone label: guest registers and guest RAM (COMPARE ranges);
   dead stack is masked: bytes in the DEAD_STACK window below SS:SP at a
-  service call or hardware interrupt that the guest did not write afterwards (DOSBox-X's own code
-  and the interrupt frame's FLAGS word leave other values there),
+  service call, or at a hardware interrupt the handler footprint's stack depth
+  and frame below it, that the guest did not write afterwards (DOSBox-X's own
+  code, the interrupt frame's FLAGS word and the reference's IRQ0 handler on the
+  interrupted stack leave other values there),
   and the FLAGS images of annotations/flags.csv PUSHFs until rewritten;
 - every machine byte outside COMPARE (and the IRQ0 handler's private stack)
   that generated code read holds the reference value.
@@ -240,7 +242,15 @@ SABOTAGE = {
     "irq-footprint": "the monitor's footprint without the INT 08h handler's tick-count write row (I3)",
     "irq-sync": "the monitor's footprint without sync rows (I3)",
     "irq-bounds": "the monitor's irq-bounds.csv bounds one lower at their top (I3)",
+    "sb-block": "the second DSP block's length one byte long (the block oracle)",
+    "sb-irq": "an IRQ 7 posted with the first replayed interrupt, no DSP block playing",
+    "dsp-status": "the model's 22Eh status reporting no data after the DSP reset",
 }
+# Plants that are caught only by their own check (the first problem's text): a
+# milestone without speech has no DSP block, so they are left out there.
+SABOTAGE_CATCH = {"sb-block": "SB blocks", "sb-irq": "IRQ 7 without a DSP block",
+                  "dsp-status": "the model's 2a"}
+SPEECH = ("sb-block", "dsp-status")
 
 
 def dos_file_stamp(stamp):
@@ -283,7 +293,7 @@ class MemFile:
 
 class Host:
     def __init__(self, ref_root: Path, sabotage: str | None = None, elf: Path | None = None,
-                 retrace: list | None = None, pit: list | None = None):
+                 retrace: list | None = None, pit: list | None = None, dsp: dict | None = None):
         self.launch = ""
         self.root = ref_root
         self.file_clock = None
@@ -312,7 +322,8 @@ class Host:
         self.stubs = {self.syms[n]: n for n in ("plat_alloc", "plat_free", "plat_open", "plat_create", "plat_read", "plat_write",
                                                 "plat_delete", "plat_seek",
                                                 "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_pit_count", "plat_mouse", "plat_present", "plat_palette",
-                                                "plat_service", "plat_vga_status", "plat_log", "plat_console",
+                                                "plat_service", "plat_vga_status", "plat_dsp_status", "plat_sb_block",
+                                                "plat_log", "plat_console",
                                                 "plat_exit")}
         # VGA status replay: (service events, value, reads) runs of trace/retrace.csv
         self.retrace = list(retrace or [])
@@ -321,6 +332,10 @@ class Host:
         # PIT replay: (service events, value, reads) runs of port 40h reads
         self.pit = list(pit or [])
         self.pit_i = self.pit_used = self.pit_latches = 0
+        # DSP status replay: per port (22Ch, 22Eh) its runs, next row, reads used of it
+        self.dsp = {port: [list(runs), 0, 0] for port, runs in (dsp or {}).items()}
+        self.dsp_reads = 0
+        self.blocks: list[tuple[int, int, int]] = []   # plat_sb_block: linear, length, rate
         self.mouse_dx = self.mouse_dy = self.mouse_buttons = 0
         self.presents = 0
         # D9 display: every byte the guest stores to the frame is inside the
@@ -460,11 +475,17 @@ class Host:
 
         # Hardware interrupts: the reference's BIOS handlers (and the INT frame)
         # use the interrupted stack, ours run in C; the window below SS:SP is dead.
+        # The reference's handlers push there down to the footprint's proved
+        # depth below the frame (IRQ0's runs on the private stack here, I4).
+        irq_dead = DEAD_STACK
+        if irq_monitor.FOOTPRINT.exists():
+            irq_dead = max(DEAD_STACK, irq_monitor.stack_depth() + 6)
+
         @U.CODE_CB
         def irq_entry(h, addr, size, user):
             g = self.guest_regs(0)
             top = g["ss"] * 16 + g["sp"]
-            self.masked.update(range(top - DEAD_STACK, top))
+            self.masked.update(range(top - irq_dead, top))
 
         for n in ("rt_irq", "rt_bios_int08"):
             e.hook_range(U.HOOK_CODE, irq_entry, self.syms[n], self.syms[n])
@@ -482,7 +503,7 @@ class Host:
             self.irq.returned()
 
         e.hook_range(U.HOOK_CODE, irq_deliver, self.syms["deliver_guest"], self.syms["deliver_guest"])
-        for n in ("rt_irq_async_back", "rt_irq_interrupt_back"):
+        for n in ("rt_irq_async_back", "rt_irq_interrupt_back", "rt_irq_back"):
             if n in self.syms:
                 e.hook_range(U.HOOK_CODE, irq_back, self.syms[n], self.syms[n])
 
@@ -719,6 +740,11 @@ class Host:
                 self.e.write(args[0] + 300, bytes([self.mem(args[0] + 300, 1)[0] ^ 1]))
         elif n == "plat_vga_status":
             res = self.vga_status()
+        elif n == "plat_dsp_status":
+            res = self.dsp_status(args[0], args[1])
+        elif n == "plat_sb_block":
+            length = args[1] + (self.sabotage == "sb-block" and len(self.blocks) == 1)
+            self.blocks.append((args[0], length, args[2]))
         elif n == "plat_pit_count":
             if args[0] != 0:
                 self.retrace_bad = self.retrace_bad or f"PIT latch of channel {args[0]}"
@@ -755,6 +781,36 @@ class Host:
         if self.sabotage == "retrace" and self.retrace_i == len(self.retrace) // 2 and self.retrace_used == 1:
             value ^= 8
         return value
+
+    def dsp_status(self, port: int, model: int) -> int:
+        """The reference's next read of DSP status port 22Ch or 22Eh, in the same
+        service interval. It may differ from the model's answer only by the
+        device's timing: 22Ch busy (bit 7 set), 22Eh data not yet there (bit 7 clear)."""
+        n = len(self.services)
+        if port not in self.dsp:
+            self.retrace_bad = self.retrace_bad or f"DSP status {port:X}h read: none in the reference"
+            return model
+        runs, i, used = self.dsp[port]
+        while i < len(runs) and used == runs[i][2]:
+            i, used = i + 1, 0
+        self.dsp[port][1:] = i, used + 1
+        self.dsp_reads += 1
+        if i == len(runs):
+            self.retrace_bad = self.retrace_bad or \
+                f"DSP status {port:X}h read after the reference's last (service events {n})"
+            return model
+        svc, value, _ = runs[i]
+        if self.sabotage == "dsp-status" and port == 0x22E and model == 0xAA:
+            model = 0x2A     # the model's 22Eh reporting no data after the reset
+        timing = value == (model | 0x80 if port == 0x22C else model & 0x7F)
+        if svc != n or (value != model and not timing):
+            self.retrace_bad = self.retrace_bad or \
+                f"DSP status {port:X}h read {self.dsp_reads} at service event {n}: the reference's " \
+                f"{value:02x} at {svc}, the model's {model:02x}"
+        return value
+
+    def dsp_left(self) -> int:
+        return sum(sum(r[2] for r in runs[i:]) - used for runs, i, used in self.dsp.values())
 
     def retrace_left(self) -> int:
         return sum(r[2] for r in self.retrace[self.retrace_i:]) - self.retrace_used
@@ -886,6 +942,8 @@ class Host:
             back to the same poll point (rt_irq_back at this stack depth)."""
             nonlocal makes
             key = self.irqs[self.irq_i][:3]
+            if self.sabotage == "sb-irq" and self.irq_i == 0:
+                self.post(0x0F)
             while self.irq_i < len(self.irqs) and self.irqs[self.irq_i][:3] == key:
                 vector = self.irqs[self.irq_i][3]
                 guest = self.guest_vector(vector)
@@ -987,7 +1045,7 @@ def milestone_script(name: str) -> dict:
     """reference/milestones.csv row: the run stops at the last snapshot trigger;
     keys (those of `after`, then its own: tools/reference.py) are pressed in order,
     each counted from the previous key's release (the tracer's rules); the frame
-    is compared at vga_mode 13."""
+    is compared at vga_mode 13; speech: the reference took IRQ 7 (irqs 0f)."""
     rows = {r["name"]: r for r in csv.DictReader(TABLE.open())}
     r = rows[name]
     keys = []
@@ -997,7 +1055,7 @@ def milestone_script(name: str) -> dict:
         spec, _, key = k.rpartition("=")
         keys.append((trigger(spec), key if key.startswith(("mx", "my", "mb")) else key_code(key)))
     return {"keys": keys, "snapshots": [trigger(t) for t in r["snapshots"].split()],
-            "frame": r["vga_mode"] == "13"}
+            "frame": r["vga_mode"] == "13", "speech": "0f" in r["irqs"].split()}
 
 
 def host_reference(milestone: str) -> Path:
@@ -1006,6 +1064,44 @@ def host_reference(milestone: str) -> Path:
     if not (run / "trace").is_dir():
         raise SystemExit(f"no host reference for {milestone}: python3 tools/reference.py --host {milestone}")
     return run / "trace"
+
+
+def reference_blocks(trace: Path) -> tuple[list[tuple[int, int, int]], list[float]]:
+    """The Sound Blaster blocks the reference's DSP and DMA writes start
+    (trace/sound.csv, `pc_run.py --opl`; decoded here independently of ports.c):
+    (linear, length, rate) per 14h command, and per block that the reference ended
+    (the handler's next 22Eh acknowledge read) the time from its last length byte
+    to that read minus length / rate, in ms."""
+    blocks, late = [], []
+    flip, addr, count, page, tc, command, args, start = 0, 0, 0, 0, 0, None, [], None
+    with (trace / "sound.csv").open() as f:
+        for r in csv.DictReader(f):
+            port, v, ms = int(r["port"], 16), int(r["value"], 16), float(r["ms"])
+            if r["direction"] == "in":
+                if port == 0x22E and start is not None:
+                    late.append(ms - start[0] - 1000 * start[1])
+                    start = None
+                continue
+            if port in (0x02, 0x03):
+                old = addr if port == 0x02 else count
+                new = (old & 0xFF) | v << 8 if flip else (old & 0xFF00) | v
+                addr, count = (new, count) if port == 0x02 else (addr, new)
+                flip ^= 1
+            elif port == 0x0C:
+                flip = 0
+            elif port == 0x83:
+                page = v
+            elif port == 0x22C and command is not None:
+                args.append(v)
+                if command == 0x40:
+                    tc, command = v, None
+                elif len(args) == 2:
+                    length, rate = (args[0] | args[1] << 8) + 1, 1000000 // (256 - tc)
+                    blocks.append((page << 16 | addr, length, rate))
+                    start, command = (ms, length / rate), None
+            elif port == 0x22C and v in (0x40, 0x14):
+                command, args = v, []
+    return blocks, late
 
 
 def port_runs(trace: Path, ports: tuple[int, ...]) -> list[tuple[int, int, int]]:
@@ -1223,17 +1319,24 @@ def main(argv=None) -> int:
     ap.add_argument("--label", action="store_true", help="print the milestone's label and exit")
     ap.add_argument("--sabotage", action="store_true",
                     help="each planted runtime fault (SABOTAGE) must fail the check")
+    ap.add_argument("--plants", help="with --sabotage: only these (comma-separated)")
     args = ap.parse_args(argv)
     if args.label:
         print(milestone_script(args.milestone)["snapshots"][-1][0])
         return 0
     if args.sabotage:
         missed = []
-        for name, what in SABOTAGE.items():
+        names = args.plants.split(",") if args.plants else list(SABOTAGE)
+        for name in names:
+            what = SABOTAGE[name]
+            if not args.plants and name in SPEECH and not milestone_script(args.milestone)["speech"]:
+                continue
             problems = check(args.milestone, args.timeout, None, name)
+            catch = SABOTAGE_CATCH.get(name, "")
+            hit = [p for p in problems if catch in p]
             print(f"sabotage {name:12} ({what}): {len(problems)} problems, first: "
-                  f"{problems[0] if problems else '-'}", flush=True)
-            if not problems:
+                  f"{hit[0] if hit else problems[0] if problems else '-'}", flush=True)
+            if not hit:
                 missed.append(name)
         print("not caught: " + ", ".join(missed) if missed else "all sabotages caught")
         return 1 if missed else 0
@@ -1393,7 +1496,8 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     rep = rep_replay.Replay(chunks)
     script["rep"] = rep
     h = Host(image.M.REF, sabotage, elf=elf or rep_replay.host_image(rep.labels),
-             retrace=port_runs(trace, (0x3DA,)), pit=port_runs(trace, (0x40,)))
+             retrace=port_runs(trace, (0x3DA,)), pit=port_runs(trace, (0x40,)),
+             dsp={port: port_runs(trace, (port,)) for port in (0x22C, 0x22E)})
     h.calendar_date, h.file_clock = reference_clocks(trace)
     label = script["snapshots"][-1][0]
     script["irqs"], script["releases"] = reference_inputs(trace, exact_releases=True)
@@ -1416,6 +1520,17 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
         problems.append(f"VGA status: {h.retrace_left()} reference reads not made")
     if h.stopped_at == label and h.pit_left():
         problems.append(f"PIT: {h.pit_left()} reference reads not made")
+    if h.stopped_at == label and h.dsp_left():
+        problems.append(f"DSP status: {h.dsp_left()} reference reads not made")
+    want_blocks, late = reference_blocks(trace)
+    done = want_blocks if h.stopped_at == label else want_blocks[:len(h.blocks)]
+    if h.blocks != done:
+        k = next((k for k, (a, b) in enumerate(zip(h.blocks, done)) if a != b), min(len(h.blocks), len(done)))
+        problems.append(f"SB blocks: {len(h.blocks)} started, the reference {len(done)}; first difference "
+                        f"#{k}: {h.blocks[k:k + 1]} vs {done[k:k + 1]}")
+    print(f"SB blocks: {len(h.blocks)} started, {len(want_blocks)} in the reference" +
+          (f"; reference IRQ 7 acknowledged {min(late):+.1f}..{max(late):+.1f} ms from length/rate"
+           if late else ""))
     if h.display_miss:
         problems.append(h.display_miss)
     problems += h.irq.finish(REPO / "tmp/test" / f"irq-monitor-{milestone}{'-' + sabotage if sabotage else ''}.json")

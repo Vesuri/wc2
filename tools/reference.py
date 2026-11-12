@@ -23,9 +23,11 @@ since an empty list would hold every interrupt. Adapted from Secret Weapons of
 Luftwaffe (docs/upstream.md).
 
 `--host` records host references (P5, tests/host_run.py): one run per milestone
-(host-<name>) that also records the PIT and 3DAh reads (`--replay-ports`) and the
-decoder slices of every REP at a poll point (`--rep-chunks`), which the host run
-replays; the two-run and previous-invocation comparisons are not made.
+(host-<name>) that also records the PIT, 3DAh and DSP status reads (`--replay-ports`)
+and the decoder slices of every REP at a poll point (`--rep-chunks`), which the host
+run replays, and the DSP and DMA port log (`--opl`, trace/sound.csv) its Sound
+Blaster blocks are checked against; the two-run and previous-invocation comparisons
+are not made.
 """
 
 from __future__ import annotations
@@ -91,7 +93,7 @@ def command(m: dict, run: str, host: bool = False) -> list[str]:
     if host:
         if not polls():
             raise SystemExit("--host needs build/gen/poll-points.csv (make gen)")
-        cmd += ["--replay-ports", "--rep-chunks"]
+        cmd += ["--replay-ports", "--rep-chunks", "--opl"]
     for path in fixture_inputs.missing_files(m.get("missing_files") or ""):
         cmd += ["--missing-file", path]
     if m.get("joystick") == "1":

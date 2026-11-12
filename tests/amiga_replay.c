@@ -57,10 +57,14 @@ static void rep_next(void)
 
 volatile uint32_t replay_services, replay_interrupts, replay_steps;
 volatile uint32_t replay_cs, replay_ip;
-volatile uint32_t replay_vga_reads, replay_pit_reads;
+volatile uint32_t replay_vga_reads, replay_pit_reads, replay_dsp_reads;
 static uint32_t retrace_index, retrace_used, pit_index, pit_used;
 /* counts as objects: a fixture without reads compares without -Wtype-limits */
 static const uint32_t retrace_count = REPLAY_RETRACE, pit_count = REPLAY_PIT;
+/* the DSP status ports' runs (22Ch, 22Eh): next row, reads used of it */
+static const struct replay_retrace *const dsp_runs[2] = {replay_dsp_write, replay_dsp_data};
+static const uint32_t dsp_count[2] = {REPLAY_DSP_WRITE, REPLAY_DSP_DATA};
+static uint32_t dsp_index[2], dsp_used[2];
 static uint32_t service_hash = 2166136261u, step_hits, release_at;
 static uint32_t visits[REPLAY_POINTS], epochs[REPLAY_POINTS];
 static uint32_t pending[64], vectors[64], depth, makes;
@@ -200,12 +204,13 @@ int32_t replay_point(uint32_t point)
             case 0:
                 if (replay_steps == REPLAY_STEPS) {
                     /* which: services 1, interrupts 2, depth 4, REP 8, active REP 16,
-                     * VGA 32, PIT 64 */
+                     * VGA 32, PIT 64, DSP 128 */
                     uint32_t which = (replay_services != REPLAY_SERVICES) |
                         (replay_interrupts != REPLAY_IRQS) << 1 | (depth != 0) << 2 |
                         (replay_rep_index != REPLAY_REPS) << 3 | (replay_rep_active != 0) << 4 |
                         (replay_vga_reads != REPLAY_VGA_READS) << 5 |
-                        (replay_pit_reads != REPLAY_PIT_READS) << 6;
+                        (replay_pit_reads != REPLAY_PIT_READS) << 6 |
+                        (replay_dsp_reads != REPLAY_DSP_READS) << 7;
                     if (which)
                         fail("replay incomplete", which, replay_pit_reads);
                     return -1;
@@ -312,6 +317,24 @@ uint8_t replay_vga_status(void)
     if (r->service != replay_services) fail("replay VGA status interval", replay_vga_reads, replay_services);
     ++retrace_used;
     ++replay_vga_reads;
+    return (uint8_t)r->value;
+}
+
+/* The reference's next read of DSP status port 22Ch or 22Eh, in the same
+ * service-event interval. */
+uint8_t replay_dsp_status(uint32_t port)
+{
+    uint32_t k = port == 0x22e;
+    if (port != 0x22c && !k) fail("replay DSP port", port, replay_services);
+    while (dsp_index[k] < dsp_count[k] && dsp_used[k] == dsp_runs[k][dsp_index[k]].repeat) {
+        ++dsp_index[k];
+        dsp_used[k] = 0;
+    }
+    if (dsp_index[k] == dsp_count[k]) fail("replay DSP status after the last", port, replay_services);
+    const struct replay_retrace *r = &dsp_runs[k][dsp_index[k]];
+    if (r->service != replay_services) fail("replay DSP status interval", replay_dsp_reads, replay_services);
+    ++dsp_used[k];
+    ++replay_dsp_reads;
     return (uint8_t)r->value;
 }
 
