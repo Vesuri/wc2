@@ -1,0 +1,64 @@
+--- a/include/swotl_trace.h
++++ b/include/swotl_trace.h
+@@ -18,6 +18,8 @@
+ void WC2_Irq0Check(void);
+ /* Before an instruction: true if a hardware interrupt was taken instead. */
+ bool WC2_IrqPoint(uint32_t linear);
++/* In PIC_runIRQs while gated: the interrupts DOS's idle wait takes (HLT in INT 28h). */
++void WC2_IdleIrq(void);
+ 
+ void WC2_Instruction(uint32_t linear);
+ void WC2_TimeLimit();
+--- a/src/hardware/pic.cpp
++++ b/src/hardware/pic.cpp
+@@ -566,7 +566,10 @@
+ }
+ 
+ void PIC_runIRQs(void) {
+-    if (swotl_irq_gate && !swotl_irq_open) return; /* WC2_POLLS: poll points only */
++    if (swotl_irq_gate && !swotl_irq_open) { /* WC2_POLLS: poll points only, */
++        WC2_IdleIrq();                       /* and DOS's idle wait */
++        return;
++    }
+     if (!GETFLAG(IF)) return;
+     if (GCC_UNLIKELY(!PIC_IRQCheck)) return;
+     if (GCC_UNLIKELY(cpudecoder==CPU_Core_Normal_Trap_Run)) return; // FIXME: Why?
+--- a/src/misc/swotl_trace.cpp
++++ b/src/misc/swotl_trace.cpp
+@@ -951,6 +951,36 @@
+ 		        modules[here.module].name.c_str(), here.offset, irq_vector,
+ 		        (unsigned long long)service_events, it == poll_hits.end() ? 0u : it->second);
+ 	return true;
++}
++
++bool CPU_IsHLTed(void);
++
++/* DOS's idle wait (WC2): the CON read polls INT 16h and calls INT 28h, whose
++ * stub halts with IF set until an interrupt (dev_con.h, "dos idle api"). The
++ * poll gate opens there as at a poll point, so the run takes its interrupts
++ * while DOS waits for a key, as the PC does. The irq row is at the halt's
++ * linear address (module -, hits 0) with SS:SP and the six words there (the
++ * INT 28h frame, then the INT 21h one). */
++void WC2_IdleIrq(void) {
++	if (!swotl_active || !GETFLAG(IF) || !CPU_IsHLTed()) return;
++	const uint32_t stub = ((uint32_t)mem_readw(0x28 * 4 + 2) << 4) + mem_readw(0x28 * 4);
++	const uint32_t at = ((uint32_t)cpu.hlt.cs << 4) + (uint32_t)cpu.hlt.eip;
++	if (at < stub || at >= stub + 8) return;
++	WC2_Irq0Check();
++	if (!PIC_IRQCheck && !swotl_irq0_backlog) return;
++	WC2_Irq0Refill();
++	if (!PIC_IRQCheck) return;
++	const uint16_t stack_seg = SegValue(ss), stack_sp = reg_sp;
++	uint16_t w[6];
++	for (unsigned i = 0; i < 6; i++) w[i] = mem_readw(SegPhys(ss) + (uint16_t)(stack_sp + 2 * i));
++	irq_vector = -1;
++	swotl_irq_open = true;
++	PIC_runIRQs();
++	swotl_irq_open = false;
++	if (irq_vector >= 0 && events)
++		fprintf(events, "%llu,irq,-,0x%05x,%02x svc=%llu hits=0 stack=%04x:%04x"
++		        " %04x %04x %04x %04x %04x %04x\n", (unsigned long long)icount, at, irq_vector,
++		        (unsigned long long)service_events, stack_seg, stack_sp, w[0], w[1], w[2], w[3], w[4], w[5]);
+ }
+ 
+ void WC2_Interrupt(const unsigned num, const unsigned type, const uint32_t oldeip) {

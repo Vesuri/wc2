@@ -1,0 +1,2 @@
+module,offset,reason
+WC2.EXE,0x103fd,"Ctrl+Alt+Del in the keyboard hook (WC2.EXE+1036B through DS:D150h): the overlay calls before WC2.EXE+0FEB1 reboots (jmp far FFFF:0000)"

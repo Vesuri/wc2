@@ -924,8 +924,10 @@ def main(argv=None, on_batch=None) -> int:
             stop = info["stop"]
             pc = m.r("pc")
             if stop in node_of:  # labels sharing the address: take the one x86 reached
-                for x in by_addr[pc]:
+                for x in by_addr[pc]:   # (another overlay's label is never at this case's CS)
                     nd = node_of.get(x)
+                    if nd and p.overlay(*nd) not in (None, ovl):
+                        continue
                     if nd and node_cs(nd) == out["cs"] and \
                             p.units[nd[0]].insns[nd[1]].ip == out["ip"]:
                         stop = x

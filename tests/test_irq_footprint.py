@@ -3,13 +3,16 @@
 The proof holds on the program, matches build/gen/irq-footprint.csv and keeps the
 facts the later steps rest on (every handler in irq.HANDLERS proved, the ports,
 the INT 08h handler's tick counts as handler-written, the sound-state poll at
-WC2.EXE+4565A a sync access), the sync instructions that meet handler-written
+WC2.EXE+4565A a sync access; the keyboard intercept's runtime rows, its key table
+handler-written and its Ctrl+Alt+Del call an irq-stops.csv stop), the sync instructions that meet handler-written
 memory in more than one 68k access (LES of the sequencer's far pointers, ADC to
 memory) are held (irq-hold.csv) and bracketed by `st`/`sf rt_irq_hold` in the
 generated text, and the host monitor's buffer rule holds per byte
 (tests/irq_monitor.py buffer_races). --sabotage: each plant edits one decoded
 instruction of the INT 0Fh handler (the smallest) and must fail its analysis with
-its message; each buffer-rule and hold plant must fail its check."""
+its message, and each keyboard plant the intercept's (KEY_PLANTS: its entry state
+without the BIOS stub's, the proof without irq-stops.csv); each buffer-rule and
+hold plant must fail its check."""
 from pathlib import Path
 import argparse
 import dataclasses
@@ -23,6 +26,8 @@ import irq_monitor
 
 EXE = 'WC2.EXE'
 SB = (EXE, 0x06F3F)        # the INT 0Fh handler
+KEY = (EXE, 0x0FD93)       # the INT 15h keyboard intercept
+KEY_TABLE = (0xD184, 0xD283)   # its key-down table (WC2.EXE+103BB, +103CA)
 TICKS = (0xD130, 0xD137)   # WC2.EXE+0FD70..+0FD7C: two tick dwords
 HELD = {(EXE, 0x12A0A), (EXE, 0x12A2A), (EXE, 0x12B6F)}   # LES, LES, ADC (make gen)
 
@@ -57,8 +62,22 @@ def far_return(prog):
     return 'return'
 
 
+def bare_entry(prog):
+    # the intercept without the BIOS stub's AH=4Fh, AL and CF: AL is interrupted
+    # state, and its other functions chain through an untraced pointer
+    irq.ENTRY.pop(KEY)
+    return 'interrupted'
+
+
+def no_stop(prog):
+    # irq-stops.csv dropped: Ctrl+Alt+Del's overlay calls at interrupt level
+    irq.stops = lambda: {}
+    return 'overlay code'
+
+
 PLANTS = {'unsaved-register': unsaved_register, 'undeclared-port': undeclared_port,
           'far-return': far_return}
+KEY_PLANTS = {'bare-entry': bare_entry, 'no-stop': no_stop}
 
 
 def check(proof):
@@ -71,6 +90,11 @@ def check(proof):
     written = [(lo, hi) for (cls, lo, hi, kind) in proof.fp.mem if cls == '1976' and kind == 'w']
     missing = [a for a in range(TICKS[0], TICKS[1] + 1) if not any(lo <= a <= hi for lo, hi in written)]
     assert not missing, f'tick bytes not handler-written: {[hex(a) for a in missing]}'
+    runtime = set(proof.fp.runtime)
+    for row in ('rt_bios_int15 AH=4Fh', 'rt_int16 AH=00h', 'rt_int16 AH=01h'):
+        assert any(r.startswith(row) for r in runtime), (row, sorted(runtime))
+    assert irq.site((EXE, 0x103FD)) in proof.fp.exits['stop (irq-stops.csv)'], dict(proof.fp.exits)
+    assert any(lo <= KEY_TABLE[0] and KEY_TABLE[1] <= hi for lo, hi in written), 'key table not handler-written'
     sync = {(n, cls, lo) for n, cls, lo, *_ in proof.sync}
     assert ((EXE, 0x4565A), '1976', 0xA530) in sync     # irq-sync.csv
     assert HELD <= proof.held <= {n for n, *_ in proof.sync}, sorted(proof.held)
@@ -141,8 +165,14 @@ BUFFER_PLANTS = {
 
 def plant(units, name):
     prog = emit.Program(units, sync={})
-    expect = PLANTS[name](prog)
-    fp = irq.Handler(prog, SB).run()
+    entry, stops = dict(irq.ENTRY), irq.stops
+    try:
+        expect = {**PLANTS, **KEY_PLANTS}[name](prog)
+        fp = irq.Handler(prog, KEY if name in KEY_PLANTS else SB).run()
+    finally:
+        irq.ENTRY.clear()
+        irq.ENTRY.update(entry)
+        irq.stops = stops
     hit = [e for e in fp.errors if expect in e]
     if not hit:
         raise AssertionError(f'{name} escaped ({len(fp.errors)} errors: {fp.errors[:3]})')
@@ -154,8 +184,9 @@ if __name__ == '__main__':
     ap.add_argument('--sabotage', action='store_true')
     args = ap.parse_args()
     if args.sabotage:
-        for name in PLANTS:
-            print('caught', name, plant(cfg.build(), name), flush=True)
+        units = cfg.build()
+        for name in [*PLANTS, *KEY_PLANTS]:
+            print('caught', name, plant(units, name), flush=True)
         for name, races in BUFFER_PLANTS.items():
             try:
                 buffer_rule(races)
@@ -172,7 +203,9 @@ if __name__ == '__main__':
                 raise AssertionError(f'{name} escaped')
         print('all plants caught')
     else:
-        clean = irq.Handler(emit.Program(cfg.build(), sync={}), SB).run()
-        assert not clean.errors, clean.errors[:3]     # the plants' control
-        n = check(irq.Proof(emit.Program(cfg.build(), sync={})))
+        units = cfg.build()
+        for entry in (SB, KEY):
+            clean = irq.Handler(emit.Program(units, sync={}), entry).run()
+            assert not clean.errors, clean.errors[:3]     # the plants' control
+        n = check(irq.Proof(emit.Program(units, sync={})))
         print(f'irq footprint: {n} sync accesses, buffer rule {buffer_rule()} cases: ok')

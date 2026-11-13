@@ -1,6 +1,6 @@
 """IRQ footprint monitor (docs/irq-plan.md I3) for tests/host_run.py. Copied from
 Secret Weapons of the Luftwaffe and adapted to WC2's handlers (translator/irq.py
-HANDLERS: INT 08h at WC2.EXE+0FD10 and +148E0, INT 0Fh at +06F3F).
+HANDLERS: INT 08h at WC2.EXE+0FD10 and +148E0, INT 0Fh at +06F3F, INT 15h at +0FD93).
 
 Checks every guest memory access of a host run against I2's footprint
 (build/gen/irq-footprint.csv):
@@ -29,9 +29,10 @@ Checks every guest memory access of a host run against I2's footprint
   access or segment load, a write-back at a page map: the frame keeps showing
   its mapped page's bytes) are the EMS model's, counted, not footprint accesses.
 The Sound Blaster's IRQ 7 (INT 0Fh, ports.c's DSP blocks) is delivered at a poll
-point from rt_irq on the interrupted stack, as the reference takes it; its handler
-runs are checked as IRQ0's, the stack window from its frame. The record counts
-deliveries per handler entry.
+point from rt_irq on the interrupted stack, as the reference takes it; so is the
+keyboard intercept (INT 15h AH=4Fh, from the BIOS INT 09h model: rt_key_hook to
+rt_key_hook_back). Their handler runs are checked as IRQ0's, the stack window
+from their frame. The record counts deliveries per handler entry.
 Records the sync sites hit, IF-clear accesses, services and buffers in
 tmp/test/irq-monitor-<run>.json.
 """
@@ -51,8 +52,10 @@ EMS_FRAME = (0xE0000, 0xF0000)     # src/runtime/ems.c EMS_FRAME
 WRITTEN, ACCESSED, READ_OK, WRITE_OK, POINTER, BOUNDED = 1, 2, 4, 8, 16, 32
 LIMIT = 20
 # Runtime code that runs as an interrupt handler, not main code: the BIOS tick
-# (IRQ0 while IVT 08h is the BIOS's, and the end of the handler's chain)
-INTERRUPT_SIDE = {"bios_tick"}
+# (IRQ0 while IVT 08h is the BIOS's, and the end of the handler's chain) and the
+# BIOS INT 09h's key (input.c rt_keyboard_irq, bios_key, add_key: after the INT
+# 15h intercept); a compiler clone (add_key.part.0) counts as its function
+INTERRUPT_SIDE = {"bios_tick", "rt_keyboard_irq", "bios_key", "add_key"}
 PRIVATE_STACK = (0xB000, 0x8000 - 6)   # runtime.h RT_IRQ_SS:RT_IRQ_SP, frame pushed
 DROP = "mem,1976,0xd130,w"    # WC2.EXE+0FD70..+0FD7C: the tick counts, every INT 08h run
 RUNTIME = re.compile(r"\[([0-9A-F]{4}|abs:[0-9A-F]{4}):([0-9A-F]{4})-([0-9A-F]{4})\]")
@@ -133,6 +136,7 @@ class Monitor:
         self.backs = {host.syms[n] for n in ("rt_irq_async_back", "rt_irq_interrupt_back")
                       if n in host.syms}   # the second: I6 builds
         self.poll_back = host.syms["rt_irq_back"]   # rt_irq's other guest handlers
+        self.hook_back = host.syms["rt_key_hook_back"]  # the keyboard intercept
         self.loadseg = None
         self.mask = None
         self.intervals = {"r": ([], []), "w": ([], [])}   # runtime classes: starts, (end, class)
@@ -254,9 +258,11 @@ class Monitor:
         return self.site(self.node(pc)) if self.h.code[0] <= pc < self.h.code[1] else self.symbol(pc)
 
     def fail(self, text: str):
-        """Each distinct problem once (a site in a loop repeats it), LIMIT of them."""
+        """Each distinct problem once (a site in a loop repeats it; a main access per
+        site and class, its first address shown), LIMIT of them."""
         text = f"irq monitor: {text}"
         key = re.sub(r" \(tick \d+[^)]*\)", "", text)
+        key = re.sub(r"of [0-9A-F]{5} \(([^:)]*)(:[0-9A-F]{4})?\)", r"(\1)", key)
         if key not in self.failed and len(self.problems) < LIMIT:
             self.failed.add(key)
             self.problems.append(text)
@@ -269,7 +275,8 @@ class Monitor:
         cs, ip = (int.from_bytes(self.h.mem(self.h.syms[n], 2), "big")
                   for n in ("rt_deliver_cs", "rt_deliver_ip"))
         # IRQ 7 from rt_irq: the frame on the interrupted stack (IVT 0Fh's handler)
-        sb = back == self.poll_back and self.h.gmem(0x0F * 4, 4) == struct.pack("<HH", ip, cs)
+        sb = back == self.poll_back and self.h.gmem(0x0F * 4, 4) == struct.pack("<HH", ip, cs) or \
+            back == self.hook_back and self.h.gmem(0x15 * 4, 4) == struct.pack("<HH", ip, cs)
         if back not in self.backs and not sb:
             return False
         if self.mask is None:
@@ -370,7 +377,7 @@ class Monitor:
             self.buffer_writes.append((lin, size, who, generated and not self.h.in_service, self.tick))
         if not hit:
             return
-        if self.h.in_service or (not generated and who in INTERRUPT_SIDE):
+        if self.h.in_service or (not generated and who.split(".")[0] in INTERRUPT_SIDE):
             self.services[f"{who} {self.cls_of(lin)}"] += 1
         elif not generated:
             self.fail(f"runtime {'write' if write else 'read'} of {lin:05X} meets the footprint "

@@ -332,6 +332,20 @@ runs, 44 and 116 sync sites hit, MEASURED), and its sabotages are caught.
    - **Mouse**: INT 33h, copied.
    - **Keyboard**: IRQ1 to WC2's handler, if P2 confirms that it installs one; the port 60h/61h model; asynchronous delivery
      under a footprint proof, with `irq.py` extended from IRQ0 to a set of handlers.
+     - Status: WC2 keeps the BIOS INT 09h and hooks INT 15h AH=4Fh (WC2.EXE+0FD93): the
+       runtime's BIOS model calls it per scan byte, on the interrupted stack with the
+       reference's frames (`rt_key_hook`), at sync points in tests and at service entry
+       in production (irq-plan RC4), and takes the key unless CF comes back clear. The
+       hook is in the footprint proof (entry AH=4Fh, AL, CF as the BIOS stub sets them;
+       INT 16h AH=00h/01h and the chain to the BIOS INT 15h as runtime rows; its
+       Ctrl+Alt+Del overlay calls an `irq-stops.csv` stop). Interrupts are held while it
+       runs (the reference could take IRQ0 at its loop head once INT 16h AH=01h sets IF;
+       the host run fails if a reference does). A console read that waits (INT 21h
+       AH=07h/08h, the name entry's `getch` at WC2.EXE+15080) takes interrupts: the
+       reference opens its poll gate in DOS's INT 28h idle HLT
+       (`dosbox-x-wc2-idle-irq.patch`), sync builds replay those at `rt_idle` on the
+       reference's stack, production lets the CIA tick run IRQ0 while it drains keys.
+       Host lockstep at m1–m4 (MEASURED, `make test-host`).
    - **PIT**: rate to CIA-B; counter reads from the CIA timer; host runs replay the
      recorded reads.
    - **Joystick**: 201h, the analog and digital model copied.
@@ -482,7 +496,7 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Work | Where it is | Use here |
 |---|---|---|
 | DOS: AH=2Fh (`002ff01`; built twice, WC2 `737004c` adds the DOSBox-X test), AH=0Eh (`32bbd04`), find-first of directories and dot entries (`e952d8b`), free of a segment with no MCB is error 9 (`9958487`); INT 16h enhanced keys (`9ee47eb`) | X-Wing P6 | take each when a WC2 trace shows the call |
-| An interrupt handler's far call through a pointer into other code (`irq-hooks.csv`, hooked entries and bounds) in `translator/irq.py`, the I3 monitor's request counting (`6e1e46b`); interrupt-level sync rows for flights (`d761b39`) | X-Wing P6 | open-work 13: WC2's INT 15h handler calls through DS:D150h. Compare with WC2's `irq.py` (`66e6de5`, the hold) before either changes it |
+| An interrupt handler's far call through a pointer into other code (`irq-hooks.csv`, hooked entries and bounds) in `translator/irq.py`, the I3 monitor's request counting (`6e1e46b`); interrupt-level sync rows for flights (`d761b39`) | X-Wing P6 | WC2's INT 15h handler's call through DS:D150h needed none of it: one traced target (indirect.csv). `irq-stops.csv` is taken (WC2 P6, `git log -S rt_key_hook`). Compare with WC2's `irq.py` (`66e6de5`, the hold) before either changes it |
 | Host lockstep: flight logs in bounded memory (`9c59569`), parallel runs from the entry (`2b047e5`), a run that reaches its timeout says so (`e556fcb`) | X-Wing P6 | open-work 13–17 |
 | Service registers and RAM from dead stack may differ, the replay's exempt table (`40030a3`, `3dca119`, `892b8d5`) | X-Wing P6, X-Wing owner decisions 2026-11-09 and 2026-11-10 | open-work 15–17, after an owner decision here |
 | Code the traces missed translated, indirect-coverage review (`423b2dd`, `33d685a`) | X-Wing P6 | open-work 17 |
@@ -490,6 +504,8 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Flag save/restore pairs in the Borland overlay manager (`annotations/flags.csv`, 4 rows, DERIVED) | X-Wing P2–P4 | open-work 11: the same overlay manager, so its rows probably map onto WC2's sites (INFERRED until compared) |
 | Copy-free EMS (`bfaebe3`, `c31004f`), the IRQ footprint for several handlers with the atomic hold (`66e6de5`), the smoke in SWOTL's form (`737004c`) | WC2 P5 | X-Wing's open-work 2 starts from the EMS model |
 | SB DSP (14h, 40h, D1h), DMA channel 1 and IRQ 7 for host lockstep: `ports.c`, `plat_dsp_status` and `plat_sb_block`, the DSP status replay, the block oracle from `sound.csv`, INT 0Fh runs in the IRQ monitor, sabotages `sb-block`, `sb-irq`, `dsp-status`; `irq.hold_span` (a far call through a handler-written pointer held over its loads); the monitor's EMS copy rule | WC2 P6 (`git log -S plat_sb_block`) | to X-Wing (its P10) |
+| A guest INT 15h keyboard intercept called from the BIOS INT 09h model (`rt_key_hook`, `rt_bios_int15`, INT 16h AH=00h/01h with DOSBox-X's enhanced-key rule); the handler set's per-handler entry state (`irq.ENTRY`) and `irq-stops.csv` in WC2's emitter; the intercept oracle and sabotages `key-hook`, `hook-cf`, `int16-zf`; the monitor's per-site main-access faults | WC2 P6 (`git log -S rt_key_hook`) | to X-Wing if its game hooks INT 15h |
+| Interrupts inside DOS's console wait: the reference's poll gate opens in the INT 28h idle HLT (`dosbox-x-wc2-idle-irq.patch`, irq rows at module `-` with the stack), `rt_idle` replays them in sync builds (X-Wing's sync `rt_key_wait` stops instead), sabotages `idle`, `idle-stack`; undefined flags that reach a register masked per site (`annotations/undefined-flags.csv`, owner 2026-11-13) | WC2 P6 (`git log -S rt_idle`) | to X-Wing and SWOTL (its open-work 24) when a wait or an undefined flag shows |
 | Amiga display and input; effect capture and FM gates; SB speech on Paula | neither yet | display and input go to whichever port lands them first; the FM gates are adapted once and shared (X-Wing's P7) |
 
 ## Copy map (SWOTL `658fc60` → here)

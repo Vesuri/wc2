@@ -1,0 +1,2 @@
+module,offset,register,mask,reason
+WC2.EXE,0x01925,cx,0x0010,"AF in a FLAGS image: the find-first wrapper (+1903) does PUSHF; POP CX after INT 21h AH=4Eh and PUSH CX; POPF after this AH=1Ah, so CX holds the caller's AF; from +3392B that is the SHL AX,1 at +33918 (undefined on x86; DOSBox-X: count AND 1Fh = 1, the host 0). MEASURED: host-m4 service 262737, CX 7213h in the reference, 7203h on the host; the path DERIVED from trace/edges.csv (+11713 to +3392B, 20 steps). Translation lesson 39: masked, not canonised (owner 2026-11-13)"

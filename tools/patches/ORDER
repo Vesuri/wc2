@@ -11,3 +11,4 @@ dosbox-x-swotl-rep-chunks.patch
 dosbox-x-swotl-joystick.patch
 dosbox-x-swotl-irq0-backlog.patch
 dosbox-x-wc2-trace.patch
+dosbox-x-wc2-idle-irq.patch

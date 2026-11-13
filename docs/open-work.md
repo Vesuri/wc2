@@ -6,16 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-13. Host lockstep at m3 and m4 (the pilot file, the first flight frames; `STRAX.DRV`
-    resident): the surfaces those traces show. WC2's INT 15h handler at WC2.EXE+0FD93 runs
-    as often as IRQ1 (1064 times each, MEASURED, [external-surface.md](external-surface.md)),
-    and is the BIOS keyboard intercept (DERIVED by reading: `cmp ah,4Fh`, a key table at
-    CS:01DCh, a far call through DS:D150h). `rt_keyboard_irq` does not call it, so the
-    Amiga build's keys do nothing (the owner's a1200-030 run, 2026-11-12); it joins the
-    footprint proof. Input: INT 16h, INT 33h (the mouse, copied) and the game port at 201h
-    (the joystick, copied). Start from X-Wing `6e1e46b` (a handler's call through a
-    pointer), `d761b39`, `9c59569` (port-plan "Sibling: X-Wing"). Acceptance: m3 and m4 in
-    lockstep with 0 monitor problems; each new surface has a caught sabotage plant.
 14. PIT sabotage that changes the run: `tests/host_run.py --sabotage pit` flips one latch's
     low bit and is caught at neither m1 nor m1b (0 problems, MEASURED in `66e6de5`).
     Acceptance: a pit plant caught at m1b, with its effect stated.
@@ -45,7 +35,7 @@ Items are in work order; numbers are identifiers and are not reused.
     by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,
     channel ownership stated. The Amiga `plat_sb_block` stops today: it plays the block
     and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
-    1.4 ms of it, [pc-reference-loop.md](pc-reference-loop.md)), and production delivers
+    3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)), and production delivers
     INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8). Acceptance: the FM checks and
     their sabotage pass; the intro's speech plays on the Amiga build; the Chip cost MEASURED.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;

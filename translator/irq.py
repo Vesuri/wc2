@@ -83,13 +83,20 @@ PORTS = {0x20: "PIC EOI", 0x40: "PIT counter 0", 0x43: "PIT control", 0x388: "OP
 NULL_CLASS = "abs:0000"   # EMS resolver's failure result 0000:0000 (WC2.EXE+15831 paths)
 BIOS_TICK = ("abs:0040", 0x6C, 0x70)  # rt_bios_int08: tick dword, midnight byte (0040:006C)
 BIOS_ENTRY = ("-", 0xFFEA5)          # indirect.csv target of the chain (F000:FEA5)
-# The hardware interrupt handlers WC2 installs (external-surface.md, MEASURED: the
-# vectors set through INT 21h AH=25h and the handlers the traces entered) -> vector
-HANDLERS = {("WC2.EXE", 0x0FD10): 0x08, ("WC2.EXE", 0x148E0): 0x08, ("WC2.EXE", 0x06F3F): 0x0F}
-# entries.csv "interrupt handler" rows no hardware interrupt enters
+BIOS_INT15 = ("-", 0xFCBA0)          # the keyboard hook's chain (F000:CBA0, rt_bios_int15)
+# The interrupt handlers WC2 installs (external-surface.md, MEASURED: the vectors set
+# through INT 21h AH=25h and the handlers the traces entered) -> vector. INT 15h's is
+# the keyboard intercept the BIOS INT 09h handler calls for each scan code
+# (input.c, DOSBox-X CB_IRQ1: `in al,60h; mov ah,4Fh; stc; int 15h`): AH = 4Fh, AL
+# the scan code, CF set at entry (ENTRY).
+HANDLERS = {("WC2.EXE", 0x0FD10): 0x08, ("WC2.EXE", 0x148E0): 0x08, ("WC2.EXE", 0x06F3F): 0x0F,
+            ("WC2.EXE", 0x0FD93): 0x15}
+ENTRY = {("WC2.EXE", 0x0FD93): ({"ax": ("p", ("r", 0, 0xFF), ("c", 0x4F))}, {"CF": ("c", 1)})}
 EMS_HANDLER = {0x44: "map a page", 0x47: "save the page map", 0x48: "restore the page map"}
-NOT_HARDWARE = {("WC2.EXE", 0x0FD93): "INT 15h AH=4Fh keyboard intercept, called by the BIOS "
-                                      "INT 09h handler (not by input.c's yet: port-plan P6)"}
+# INT 16h in a handler (the keyboard hook drains the BIOS buffer): rt_int16
+KEY_HANDLER = {0x00: "read a key", 0x01: "check for a key"}
+# entries.csv "interrupt handler" rows no hardware interrupt enters
+NOT_HARDWARE: dict = {}
 SIGNATURES = 64                      # signatures per context and instruction before joining
 WIDEN = 6                            # joins that change a loop head's state before widening (4x elsewhere)
 STATES = 400_000                     # handler states (context, instruction, signature) at most
@@ -140,6 +147,12 @@ def extents() -> dict[str, tuple[int, int]]:
     `*`); a wider access range is clamped and listed (extent rows; I3 checks)."""
     return {r["class"]: (int(r["lo"], 16), int(r["hi"], 16))
             for r in image.rows("irq-bounds.csv") if r["variable"] == "*"}
+
+
+def stops() -> dict[tuple[str, int], str]:
+    """irq-stops.csv: calls a handler may reach whose path is deferred (reason); the
+    generated call stops (emit.py) and the proof ends the path there."""
+    return {(r["module"], int(r["offset"], 16)): r["reason"] for r in image.rows("irq-stops.csv")}
 
 
 def declared_sync() -> dict[tuple[str, int], list[tuple[str, int, int, str]]]:
@@ -580,6 +593,7 @@ class Handler:
         self.bounds = bounds()
         self.extents = extents()
         self.fp = Footprint()
+        self.stops = stops()
         self.far = {}
         self._th = {}
 
@@ -606,6 +620,9 @@ class Handler:
         regs["cs"] = ("s", frozenset({self.code_cls}))
         regs["sp"] = ("sp", 0)
         flags = {"IF": ("c", 0), "TF": ("c", 0)}   # the others: the interrupted ones (absent)
+        if self.entry in ENTRY:                     # what the code delivering it sets
+            regs.update(ENTRY[self.entry][0])
+            flags.update(ENTRY[self.entry][1])
         slots = {0: (16, ("e", "ip")), 2: (16, ("e", "cs")), 4: (16, ("e", "fl"))}
         start = _Path(regs, flags, slots).freeze()
         root = (self.entry, "root")
@@ -894,6 +911,9 @@ class Handler:
                     continue
                 out.append((ctx, (mod, u.off_of(u.cs[off], ip)), q.freeze()))
             elif kind in ("call", "callf"):
+                if n in self.stops:
+                    self.fp.exits["stop (irq-stops.csv)"].add(site(n))
+                    continue
                 if kind == "call":
                     t = ex[1]
                     if not isinstance(t, int):
@@ -910,6 +930,8 @@ class Handler:
                 out.append((ctx, u.far_targets[off], q.freeze()))
             elif kind == "int" and ex[1] == 0x67:
                 out += self.ems(ctx, n, q, fall)
+            elif kind == "int" and ex[1] == 0x16:
+                out += self.keys(ctx, n, q, fall)
             elif kind == "fault":
                 self.fp.runtime[f"fault {ex[1]:02X}h (divide error: guest INT 00h at interrupt level)"].add(site(n))
             elif kind in ("ret", "retf"):
@@ -938,6 +960,25 @@ class Handler:
             if seg[0] == "s" and all(re.fullmatch(r"[0-9A-F]{4}", c) for c in seg[1]):
                 continue    # a module class: never in the page frame
             del q.slots[k]
+        return [(ctx, fall, q.freeze())]
+
+    def keys(self, ctx, n, q, fall):
+        """INT 16h in the handler: the runtime's BIOS keyboard service (rt_int16) for
+        the functions KEY_HANDLER on the BIOS buffer (0040:001A-003D). AH=00h returns
+        the key in AX; AH=01h AX and ZF, and IF set (DOSBox-X CALLBACK_SIF: the
+        runtime delivers no interrupt while a handler runs)."""
+        ah = raw(split(q.regs["ax"], 1))
+        if ah[0] != "c" or ah[1] not in KEY_HANDLER:
+            self.err(n, f"INT 16h AH={ah} in the handler (allowed: {sorted(KEY_HANDLER)})")
+            return []
+        self.fp.runtime[f"rt_int16 AH={ah[1]:02X}h ({KEY_HANDLER[ah[1]]})"].add(site(n))
+        for kind in "rw":
+            self.fp.mem[("abs:0040", 0x1A, 0x3D, kind)].add(f"rt_int16 AH={ah[1]:02X}h")
+        q.regs["ax"] = ("r", 0, 0xFFFF)
+        if ah[1] == 0x01:
+            q.flags["ZF"] = ("r", 0, 1)
+            q.flags["IF"] = ("c", 1)
+            self.fp.ifs[1].add(f"{site(n)} (rt_int16 AH=01h)")
         return [(ctx, fall, q.freeze())]
 
     # -- branch narrowing ---------------------------------------------------------
@@ -1082,6 +1123,8 @@ class Handler:
                 else ("e", r)
             if r == "cs":
                 continue    # IRET and the chain take CS from the frame
+            if r in ENTRY.get(self.entry, ({},))[0]:
+                continue    # an argument the delivering code set (and restores after)
             if p.regs[r] != want:
                 self.err(n, f"{r} is {p.regs[r]} at the exit, not as interrupted")
 
@@ -1179,6 +1222,11 @@ class Handler:
                         self.err(n, "far call of the BIOS tick")
                         continue
                     out += self.bios_tick(ctx, n, r)
+                elif t == BIOS_INT15:
+                    if i.op == "callf":
+                        self.err(n, "far call of the BIOS INT 15h")
+                        continue
+                    out += self.bios_int15(ctx, n, r)
                 elif t[0] in self.prog.units and t[1] in self.prog.units[t[0]].insns:
                     out += self.call(ctx, n, r, t, fall, True) if i.op == "callf" else [(ctx, t, r.freeze())]
                 else:
@@ -1190,6 +1238,18 @@ class Handler:
         self.fp.mem[(cls, lo, hi, "r")].add("rt_bios_int08")
         self.fp.mem[(cls, lo, hi, "w")].add("rt_bios_int08")
         self.fp.runtime["rt_bios_int08 (BIOS tick, IRET)"].add(site(n))
+        if ctx[1] == "root":
+            self.fp.exits["BIOS chain"].add(site(n))
+        return self.iret(ctx, n, p)
+
+    def bios_int15(self, ctx, n, p):
+        """The chain to the BIOS INT 15h (rt_bios_int15): AH=4Fh, the keyboard
+        intercept, sets CF in the frame's flags (DOSBox-X CALLBACK_SCF), then IRET."""
+        ah = raw(split(p.regs["ax"], 1))
+        if ah != ("c", 0x4F):
+            self.err(n, f"BIOS INT 15h AH={ah} at interrupt level (allowed: 4Fh)")
+            return []
+        self.fp.runtime["rt_bios_int15 AH=4Fh (keyboard intercept, IRET)"].add(site(n))
         if ctx[1] == "root":
             self.fp.exits["BIOS chain"].add(site(n))
         return self.iret(ctx, n, p)

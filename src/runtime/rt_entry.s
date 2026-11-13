@@ -19,6 +19,9 @@ G_DS	equ	1
 	xdef	rt_exit
 	xdef	rt_exit_guest
 	xdef	rt_bios_int08
+	xdef	rt_bios_int15
+	xdef	rt_key_hook,rt_key_hook_back
+	xdef	rt_idle,rt_idle_poll
 	xdef	rt_fault
 	xdef	rt_halt
 	xdef	rt_trap
@@ -44,6 +47,7 @@ G_DS	equ	1
 	xref	smc_expose
 	xref	smc_seg_limit
 	xref	rt_guest
+	xref	rt_idle_cs,rt_idle_ip,rt_idle_posted
 	xref	rt_entry_cs
 	xref	rt_entry_ip
 	xref	rt_deliver_cs
@@ -52,6 +56,9 @@ G_DS	equ	1
 	xref	rt_int_c
 	xref	rt_irq_c
 	xref	rt_bios_int08_c
+	xref	rt_bios_int15_c
+	xref	rt_key_hook_enter
+	xref	rt_key_hook_leave
 	xref	rt_fault_c
 	xref	rt_halt_c
 	xref	rt_trap_c
@@ -327,6 +334,84 @@ rt_bios_int08:
 	move.l	d0,-(a7)
 	bsr	load_regs
 	move.l	(a7)+,d7
+	rts
+
+; The BIOS INT 15h, reached by a guest INT 15h intercept chaining to the
+; vector it replaced (jmp far): AH=4Fh, then IRET; d7.l = popped CS:IP.
+rt_bios_int15:
+	bsr	save_regs
+	jsr	rt_bios_int15_c
+	move.l	d0,-(a7)
+	bsr	load_regs
+	move.l	(a7)+,d7
+	rts
+
+; The BIOS INT 09h's INT 15h to a guest keyboard intercept (input.c
+; bios_int09), C calling convention, from C with rt_r current (rt_irq_c at a
+; poll point; rt_int_c at a production service entry). The state block and
+; rt_r are saved on the 68k stack; rt_key_hook_enter pushes the reference's
+; frames on the interrupted stack and selects the handler; its IRET is
+; checked against the INT 15h frame; rt_key_hook_leave takes AL and CF; the
+; restore is the stub's pop ax and IRET.
+rt_key_hook:
+	movem.l	d2-d7/a2-a6,-(a7)
+	movea.l	rt_guest,a6
+	lea	-32(a7),a7
+	movea.l	a7,a0
+	move.l	1(a6),(a0)+
+	move.l	5(a6),(a0)+
+	move.l	9(a6),(a0)+
+	move.l	13(a6),(a0)+
+	lea	rt_r,a1
+	move.l	(a1)+,(a0)+
+	move.l	(a1)+,(a0)+
+	move.l	(a1)+,(a0)+
+	move.l	(a1)+,(a0)+
+	jsr	rt_key_hook_enter	; d0 = the INT 15h frame's CS:IP
+	move.l	d0,-(a7)
+	bsr	load_regs
+	move.l	(a7)+,d7
+	bsr	deliver_guest		; the guest handler, IRET checked
+rt_key_hook_back:			; (host run: the handler returned)
+	bsr	save_regs
+	jsr	rt_key_hook_leave
+	movea.l	a7,a0
+	move.l	(a0)+,1(a6)
+	move.l	(a0)+,5(a6)
+	move.l	(a0)+,9(a6)
+	move.l	(a0)+,13(a6)
+	lea	rt_r,a1
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	move.l	(a0)+,(a1)+
+	lea	32(a7),a7
+	movem.l	(a7)+,d2-d7/a2-a6
+	rts
+
+; DOS's console wait in sync builds (input.c rt_key_wait), C calling
+; convention, from a service with rt_r current: the interrupts the reference
+; took in DOSBox-X's INT 28h idle stub (its HLT with IF set), delivered by
+; rt_irq as at a poll point with the stub's CS:IP (rt_idle_cs, rt_idle_ip).
+; The host run posts them at rt_idle_poll; d0 = 1 if one was posted.
+rt_idle:
+	movem.l	d2-d7/a2-a6,-(a7)
+	movea.l	rt_guest,a6
+	bsr	load_regs
+	moveq	#0,d7
+	move.w	rt_idle_ip,d7
+	moveq	#0,d6
+	move.w	rt_idle_cs,d6
+	swap	d6
+rt_idle_poll:				; (host run: the reference's next idle interrupt)
+	tst.b	G_IRQ(a6)
+	sne	rt_idle_posted
+	beq.s	.none
+	jsr	rt_irq
+.none:	bsr	save_regs
+	moveq	#1,d0
+	and.b	rt_idle_posted,d0
+	movem.l	(a7)+,d2-d7/a2-a6
 	rts
 
 ; Divide error: d6 = CS << 16 | 0, d7 = IP of the faulting instruction; the

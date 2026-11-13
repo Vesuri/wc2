@@ -151,26 +151,57 @@ static void add_key(uint16_t key)
     }
 }
 
-/* Production (I8): every pending keyboard event (runtime.h). */
-void rt_keyboard_drain(void)
+/* Production (I8): every pending keyboard event (runtime.h), as interrupts at
+ * the service's INT (CS:IP its return). */
+void rt_keyboard_drain(uint16_t cs, uint16_t ip)
 {
     while (key_head != rt_key_tail) {
-        rt_keyboard_irq();
+        rt_keyboard_irq(cs, ip);
     }
 }
 
-/* BIOS INT 09h for one keyboard event, as the reference's (DOSBox-X
- * IRQ1_Handler, US layout, lock keys toggling on release; Pause, Ctrl-Break
- * and Ctrl-Alt-Del are not modelled: the game does not use them). */
-void rt_keyboard_irq(void)
+static void bios_key(uint8_t scan);
+
+/* The reference BIOS's INT 09h (DOSBox-X CB_IRQ1) for one scan byte: `in
+ * al,60h; mov ah,4Fh; stc; int 15h`, then the key unless the INT 15h cleared
+ * CF, with the AL it returned. A guest INT 15h handler (WC2's keyboard
+ * intercept) runs from rt_key_hook on the interrupted stack, the frames as the
+ * reference's; the BIOS's own sets CF. */
+static void bios_int09(uint16_t cs, uint16_t ip, uint8_t scan)
+{
+    if (rt_guest_vector(0x15)) {
+        rt_hook_cs = cs;
+        rt_hook_ip = ip;
+        rt_hook_al = scan;
+        rt_key_hook();
+        if (!rt_hook_cf) {
+            return;
+        }
+        scan = rt_hook_al;
+    }
+    bios_key(scan);
+}
+
+/* One keyboard event, interrupting CS:IP: a combined E0 event is its two
+ * bytes, each through INT 09h. */
+void rt_keyboard_irq(uint16_t cs, uint16_t ip)
 {
     if (key_head == rt_key_tail) {
         return;
     }
     uint16_t ev = rt_key_ring[key_head++ % RT_KEY_RING];
-    uint8_t scan = (uint8_t)ev;
+    if (ev & RT_KEY_E0) {
+        bios_int09(cs, ip, 0xe0);
+    }
+    bios_int09(cs, ip, (uint8_t)ev);
+}
+
+/* DOSBox-X IRQ1_Handler for one scan byte (US layout, lock keys toggling on
+ * release; Pause and Ctrl-Break are not modelled: the game does not use them). */
+static void bios_key(uint8_t scan)
+{
     uint8_t f1 = rd8(BDA_SHIFT), f2 = rd8(BDA_FLAGS2), f3 = rd8(BDA_FLAGS3);
-    uint8_t e0 = (ev & RT_KEY_E0) != 0 || (f3 & 0x02) != 0;
+    uint8_t e0 = (f3 & 0x02) != 0;
     uint16_t key;
     switch (scan) {
     case 0xe0: f3 |= 0x02; break;   /* prefix has its own IRQ, but no key */
@@ -231,7 +262,7 @@ void rt_keyboard_irq(void)
         break;
     case 0x37:
         if (e0) {
-            rt_stop("keyboard: Print Screen", ev, 0);
+            rt_stop("keyboard: Print Screen", scan, 0);
         }
         /* keypad *: a normal key */
         __attribute__((fallthrough));
@@ -278,9 +309,106 @@ uint16_t rt_key_take(void)
     return key;
 }
 
+/* A read that waits for a key (INT 21h AH=07h/08h: DOSBox-X's CON device
+ * polls INT 16h AH=11h and calls INT 28h, whose stub halts with IF set). The
+ * wait runs with IF set (the INT 21h stub's STI), the caller's restored after.
+ * Production: the CIA tick runs IRQ0 (rt_irq_mask, as video.c pace) while the
+ * platform's keyboard events are taken (X-Wing b6fe768). Sync builds take the
+ * interrupts the reference took in the idle stub (rt_idle: the host run posts
+ * them), on the reference's stack below DOS's INT 21h and INT 28h frames; a
+ * wait with none posted and no key is the named stop, as is one inside a
+ * handler or a nested service. */
+uint16_t rt_idle_cs, rt_idle_ip;
+uint8_t rt_idle_posted;
+
+void rt_key_wait(const char *what, uint8_t vector, uint16_t cs, uint16_t ip)
+{
+    if (rt_key_available()) {
+        return;
+    }
+    if (rt_irq_mask != 1 || rt_irq0_running) {
+        rt_unsupported(what, vector, cs, ip);
+    }
+    uint8_t f = G_IF;
+    G_IF = 1;
+#ifdef WC2_SYNC
+    uint16_t sp = rt_r.sp;
+    rt_r.sp = (uint16_t)(sp - RT_IDLE_DEPTH);    /* INT 21h's frame is at sp - 6 */
+    wr16(lin(G_SS, rt_r.sp), RT_IDLE_INT28_IP);  /* DOS's INT 28h, raised after its STI */
+    wr16(lin(G_SS, (uint16_t)(rt_r.sp + 2)), RT_IDLE_SEG);
+    wr16(lin(G_SS, (uint16_t)(rt_r.sp + 4)), rt_flags_word());
+    rt_idle_cs = RT_IDLE_SEG;
+    rt_idle_ip = RT_IDLE_OFF;
+    while (!rt_key_available()) {
+        if (!rt_idle()) {
+            rt_unsupported(what, vector, cs, ip);
+        }
+    }
+    rt_r.sp = sp;
+#else
+    --rt_irq_mask;
+    while (!rt_key_available()) {
+        rt_keyboard_drain(cs, ip);
+    }
+    ++rt_irq_mask;
+#endif
+    G_IF = f;
+}
+
+/* DOSBox-X IsEnhancedKey: a key AH=00h/01h skip (scan above 84h, or low byte
+ * F0h); the E0 forms of keypad Enter and / become their plain scan codes, an
+ * E0-marked grey key loses the mark. */
+static int enhanced(uint16_t *key)
+{
+    uint8_t hi = (uint8_t)(*key >> 8), lo = (uint8_t)*key;
+    if (hi == 0xe0) {
+        *key = lo | (lo == 0x0a || lo == 0x0d ? 0x1c00 : 0x3500);
+        return 0;
+    }
+    if (hi > 0x84 || (lo == 0xf0 && hi)) {
+        return 1;
+    }
+    if (hi && lo == 0xe0) {
+        *key &= 0xff00;
+    }
+    return 0;
+}
+
 void rt_int16(void)
 {
+    uint16_t key;
     switch (AH(rt_r.ax)) {
+    case 0x00:  /* read a key (the game reads only after AH=01h found one) */
+        for (;;) {
+            if (!rt_key_available()) {
+                rt_stop("INT 16h AH=00h waits on an empty buffer", rt_r.ax, 0);
+            }
+            key = rt_key_take();
+            if (!enhanced(&key)) {
+                break;
+            }
+        }
+        rt_r.ax = key;
+        break;
+    case 0x01:  /* check for a key: ZF clear and AX the key; IF set (CALLBACK_SIF) */
+        for (;;) {
+            if (!rt_key_available()) {
+                G_CCR |= CCR_Z;
+                break;
+            }
+            key = rd16(0x400 + rd16(BDA_HEAD));
+            if (!enhanced(&key)) {
+                G_CCR &= (uint8_t)~CCR_Z;
+                rt_r.ax = key;
+                break;
+            }
+            rt_key_take();
+        }
+        G_IF = 1;
+        if (rt_irq_pending) {
+            *(volatile uint8_t *)&G_IRQ = 1;
+        }
+        break;
     case 0x02:  /* shift flags */
         SET_AL(rt_r.ax, rd8(BDA_SHIFT));
         break;

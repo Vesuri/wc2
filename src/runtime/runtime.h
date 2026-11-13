@@ -198,6 +198,7 @@ extern volatile uint8_t rt_irq_tail;
 extern volatile uint8_t rt_irq_pending;
 #define RT_RAISE_IRQ() (rt_irq_pending = 1, *(volatile uint8_t *)&G_IRQ = 1)
 void rt_bios_int08(void);
+void rt_bios_int15(void);       /* a guest INT 15h intercept's chain (machine.c) */
 /* Async IRQ0 (docs/irq-plan.md I6): the platform's tick interrupt calls
  * rt_irq_interrupt (rt_entry.s) when rt_irq0_ready, else posts vector 08h;
  * production (I8) then runs the posted ticks it may take (rt_irq0_take).
@@ -248,9 +249,31 @@ void rt_bench_watch(void);
 extern volatile uint16_t rt_key_ring[RT_KEY_RING];
 extern volatile uint8_t rt_key_tail;
 void rt_input_init(void);
-void rt_keyboard_irq(void);
-void rt_keyboard_drain(void);
+void rt_keyboard_irq(uint16_t cs, uint16_t ip);
+void rt_keyboard_drain(uint16_t cs, uint16_t ip);
+/* The BIOS INT 09h's call of a guest INT 15h keyboard intercept (machine.c,
+ * rt_entry.s rt_key_hook): the interrupted CS:IP and the scan code in, AL and
+ * CF out; the handler runs as a hardware interrupt's (rt_irq0_running). */
+extern uint16_t rt_hook_cs, rt_hook_ip;
+extern uint8_t rt_hook_al, rt_hook_cf;
+void rt_key_hook(void);
+int rt_guest_vector(uint8_t vector);
 int rt_key_available(void);
+/* A read that waits for a key (input.c): returns with one buffered, or stops
+ * with `what`. rt_idle (rt_entry.s): one replayed interrupt of the reference's
+ * DOS idle wait at RT_IDLE_SEG:RT_IDLE_OFF, RT_IDLE_DEPTH bytes below the INT
+ * 21h caller's SP (DOSBox-X's INT 21h and INT 28h frames); 1 if one was posted. */
+void rt_key_wait(const char *what, uint8_t vector, uint16_t cs, uint16_t ip);
+int rt_idle(void);
+extern uint16_t rt_idle_cs, rt_idle_ip;
+extern uint8_t rt_idle_posted;
+/* MEASURED (host-m4, 585 interrupts in the wait, all alike): the halt at
+ * F000:D106; at the interrupt SS:SP is 12 bytes below the caller's, the INT
+ * 28h frame DAF2 F000 <flags> above it, then the INT 21h frame. */
+#define RT_IDLE_SEG 0xf000
+#define RT_IDLE_OFF 0xd106
+#define RT_IDLE_DEPTH 12
+#define RT_IDLE_INT28_IP 0xdaf2
 uint16_t rt_key_take(void);
 void rt_int16(void);
 void rt_int33(void);

@@ -388,6 +388,8 @@ class Program:
         self.align = {r["label"]: int(r["residue"]) for r in image.rows("align.csv")}
         self.outline = {r["label"] for r in image.rows("outline.csv")}
         self.seg_repeat = {r["label"] for r in image.rows("seg-repeat.csv")}
+        # calls on a deferred interrupt-level path (irq-stops.csv): the call stops
+        self.irq_stops = {(r["module"], int(r["offset"], 16)) for r in image.rows("irq-stops.csv")}
         self.outline_sites: dict[str, tuple] = {}  # R27, outline_cold
         self.offsets: dict[str, list[int]] = {}   # sorted instruction offsets (outline_cold)
         self.run_last: dict[str, dict[int, int]] = {}  # each run's last offset by its first
@@ -1044,6 +1046,8 @@ class Program:
         site = u.far_targets.get(off)
 
         def far(key):
+            if (mod, off) in self.irq_stops:
+                return stop_label(mod, off)
             if key in far_map:
                 return far_map[key]
             if off in u.stub_calls:     # through the overlay's stub cell
@@ -1484,8 +1488,13 @@ class Program:
                  if w.endswith("_stop")}
         for s in sorted(stops):
             off = int(s.split("_")[1], 16)
-            lines += [f"{s}:\t; transfer out of the translated modules",
-                      f"\tmove.l #{hx(u.ip_of(off))},d7", "\tjmp rt_stop_unknown"]
+            if (mod, off) in self.irq_stops:
+                lines += [f"{s}:\t; a deferred interrupt-level path (irq-stops.csv)",
+                          f"\tmove.l #{hx(u.ip_of(off))},d7",
+                          f"\tmove.l #{cs_expr(u.segment(off), mod)},d6", "\tjmp rt_stop_unknown"]
+            else:
+                lines += [f"{s}:\t; transfer out of the translated modules",
+                          f"\tmove.l #{hx(u.ip_of(off))},d7", "\tjmp rt_stop_unknown"]
             stats["stop_unknown site"] += 1
         candidates = {}
         for node in self.succ:

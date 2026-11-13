@@ -61,6 +61,11 @@ offsets. Outputs beside SWOTL's (`events.csv`, `interrupts.csv`, snapshots with
 - `WC2_REPLAY_PORTS` (`--replay-ports`): PIT (40h–42h), 3DAh and DSP status (22Ch, 22Eh:
   DOSBox-X times their busy and ready bits) reads, run-length coded, in `replay-ports.csv`.
   Host references (`tools/reference.py --host`) also take `WC2_OPL` for the DSP blocks.
+- With poll points (`WC2_POLLS`) the gate also opens while the CPU halts in DOS's INT 28h
+  idle stub, where DOSBox-X's CON read waits for a key (`dosbox-x-wc2-idle-irq.patch`):
+  `irq` rows at module `-` (the halt, F000:D106) with `stack=SS:SP` and six words (the INT
+  28h frame, then INT 21h's). Without it the name entry's `getch` (WC2.EXE+15080: flush,
+  then INT 21h AH=07h) held every interrupt and the run stalled (host-m4, MEASURED).
 - A key script hold per key: `key*N` holds for N instructions (flight polls keys once a
   frame and needs about 1.5 M; text entry repeats at holds above about 150 k).
 
@@ -90,7 +95,8 @@ put there, or lies in a read's trailing paragraph outside the module.
   constant A3h (10752 Hz), 4000-byte 8-bit single-cycle blocks (DSP 14h, DMA mode 49h)
   alternating between 5:1E10 and 5:2DB0; the handler acknowledges each IRQ 7 with a 22Eh
   read and starts the next. The acknowledgement comes −1.4 to +0.9 ms from length / rate
-  after the block's start (8 blocks).
+  after the block's start (8 blocks, host-m2); −2.1 to +3.0 ms (170 blocks, host-m3) and
+  −2.7 to +1.4 ms (170, host-m4).
 - Mode 13h is set by INT 10h at `WC2.EXE+5600E`, an overlay's generic set-mode routine.
 - Flight frame: 66.7 ms (4 timer ticks, set by the frame limiter at `WC2.EXE+10642`,
   which waits in `WC2.EXE+10636`–`10640`), of which 23.3 ms is work at 12000 cycles

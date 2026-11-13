@@ -270,6 +270,58 @@ static uint32_t deliver(uint8_t vector, uint16_t cs, uint16_t ip)
     return (uint32_t)cs << 16 | ip;
 }
 
+int rt_guest_vector(uint8_t vector)
+{
+    return guest_vector(vector);
+}
+
+/* -- the BIOS INT 09h's INT 15h (input.c bios_int09, rt_entry.s rt_key_hook) -- */
+
+uint16_t rt_hook_cs, rt_hook_ip;
+uint8_t rt_hook_al, rt_hook_cf;
+#define BIOS_SEG 0xf000
+#define BIOS_INT09_INT15 0xe98f     /* CB_IRQ1's return from its INT 15h */
+#define BIOS_INT15_OFF 0xcba0       /* the BIOS INT 15h (the IVT's, the chain's target) */
+
+/* On the interrupted stack as the reference's: the IRQ frame, the stub's push
+ * ax, then the INT 15h frame with IF and TF clear and CF set; AH = 4Fh, AL the
+ * scan code. Returns the frame's CS:IP. */
+uint32_t rt_key_hook_enter(void)
+{
+    rt_r.sp = push_frame(rt_hook_cs, rt_hook_ip);
+    G_IF = 0;
+    G_TF = 0;
+    rt_r.sp = (uint16_t)(rt_r.sp - 2);
+    wr16(lin(G_SS, rt_r.sp), rt_r.ax);
+    rt_r.ax = (uint16_t)(0x4f00 | rt_hook_al);
+    G_CCR |= CCR_C;
+    rt_irq0_running = 1;
+    return deliver(0x15, BIOS_SEG, BIOS_INT09_INT15);
+}
+
+void rt_key_hook_leave(void)
+{
+    rt_hook_al = (uint8_t)rt_r.ax;
+    rt_hook_cf = G_CCR & CCR_C;
+    rt_irq0_running = 0;
+}
+
+/* jmp far to the BIOS INT 15h (a guest intercept chaining): AH=4Fh sets CF in
+ * the frame's flags (DOSBox-X CALLBACK_SCF), then IRET; returns CS << 16 | IP
+ * popped. */
+uint32_t rt_bios_int15_c(void)
+{
+    uint32_t sp = lin(G_SS, rt_r.sp);
+    uint16_t ip = rd16(sp), cs = rd16(sp + 2);
+    if (AH(rt_r.ax) != 0x4f) {
+        rt_unsupported("system function through the BIOS INT 15h entry", 0x15, cs, ip);
+    }
+    wr16(sp + 4, rd16(sp + 4) | 1);
+    rt_set_flags_word(rd16(sp + 4));
+    rt_r.sp = (uint16_t)(rt_r.sp + 6);
+    return (uint32_t)cs << 16 | ip;
+}
+
 static void bench_service(void);
 
 static void int15(uint16_t cs, uint16_t ip);
@@ -282,17 +334,18 @@ uint32_t rt_int_c(uint32_t d6, uint32_t ip)
     if (guest_vector(vector)) {
         return deliver(vector, cs, (uint16_t)ip);
     }
+#ifndef WC2_SYNC
+    /* Production (I8): no keyboard interrupt; the keys typed since the last
+     * service with IF set (no handler running) are taken at its INT, as INT
+     * 09h would have taken them (with the game's INT 15h intercept). */
+    if (G_IF && !rt_irq0_running) {
+        rt_keyboard_drain(cs, (uint16_t)ip);
+    }
+#endif
     push_frame(cs, (uint16_t)ip);
     if (rt_bench) {
         bench_service();
     }
-#ifndef WC2_SYNC
-    /* Production (I8): no keyboard interrupt; the BIOS takes the keys typed
-     * since the last service with IF set, as its INT 09h would have. */
-    if (G_IF) {
-        rt_keyboard_drain();
-    }
-#endif
     switch (vector) {
     case 0x10: rt_int10(); break;
     case 0x21: rt_int21(cs, (uint16_t)ip); break;
@@ -504,7 +557,7 @@ uint32_t rt_irq_c(uint32_t d6, uint32_t ip)
             return frame;
         }
         if (vector == 9) {
-            rt_keyboard_irq();      /* BIOS INT 09h: the next keyboard event */
+            rt_keyboard_irq(cs, (uint16_t)ip);  /* BIOS INT 09h: the next keyboard event */
             continue;
         }
         /* DOSBox-X's external IRQ12 handler drains its mouse event queue.
@@ -662,6 +715,9 @@ void *rt_lookup(uint32_t cs, uint32_t ip, uint32_t far)
 {
     if ((cs & 0xffff) == BIOS_INT08_SEG && (ip & 0xffff) == BIOS_INT08_OFF) {
         return rt_bios_int08;
+    }
+    if ((cs & 0xffff) == BIOS_SEG && (ip & 0xffff) == BIOS_INT15_OFF) {
+        return rt_bios_int15;
     }
     uint32_t key = (cs & 0xffff) << 16 | (ip & 0xffff);
     uint32_t lo;

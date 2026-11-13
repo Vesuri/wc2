@@ -20,6 +20,10 @@ at the translator's poll points, the PIT and VGA status reads recorded):
   and the FLAGS images of annotations/flags.csv PUSHFs until rewritten;
 - every machine byte outside COMPARE (and the IRQ0 handler's private stack)
   that generated code read holds the reference value.
+The keyboard intercept (WC2's INT 15h handler, from the runtime's BIOS INT 09h
+model: rt_key_hook) runs as often with each AX as the reference's BIOS stub
+called it (interrupts.csv, from F000:E98F); an interrupt the reference took
+inside it (the runtime holds them there) fails.
 Every read of port 3DAh answers the reference's next recorded value, and every
 PIT latch the next two recorded port 40h reads (low, high), each read in the
 same service-event interval (trace/replay-ports.csv), and all are used.
@@ -43,6 +47,7 @@ import csv
 import struct
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -146,6 +151,20 @@ def elf_load(path: Path, function_extents: dict | None = None):
     return entry, segs, syms
 
 
+def call_returns(segs, function_extents: dict, target: int) -> set[int]:
+    """The return addresses of the jsr/bsr calls to `target` in the image's
+    functions (Capstone's 68020 decode of each function's extent)."""
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_M68K, capstone.CS_MODE_BIG_ENDIAN | capstone.CS_MODE_M68K_020)
+    out = set()
+    for lo, hi in function_extents.values():
+        code = next((data[lo - v:hi - v] for v, data, _ in segs if v <= lo and hi <= v + len(data)), None)
+        for i in md.disasm(code or b"", lo):
+            if i.mnemonic.split(".")[0] in ("jsr", "bsr") and i.op_str.split(".")[0] == f"${target:x}":
+                out.add(i.address + i.size)
+    return out
+
+
 def events(trace: Path):
     if (trace / "events.csv.gz").exists():
         return gzip.open(trace / "events.csv.gz", "rt")
@@ -160,7 +179,28 @@ def reference_services(trace: Path) -> list[tuple[str, dict]]:
                 vec, *kv = r["detail"].split()
                 regs = {k: int(v, 16) for k, v in (x.split("=") for x in kv)}
                 regs["vector"] = int(vec, 16)
+                regs["site"] = (r["module"], int(r["offset"], 16))
                 out.append((r["kind"], regs))
+    return out
+
+
+IDLE = "rt_idle_poll"   # DOS's idle wait: the reference's irq rows at module "-" (rt_key_wait)
+
+
+def idle_stacks(trace: Path) -> dict:
+    """The reference's SS, SP and six stack words at each idle-wait interrupt,
+    by its index among the irq rows (dosbox-x-wc2-idle-irq.patch)."""
+    out, k = {}, 0
+    with events(trace) as f:
+        for r in csv.DictReader(f):
+            if r["kind"] != "irq":
+                continue
+            if r["module"] == "-":
+                p = r["detail"].split()
+                assert len(p) == 10 and p[3].startswith("stack="), r
+                ss, sp = (int(x, 16) for x in p[3][6:].split(":"))
+                out[k] = (ss, sp, tuple(int(x, 16) for x in p[4:]))
+            k += 1
     return out
 
 
@@ -176,10 +216,10 @@ def reference_inputs(trace: Path, *, exact_releases: bool = False) -> tuple[list
             if r["kind"] in ("svc", "svc_ret"):
                 n += 1
             elif r["kind"] == "irq":
-                vec, svc, hits = r["detail"].split()
+                vec, svc, hits = r["detail"].split()[:3]
                 assert int(svc[4:]) == n, r
-                irqs.append((n, emit.label(r["module"], int(r["offset"], 16)),
-                             int(hits[5:]), int(vec, 16)))
+                lab = IDLE if r["module"] == "-" else emit.label(r["module"], int(r["offset"], 16))
+                irqs.append((n, lab, int(hits[5:]), int(vec, 16)))
             elif r["kind"] == "key_up":
                 fields = r["detail"].split()
                 release = n
@@ -245,12 +285,23 @@ SABOTAGE = {
     "sb-block": "the second DSP block's length one byte long (the block oracle)",
     "sb-irq": "an IRQ 7 posted with the first replayed interrupt, no DSP block playing",
     "dsp-status": "the model's 22Eh status reporting no data after the DSP reset",
+    "key-hook": "rt_key_hook returns at once: the BIOS INT 09h model calls no INT 15h intercept",
+    "hook-cf": "the intercept's return read with CF clear: the BIOS model takes no key",
+    "int16-zf": "the first INT 16h AH=01h that finds a key reports none (ZF set)",
+    "idle": "rt_idle returns at once: DOS's console wait takes no interrupt",
+    "idle-stack": "the console wait's SP two bytes lower at its first rt_idle (RT_IDLE_DEPTH)",
 }
 # Plants that are caught only by their own check (the first problem's text): a
-# milestone without speech has no DSP block, so they are left out there.
+# milestone without speech has no DSP block, one without keys no keyboard
+# interrupt, so they are left out there. hook-cf's key never reaches the BIOS
+# buffer: the services match up to DOS's console wait, which then has none.
 SABOTAGE_CATCH = {"sb-block": "SB blocks", "sb-irq": "IRQ 7 without a DSP block",
-                  "dsp-status": "the model's 2a"}
+                  "dsp-status": "the model's 2a", "key-hook": "keyboard intercept",
+                  "hook-cf": "console read with no key buffered", "int16-zf": "zf=",
+                  "idle": "console read with no key buffered", "idle-stack": "idle wait: stack"}
 SPEECH = ("sb-block", "dsp-status")
+KEYED = ("key-hook", "hook-cf", "int16-zf")
+IDLED = ("idle", "idle-stack")     # a milestone whose reference waits in DOS's idle stub
 
 
 def dos_file_stamp(stamp):
@@ -292,6 +343,10 @@ class MemFile:
 
 
 class Host:
+    # class defaults for a bare host (tests/test_host_replay_visits.py)
+    sabotage = None
+    hooking = False     # inside rt_key_hook
+
     def __init__(self, ref_root: Path, sabotage: str | None = None, elf: Path | None = None,
                  retrace: list | None = None, pit: list | None = None, dsp: dict | None = None):
         self.launch = ""
@@ -362,6 +417,22 @@ class Host:
             else:                           # move.l #$b0008000,d7 -> #$b0008002
                 k = code.index(bytes.fromhex("2e3cb0008000"))
                 e.write(a + k + 2, bytes.fromhex("b0008002"))
+        if sabotage == "key-hook":
+            e.write(self.syms["rt_key_hook"], bytes.fromhex("4e75"))   # rts
+        if sabotage == "idle":   # moveq #0,d0; rts
+            e.write(self.syms["rt_idle"], bytes.fromhex("70004e75"))
+        if sabotage == "idle-stack":
+            planted = []
+
+            @U.CODE_CB
+            def idle_entry(h, addr, size, user):
+                if not planted:
+                    a = self.syms["rt_r"] + 8
+                    sp = int.from_bytes(self.mem(a, 2), "big")
+                    self.e.write(a, ((sp - 2) & 0xFFFF).to_bytes(2, "big"))
+                    planted.append(sp)
+            self.idle_entry = idle_entry     # kept alive for the hook
+            e.hook_range(U.HOOK_CODE, idle_entry, self.syms["rt_idle"], self.syms["rt_idle"])
         if sabotage == "keyon":  # addq.b #1,(a0,d7.w) -> nop; nop
             a = self.syms["rt_out8"]
             code = e.read(a, 0x100)
@@ -400,6 +471,10 @@ class Host:
                 self.pending.pop()
                 if self.sabotage == "ax" and len(self.services) == 19:
                     self.e.reg_write(U.M68K["d0"], (self.r("d0") + 1) & 0xFFFF)
+                if self.sabotage == "int16-zf" and self.pending_vec[-1] == 0x16 and not self.zf_planted \
+                        and self.services[-1][1]["ax"] >> 8 == 0x01 and not self.state(16, 1) & 4:
+                    self.e.write(TOP + 16, bytes([self.state(16, 1) | 4]))
+                    self.zf_planted = True
                 regs = self.guest_regs(self.pending_vec.pop())
                 if self.irq_stack:
                     regs["irq"] = self.irq_stack[-1]
@@ -410,6 +485,48 @@ class Host:
             e.hook_range(U.HOOK_CODE, ret_hit, self.syms[n], self.syms[n])
         self.pending: list = []
         self.pending_vec: list = []
+        self.zf_planted = False
+
+        # the keyboard intercept (rt_key_hook): AX at each run (the BIOS
+        # stub's 4Fh, the scan code), the reference's INT 15h rows to compare
+        self.key_hooks: Counter = Counter()
+        self.hooking = False
+        self.hook_runs = 0
+
+        @U.CODE_CB
+        def key_hook(h, addr, size, user):
+            self.hooking = True
+            self.hook_runs = sum(self.key_hooks.values())
+
+        @U.CODE_CB
+        def key_hook_ret(h, addr, size, user):
+            # rt_key_hook returned to the BIOS model: the intercept must have run
+            self.hooking = False
+            if sum(self.key_hooks.values()) == self.hook_runs and not self.irq_lost:
+                self.irq_lost = "keyboard intercept: the BIOS INT 09h model's INT 15h returned " \
+                                "without running the guest handler"
+                self.halted = True
+                self.e.stop()
+
+        @U.CODE_CB
+        def key_hook_run(h, addr, size, user):
+            if self.u32(self.r("a7")) == self.syms["rt_key_hook_back"]:
+                self.key_hooks[self.r("d0") & 0xFFFF] += 1
+
+        @U.CODE_CB
+        def key_hook_back(h, addr, size, user):
+            self.hooking = False
+            if self.sabotage == "hook-cf":
+                self.e.write(TOP + 16, bytes([self.state(16, 1) & ~1 & 0xFF]))
+
+        e.hook_range(U.HOOK_CODE, key_hook, self.syms["rt_key_hook"], self.syms["rt_key_hook"])
+        self.hook_rets = call_returns(segs, functions, self.syms["rt_key_hook"])
+        if not self.hook_rets:
+            raise SystemExit("host image: no call to rt_key_hook found")
+        for ret in self.hook_rets:
+            e.hook_range(U.HOOK_CODE, key_hook_ret, ret, ret)
+        e.hook_range(U.HOOK_CODE, key_hook_run, self.syms["deliver_guest"], self.syms["deliver_guest"])
+        e.hook_range(U.HOOK_CODE, key_hook_back, self.syms["rt_key_hook_back"], self.syms["rt_key_hook_back"])
 
         # a vector the guest owns (VROOMM's INT 3Fh): rt_int's service part ends
         # where its guest handler starts (deliver_int); that IRET may return
@@ -503,7 +620,7 @@ class Host:
             self.irq.returned()
 
         e.hook_range(U.HOOK_CODE, irq_deliver, self.syms["deliver_guest"], self.syms["deliver_guest"])
-        for n in ("rt_irq_async_back", "rt_irq_interrupt_back", "rt_irq_back"):
+        for n in ("rt_irq_async_back", "rt_irq_interrupt_back", "rt_irq_back", "rt_key_hook_back"):
             if n in self.syms:
                 e.hook_range(U.HOOK_CODE, irq_back, self.syms[n], self.syms[n])
 
@@ -867,6 +984,7 @@ class Host:
             if script else []
         releases = list(script["releases"]) if script else []
         self.irqs = list(script["irqs"]) if script else []
+        idle = script.get("idle", {}) if script else {}
         self.step, self.hits, self.release = 0, 0, None
         self.irq_i, self.visit_n, self.visits, self.groups = 0, None, {}, {}
         self.irq_lost: str | None = None
@@ -933,6 +1051,16 @@ class Host:
                                 f"not reached (service events {n})"
             if n != svc or here != lab or self.visits.get(here, 0) != hits:
                 return
+            if here == IDLE:
+                # the wait's stack is the reference's (input.c RT_IDLE_DEPTH)
+                ss, sp, words = idle[self.irq_i]
+                g = self.guest_regs(0)
+                got = (g["ss"], g["sp"], tuple(int.from_bytes(self.gmem(g["ss"] * 16 + g["sp"] + 2 * i, 2),
+                                                              "little") for i in range(6)))
+                if got != (ss, sp, words) and not self.irq_lost:
+                    self.irq_lost = f"reference irq #{self.irq_i} in DOS's idle wait: stack " \
+                                    f"{got[0]:04x}:{got[1]:04x} {' '.join(f'{w:04x}' for w in got[2])}, " \
+                                    f"the reference's {ss:04x}:{sp:04x} {' '.join(f'{w:04x}' for w in words)}"
             post_group(self.r("a7"))
 
         def post_group(a7):
@@ -942,6 +1070,11 @@ class Host:
             back to the same poll point (rt_irq_back at this stack depth)."""
             nonlocal makes
             key = self.irqs[self.irq_i][:3]
+            if self.hooking and not self.irq_lost:
+                # the runtime holds interrupts while the keyboard intercept runs
+                # (rt_irq0_running): the reference took this one inside it
+                self.irq_lost = f"reference irq #{self.irq_i} at {key[1]} inside the keyboard " \
+                                f"intercept (held to its IRET here)"
             if self.sabotage == "sb-irq" and self.irq_i == 0:
                 self.post(0x0F)
             while self.irq_i < len(self.irqs) and self.irqs[self.irq_i][:3] == key:
@@ -978,7 +1111,7 @@ class Host:
         # The poll entry precedes interrupt delivery; _np is the actual
         # instruction continuation, including returns from guarded copies.
         continuations = {}
-        for lab in {r[1] for r in self.irqs} | rep_labels:
+        for lab in {r[1] for r in self.irqs if r[1] != IDLE} | rep_labels:
             for name in (lab + "_np", lab + "_bp_np"):
                 if name in self.syms:
                     continuations[self.syms[name]] = lab
@@ -1056,6 +1189,18 @@ def milestone_script(name: str) -> dict:
         keys.append((trigger(spec), key if key.startswith(("mx", "my", "mb")) else key_code(key)))
     return {"keys": keys, "snapshots": [trigger(t) for t in r["snapshots"].split()],
             "frame": r["vga_mode"] == "13", "speech": "0f" in r["irqs"].split()}
+
+
+def reference_hooks(trace: Path) -> Counter:
+    """AX at each INT 15h the reference BIOS's INT 09h made (interrupts.csv: from
+    F000:E98F's stub, DOSBox-X CB_IRQ1) into a guest handler."""
+    out: Counter = Counter()
+    with (trace / "interrupts.csv").open() as f:
+        for r in csv.DictReader(f):
+            if r["vector"] == "0x15" and r["source_module"] == "-" and r["source_offset"] == "0xfe98f" \
+                    and r["target_module"] != "-":
+                out[int(r["ax"], 16)] += int(r["count"])
+    return out
 
 
 def host_reference(milestone: str) -> Path:
@@ -1155,16 +1300,37 @@ def relocated(g: dict) -> tuple[dict, list[str]]:
     return r, []
 
 
-def compare_services(got, want) -> list[str]:
+def undefined_flags() -> dict:
+    """annotations/undefined-flags.csv: (module, INT offset) -> {register: bits}
+    of a FLAGS image an undefined flag reached (translation lesson 39)."""
+    out: dict = {}
+    for r in image.rows("undefined-flags.csv"):
+        out.setdefault((r["module"], int(r["offset"], 16)), {})[r["register"]] = int(r["mask"], 16)
+    return out
+
+
+def compare_services(got, want, masks: dict | None = None, applied: list | None = None) -> list[str]:
     """CF/ZF: services read no flags, so the state block may hold dead ones at
     entry; at return they are checked where the reference service changed them
-    or where they agreed at entry. Services in IRQ0's handler: relocated()."""
+    or where they agreed at entry. Services in IRQ0's handler: relocated().
+    A register bit of `masks` (undefined_flags()) is not compared at that INT
+    and its return; each difference it hid goes to `applied`."""
     bad = []
     keys = REGS + ("es", "ss", "ds", "vector")
     entry: list = []
+    masks = undefined_flags() if masks is None else masks
     for k, ((gk, g), (wk, w)) in enumerate(zip(got, want)):
         g, diff = relocated(g)
-        diff += [f"{n}={g[n]:04x}/{w[n]:04x}" for n in keys if g[n] != w[n]]
+        if gk == "svc":
+            mask = masks.get(w.get("site"), {})
+        else:
+            mask = masks.get(entry[-1][1].get("site"), {}) if entry else {}
+        for n in keys:
+            m = mask.get(n, 0)
+            if (g[n] ^ w[n]) & ~m & 0xFFFF:
+                diff.append(f"{n}={g[n]:04x}/{w[n]:04x}")
+            elif g[n] != w[n] and applied is not None:
+                applied.append((k, n, g[n], w[n]))
         flags = w["flags"]
         if gk == "svc":
             entry.append((g, w))
@@ -1330,6 +1496,11 @@ def main(argv=None) -> int:
         for name in names:
             what = SABOTAGE[name]
             if not args.plants and name in SPEECH and not milestone_script(args.milestone)["speech"]:
+                continue
+            if not args.plants and name in KEYED and not any(
+                    isinstance(k, int) for _, k in milestone_script(args.milestone)["keys"]):
+                continue
+            if not args.plants and name in IDLED and not idle_stacks(host_reference(args.milestone)):
                 continue
             problems = check(args.milestone, args.timeout, None, name)
             catch = SABOTAGE_CATCH.get(name, "")
@@ -1501,6 +1672,7 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     h.calendar_date, h.file_clock = reference_clocks(trace)
     label = script["snapshots"][-1][0]
     script["irqs"], script["releases"] = reference_inputs(trace, exact_releases=True)
+    script["idle"] = idle_stacks(trace)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
     problems = rearm_problems() + overlay_problems(sabotage)
     if int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes()):
@@ -1531,6 +1703,22 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     print(f"SB blocks: {len(h.blocks)} started, {len(want_blocks)} in the reference" +
           (f"; reference IRQ 7 acknowledged {min(late):+.1f}..{max(late):+.1f} ms from length/rate"
            if late else ""))
+    want_hooks = reference_hooks(trace)
+    if h.stopped_at == label and h.key_hooks != want_hooks or \
+            h.stopped_at != label and h.key_hooks - want_hooks:
+        diff = sorted(set(h.key_hooks) ^ set(want_hooks) | {a for a in h.key_hooks if h.key_hooks[a] != want_hooks[a]})
+        problems.append(f"keyboard intercept: {sum(h.key_hooks.values())} runs, the reference "
+                        f"{sum(want_hooks.values())}; first AX {diff[0]:04x}: {h.key_hooks[diff[0]]} vs "
+                        f"{want_hooks[diff[0]]}")
+    # cut short: each reference keyboard interrupt ran the intercept once (m4:
+    # 14 IRQ 1, 14 INT 15h), so each one replayed here must have, but the last
+    # posted (its BIOS model may not have run when the run stopped)
+    kb = [i for i in script["irqs"][:h.irq_i] if i[3] == 9]
+    if h.stopped_at != label and sum(want_hooks.values()) == sum(i[3] == 9 for i in script["irqs"]) \
+            and sum(h.key_hooks.values()) < len(kb) - 1:
+        problems.append(f"keyboard intercept: {sum(h.key_hooks.values())} runs for {len(kb)} replayed "
+                        f"keyboard interrupts (the reference runs it for each)")
+    print(f"keyboard intercept: {sum(h.key_hooks.values())} runs, {sum(want_hooks.values())} in the reference")
     if h.display_miss:
         problems.append(h.display_miss)
     problems += h.irq.finish(REPO / "tmp/test" / f"irq-monitor-{milestone}{'-' + sabotage if sabotage else ''}.json")
@@ -1553,11 +1741,11 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
         problems.append(f"milestone label {label} not reached (exit {h.exit}, pc={h.r('pc'):x}"
                         f"{', ' + h.log[-1] if h.log else ''})")
     want = reference_services(trace)
-    if h.stopped_at == label:
-        problems += compare_services(h.services, want)
-    else:
-        problems += compare_services(h.services, want[:len(h.services)])
-    print(f"services: {len(h.services)} run, {len(want)} in the reference")
+    applied: list = []
+    problems += compare_services(h.services, want if h.stopped_at == label else want[:len(h.services)],
+                                 applied=applied)
+    print(f"services: {len(h.services)} run, {len(want)} in the reference; "
+          f"{len(applied)} register differences masked (annotations/undefined-flags.csv)")
     if h.stopped_at == label:
         ref_regs = dict(kv.split("=") for kv in (snap / "regs.txt").read_text().split())
         ref = (snap / "ram.bin").read_bytes()

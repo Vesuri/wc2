@@ -154,7 +154,7 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_dos_sda test_dos_search test_ems test_far_return_protocol test_file_dates \
 	test_host_launch test_irq_footprint test_irq_in_service test_mouse_irq test_interrupt_frame_mask \
 	test_key_chords test_keyboard_prefix test_host_replay_visits test_replay_hooks \
-	test_replay_run_isolation
+	test_replay_run_isolation test_undefined_flags
 # The program block test in parts (tests/m68k_blocks.py --shard); BLOCK_JOBS bounds
 # the parts run at once when test-blocks runs alone.
 BLOCK_SHARDS ?= 8
@@ -235,7 +235,7 @@ host: gen-check build/host/wc2.elf
 
 # Gate 5 (docs/port-plan.md P5): lockstep against the host references
 # (tools/reference.py --host), one run per milestone, in parallel.
-HOST_MILESTONES = m1 m1b m2
+HOST_MILESTONES = m1 m1b m2 m3 m4
 t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 5400)
 test-host: host

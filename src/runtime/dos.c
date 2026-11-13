@@ -557,7 +557,8 @@ static void get_time(void)
     SET_AL(rt_r.ax, midnight);
 }
 
-/* AH=08h: CON input, no echo, as the reference's CON device reads INT 16h
+/* AH=07h/08h: CON input, no echo (07h without the break check: the reference's
+ * DOS reads both alike), as the reference's CON device reads INT 16h
  * AH=10h: an F0h low byte reads as 0; a 0 or E0h low byte gives 0, then the
  * scan code. */
 static void read_char(uint16_t cs, uint16_t ip)
@@ -568,9 +569,7 @@ static void read_char(uint16_t cs, uint16_t ip)
         scan_next = 0;
         return;
     }
-    if (!rt_key_available()) {
-        rt_unsupported("console read with no key buffered", 0x21, cs, ip);
-    }
+    rt_key_wait("console read with no key buffered", 0x21, cs, ip);
     uint16_t key = rt_key_take();
     uint8_t c = (uint8_t)key, scan = (uint8_t)(key >> 8);
     if (scan && (c == 0xf0 || c == 0xe0)) {
@@ -755,6 +754,7 @@ void rt_int21(uint16_t cs, uint16_t ip)
     }
     switch (ah) {
     case 0x0d: break;  /* DOSBox disk reset preserves registers and search slots. */
+    case 0x07:
     case 0x08: read_char(cs, ip); break;
     case 0x0b:  /* CON input status */
         SET_AL(rt_r.ax, rt_key_available() ? 0xff : 0x00);
