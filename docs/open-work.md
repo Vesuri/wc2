@@ -6,10 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-21. `rt_ems_touch` (`src/runtime/ems.c`) with an access entirely below the EMS frame: `lo`
-    clamps to the frame start, `hi` stays below it, `(hi - first)` wraps and frame pages
-    the access never touched are exposed (found by the X-Wing session; DERIVED by reading).
-    Acceptance: such an access exposes no page, a `tests/test_ems.py` case with its plant.
 22. The divide lowering (`translator/lower.py`, R14i) assigns `self.cold = self.out` where
     the other out-of-line sites append, dropping any stub queued before it for the same
     instruction (an EMS guard's `_es`; found by the X-Wing session, DERIVED by reading).

@@ -168,10 +168,15 @@ static uint8_t map_slot(uint8_t phys, uint16_t slot)
     return 0;
 }
 
-/* The runtime is about to touch guest a..a+n-1 (n >= 1), which meets the frame. */
+/* The runtime is about to touch guest a..a+n-1. Only the frame pages it meets
+ * are exposed: the ES guard also reports accesses that miss the frame (ES
+ * D001h-DFFFh below it, the word at FFFFh wrapping to the base). */
 void rt_ems_touch(uint32_t a, uint32_t n)
 {
     uint32_t first = lin(EMS_FRAME, 0), last = first + EMS_PHYS * RT_EMS_PAGE - 1;
+    if (!n || a > last || a + n - 1 < first) {
+        return;
+    }
     uint32_t lo = a < first ? first : a, hi = a + n - 1 > last ? last : a + n - 1;
     for (uint32_t p = (lo - first) / RT_EMS_PAGE; p <= (hi - first) / RT_EMS_PAGE; ++p) {
         expose((uint8_t)p);

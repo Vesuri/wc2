@@ -11,7 +11,8 @@ without writes through either (ems.c keeps such aliases as separate copies,
 DOSBox does not), a final read-back of every page, and release: frame pages
 left mapped, freed pages reused (split across free runs, stale bytes kept),
 the free count and longest run apart, error codes. Release of the OS handle
-0 stops (its pages are outside the store).
+0 stops (its pages are outside the store). Accesses that miss the frame expose
+no frame page (`outside`).
   test_ems.py [--sabotage]
 """
 import argparse
@@ -219,6 +220,37 @@ def runtime(operations, plant=None):
     return words, frames
 
 
+def outside(plant=None):
+    """Accesses that miss the frame (the ES guard reports ES D001h-DFFFh and a
+    word wrapping at FFFFh too) expose no frame page; one straddling its first
+    byte exposes page 0 only. Four pages mapped, none live yet. below-frame:
+    an access below the frame exposes page 0."""
+    h = T.machine.machine()
+    for r, v in (('ax', 0x4300), ('bx', 4)):
+        h.e.write(h.syms['rt_r'] + 2 * H.REGS.index(r), struct.pack('>H', v))
+    T.machine.call(h, 'rt_int67')
+    handle = reg(h, 'dx')
+    for phys in range(4):
+        for r, v in (('ax', 0x4400 | phys), ('bx', phys), ('dx', handle)):
+            h.e.write(h.syms['rt_r'] + 2 * H.REGS.index(r), struct.pack('>H', v))
+        T.machine.call(h, 'rt_int67')
+        assert not h.halted and reg(h, 'ax') >> 8 == 0, (phys, hex(reg(h, 'ax')), h.log)
+    state = lambda: (h.mem(h.syms['rt_ems_live'], 4), h.mem(h.syms['rt_ems_mapped'], 8))
+    live0, mapped = state()
+    assert live0 == bytes(4) and mapped != bytes(8), (live0, mapped)   # the control's premise
+    errors = []
+    for a, n in ((0xD0010, 1), (0xD0010, 2), (0xDFFFF, 1), (0xF0000, 1), (0xF0000, 0x10000)):
+        T.machine.call(h, 'rt_ems_touch', a, n)
+        if plant == 'below-frame' and a < FRAME:
+            T.machine.call(h, 'rt_ems_touch', FRAME, 1)
+        if h.halted or state() != (live0, mapped):
+            errors.append(f'access {a:05x}+{n} outside the frame: live {state()[0].hex()}')
+    T.machine.call(h, 'rt_ems_touch', FRAME - 4, 5)
+    if state() != (bytes([1, 0, 0, 0]), mapped):
+        errors.append(f'access {FRAME - 4:05x}+5: live {state()[0].hex()}, want page 0 only')
+    return errors
+
+
 def compare(expected, actual):
     (ew, ef), (aw, af) = expected, actual
     errors = [f'result words differ: {[(k, hex(e), hex(a)) for k, (e, a) in enumerate(zip(ew, aw)) if e != a][:8]}']\
@@ -243,7 +275,11 @@ def main():
                       'release-unmaps'):
             assert compare(expected, runtime(operations, plant)), plant + ' plant escaped'
             print(f'EMS: {plant} plant caught')
+        assert outside('below-frame'), 'below-frame plant escaped'
+        print('EMS: below-frame plant caught')
         return
+    errors = outside()
+    assert not errors, errors
     errors = compare(expected, runtime(operations))
     assert not errors, errors
     h = T.machine.machine()         # the OS handle's pages lie outside the store
