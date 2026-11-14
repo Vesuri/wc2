@@ -6,10 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-22. The divide lowering (`translator/lower.py`, R14i) assigns `self.cold = self.out` where
-    the other out-of-line sites append, dropping any stub queued before it for the same
-    instruction (an EMS guard's `_es`; found by the X-Wing session, DERIVED by reading).
-    Acceptance: the stubs kept, a guard case over an ES divide, `make gen` and gate 3.
 14. PIT sabotage that changes the run: `tests/host_run.py --sabotage pit` flips one latch's
     low bit and is caught at neither m1 nor m1b (0 problems, MEASURED in `66e6de5`).
     Acceptance: a pit plant caught at m1b, with its effect stated.

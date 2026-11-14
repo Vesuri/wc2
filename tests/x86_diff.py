@@ -391,6 +391,16 @@ def boundary(h: Harness) -> None:
                            (0xFFFF, 0x8000), (0, 0x8000), (0x0001, 0)):
                 h.case(bytes([0xF7, 0xC0 | reg << 3 | 3]), f"b:muldiv16/{reg}",
                        overrides={"regs": {"ax": ax, "dx": dx, "bx": e16}})
+    # The same through ES:[BX] (the 68020 differential's ems variant puts its EMS
+    # guard stub before the divide error's): divisor 0, an overflow, a quotient.
+    for reg in (4, 5, 6, 7):
+        for w, opc, edges in ((8, 0xF6, (0, 0x80, 0x7F)), (16, 0xF7, (0, 1, 0x8000))):
+            for e in edges:
+                for dx, ax in ((0, 0x0100), (0x7FFF, 0xFFFF), (0xFFFF, 0x8000)):
+                    h.case(bytes([0x26, opc, reg << 3 | 7]), f"b:muldiv{w}es/{reg}",
+                           overrides={"regs": {"ax": ax, "dx": dx, "bx": 0x0400, "es": 0x5000},
+                                      "mem": [(lambda r: r["es"] * 16 + r["bx"],
+                                               e.to_bytes(2, "little"))]})
     # String instructions: REP with CX 0/1/n, DF both ways, SI/DI wrapping at 64 KiB.
     for b in (0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF):
         for pre in (b"", b"\xf3", b"\xf2", b"\x26\xf3", b"\xf3\x2e"):

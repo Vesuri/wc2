@@ -1280,7 +1280,7 @@ class Lowering:
         if w == 16:
             self.e("swap d2")
         self.exit_fault(0)
-        self.cold, self.out = self.out, hot
+        self.cold, self.out = self.cold + self.out, hot    # after the operand's stubs
         self.ccr = set()
 
     # -- data movement ---------------------------------------------------------
