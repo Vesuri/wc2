@@ -53,6 +53,10 @@ its code segment (`cs:[6C2h]`, `cs:[6C4h]`) and two jump tables (`cs:[di+4ACh]`,
 No driver installs an interrupt vector, calls DOS or the BIOS, or runs an interrupt
 handler of its own: every handler the traces took is root code, and no service event
 comes from a driver. `STRAX.DRV` reads PIT counter 0 around its OPL writes (43h ← 06h,
-then two reads of 40h: about 18 M reads in m0–m4), the OPL delay loop. The drivers keep
+then two reads of 40h: about 18 M reads in m0–m4), the OPL delay loop. The loop (`+0714h`) sums the
+counter's fall from latch to latch until CX ticks pass (0Ah after the register write, 37h
+after the data), so the sum telescopes and only the latch that ends a loop sets its length
+(DERIVED by reading; replaying that loop over m1b's 207,308 reference latches ends exactly
+at the last, MEASURED). The `pit` host plant therefore answers a mid-loop latch, not a low bit. The drivers keep
 variables in their code segments (`tools/code_writes.py`: class `data`, no write into a
 decoded instruction).

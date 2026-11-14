@@ -278,7 +278,7 @@ SABOTAGE = {
     "irq-offset": "rt_irq_async starts the private stack at 7FFEh, not IRQ_SP (the relocated compare)",
     "keyon": "rt_out8 counts no AdLib key-on edge (its addq dropped)",
     "overlay": "the overlay stub table zeroed (machine.c overlay_row finds no overlay CS)",
-    "pit": "one PIT latch answered with the counter's low byte off by one",
+    "pit": "the sixth PIT latch answered one above the fifth: a full period gone, STRAX's delay loop ends 5 latches early",
     "irq-footprint": "the monitor's footprint without the INT 08h handler's tick-count write row (I3)",
     "irq-sync": "the monitor's footprint without sync rows (I3)",
     "irq-bounds": "the monitor's irq-bounds.csv bounds one lower at their top (I3)",
@@ -297,7 +297,7 @@ SABOTAGE = {
 # buffer: the services match up to DOS's console wait, which then has none.
 SABOTAGE_CATCH = {"sb-block": "SB blocks", "sb-irq": "IRQ 7 without a DSP block",
                   "dsp-status": "the model's 2a", "key-hook": "keyboard intercept",
-                  "hook-cf": "console read with no key buffered", "int16-zf": "zf=",
+                  "hook-cf": "console read with no key buffered", "int16-zf": "zf=", "pit": "PIT",
                   "idle": "console read with no key buffered", "idle-stack": "idle wait: stack"}
 SPEECH = ("sb-block", "dsp-status")
 KEYED = ("key-hook", "hook-cf", "int16-zf")
@@ -386,7 +386,7 @@ class Host:
         self.retrace_bad: str | None = None
         # PIT replay: (service events, value, reads) runs of port 40h reads
         self.pit = list(pit or [])
-        self.pit_i = self.pit_used = self.pit_latches = 0
+        self.pit_i = self.pit_used = self.pit_latches = self.pit_prev = 0
         # DSP status replay: per port (22Ch, 22Eh) its runs, next row, reads used of it
         self.dsp = {port: [list(runs), 0, 0] for port, runs in (dsp or {}).items()}
         self.dsp_reads = 0
@@ -867,9 +867,14 @@ class Host:
                 self.retrace_bad = self.retrace_bad or f"PIT latch of channel {args[0]}"
             lo, hi = self.pit_read(), self.pit_read()
             self.pit_latches += 1
-            if self.sabotage == "pit" and self.pit_latches == 100:
-                lo ^= 1
             res = hi << 8 | lo
+            # STRAX.DRV's OPL delay (+0714h) sums the counter's fall from latch to
+            # latch until CX ticks pass, so only the latch that ends it counts; the
+            # sixth is mid-loop (latches 4-11 wait 37h ticks, open-work 14): one
+            # above the fifth reads as 4DADh ticks, the loop ends there
+            if self.sabotage == "pit" and self.pit_latches == 6:
+                res = self.pit_prev + 1
+            self.pit_prev = res
         elif n == "plat_log":
             self.log.append(self.cstr(args[0]))
             print(self.log[-1])

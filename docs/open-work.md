@@ -6,9 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-14. PIT sabotage that changes the run: `tests/host_run.py --sabotage pit` flips one latch's
-    low bit and is caught at neither m1 nor m1b (0 problems, MEASURED in `66e6de5`).
-    Acceptance: a pit plant caught at m1b, with its effect stated.
 15. Host lockstep at m5 and m6 (the flight route, the save and the load): DOS writes into
     `GAMEDAT` (`SAVEGAME.WC2`, `TEMPGLOB.000`, `MEM.$$$`, `AUTO.$$$`, `TAPE.TMP`) through
     SWOTL's I/O windows, any DOS or EMS function the traces show that the runtime lacks
