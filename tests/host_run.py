@@ -298,10 +298,11 @@ SABOTAGE = {
 # Plants that are caught only by their own check (the first problem's text): a
 # milestone without speech has no DSP block, one without keys no keyboard
 # interrupt, so they are left out there. hook-cf's key never reaches the BIOS
-# buffer: the services match up to DOS's console wait, which then has none.
+# buffer: the first INT 16h that finds it in the reference finds none (the run
+# stops at that service's return).
 SABOTAGE_CATCH = {"sb-block": "SB blocks", "sb-irq": "IRQ 7 without a DSP block",
                   "dsp-status": "the model's 2a", "key-hook": "keyboard intercept",
-                  "hook-cf": "console read with no key buffered", "int16-zf": "zf=", "pit": "PIT",
+                  "hook-cf": "svc_ret int 16", "int16-zf": "zf=", "pit": "PIT",
                   "idle": "console read with no key buffered", "idle-stack": "idle wait: stack",
                   "stall": "stalled: no service event"}
 SPEECH = ("sb-block", "dsp-status")
