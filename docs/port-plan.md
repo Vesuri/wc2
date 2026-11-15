@@ -508,6 +508,7 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Interrupts inside DOS's console wait: the reference's poll gate opens in the INT 28h idle HLT (`dosbox-x-wc2-idle-irq.patch`, irq rows at module `-` with the stack), `rt_idle` replays them in sync builds (X-Wing's sync `rt_key_wait` stops instead), sabotages `idle`, `idle-stack`; undefined flags that reach a register masked per site (`annotations/undefined-flags.csv`, owner 2026-11-13) | WC2 P6 (`git log -S rt_idle`) | to X-Wing and SWOTL (its open-work 24) when a wait or an undefined flag shows |
 | `rt_ems_touch` with an access outside the frame exposes no page (found by X-Wing in the copy-free EMS model; WC2 open-work 21 with a `test_ems` case) | WC2 P6 | X-Wing: its EMS model if it kept the clamp (not checked here) |
 | The divide lowering keeps the stubs queued before its divide-error stub (found by X-Wing; WC2 open-work 22, boundary cases through ES) | WC2 P6 | X-Wing: its `lower.py` if it has the same assignment (not checked here) |
+| Host lockstep in C-filtered memory hooks (`tests/memwatch.c`), service compare as logged and a watchdog (first problem, stall) | WC2 P6 (`git log -S memwatch`) | to X-Wing: its host runs spend most of their time in the same Python hooks (INFERRED) |
 | Amiga display and input; effect capture and FM gates; SB speech on Paula | neither yet | display and input go to whichever port lands them first; the FM gates are adapted once and shared (X-Wing's P7) |
 
 ## Copy map (SWOTL `658fc60` → here)

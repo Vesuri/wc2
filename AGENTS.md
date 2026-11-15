@@ -49,6 +49,18 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
   fixtures. Audio synthesis only: the FM checks and their sabotage, plus build and smoke.
   Docs only: consistency and diff checks. Scope by dependency, never by whether a test
   passes; never weaken a check, oracle or tolerance.
+- Verify the least that settles the change, as fast as it can be settled:
+  - Checks stop at their first failure (`tests/host_run.py` stops on the first difference
+    and on a stall); never wait out a time limit to learn a result.
+  - Host lockstep: only the milestones whose route runs the changed code or surface. A
+    translator change runs none when the generated bodies are unchanged (the sorted
+    `; body` lines). A harness-only change runs its plants at m1/m1b and the milestone
+    that needs it.
+  - Plants run when the check they test changes, at the shortest milestone where they fire.
+  - Poll-point changes (`irq-sync.csv`): find every row in one `--stale-polls` pass on the
+    current references, then re-record once.
+  - Every milestone runs only at a phase gate. Long runs go in the background while other
+    work goes on.
 - Fixes to files imported from Secret Weapons of Luftwaffe are logged in
   `docs/upstream.md` (one row each) so they can move between the ports.
 - Before building a runtime surface, harness feature or translator feature, check the

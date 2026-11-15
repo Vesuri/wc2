@@ -49,7 +49,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 FOOTPRINT = REPO / "build/gen/irq-footprint.csv"
 EMS_FRAME = (0xE0000, 0xF0000)     # src/runtime/ems.c EMS_FRAME
-WRITTEN, ACCESSED, READ_OK, WRITE_OK, POINTER, BOUNDED = 1, 2, 4, 8, 16, 32
+WRITTEN, ACCESSED, READ_OK, WRITE_OK, POINTER, BOUNDED, BUFFER = 1, 2, 4, 8, 16, 32, 64
 LIMIT = 20
 # Runtime code that runs as an interrupt handler, not main code: the BIOS tick
 # (IRQ0 while IVT 08h is the BIOS's, and the end of the handler's chain) and the
@@ -156,6 +156,8 @@ class Monitor:
         self.buffer_writes: list[tuple[int, int, str, bool, int]] = []
         self.checked_bounds = 0
         self.pending_place = False
+        self.seg_cache: dict = {}
+        self.place_key = None
         self.problems: list[str] = []
         self.failed: set[str] = set()
 
@@ -198,18 +200,28 @@ class Monitor:
             for x in range(a, b + 1):
                 mask[x] |= BOUNDED
         self.mask = mask
+        if hasattr(self.h, "watch_mask"):
+            self.h.watch_mask(mask)     # memwatch.c
 
     def segments(self) -> dict[str, set[int]]:
         """Runtime class -> the segment values its words hold now."""
         out = {}
         for cls, lin, end in self.pointer_words:
             raw = self.h.gmem(lin, end - lin + 1)
-            out[cls] = {int.from_bytes(raw[k:k + 2], "little") for k in range(len(raw) - 1)}
+            got = self.seg_cache.get(cls)
+            if got is None or got[0] != raw:    # the words rarely change: one set per value
+                got = self.seg_cache[cls] = (raw, {int.from_bytes(raw[k:k + 2], "little")
+                                                   for k in range(len(raw) - 1)})
+            out[cls] = got[1]
         return out
 
     def place(self):
         """The runtime classes' intervals from the entry's and the current words."""
         now = self.segments()
+        key = tuple(id(v) for v in self.entry_segs.values()) + tuple(id(v) for v in now.values())
+        if key == self.place_key:       # the same sets (segments' cache): the same intervals
+            return
+        self.place_key = key
         spans = {"r": [], "w": []}
         for cls, lo, hi, access in self.runtime_rows:
             for v in self.entry_segs.get(cls, set()) | now.get(cls, set()):
@@ -294,11 +306,15 @@ class Monitor:
         self.entry_segs = self.segments()
         self.place()
         self.in_handler = True
+        if hasattr(self.h, "watch_handler"):
+            self.h.watch_handler(True)     # memwatch.c: every access
         return True
 
     def returned(self):
         if self.in_handler:
             self.in_handler = False
+            if hasattr(self.h, "watch_handler"):
+                self.h.watch_handler(False)
             self.check_bounds("return")
             self.tick += 1
 
@@ -344,6 +360,7 @@ class Monitor:
                     else:
                         r = self.buffer_reads.setdefault(a, [self.tick, self.tick, cls])
                         r[1] = self.tick
+                        self.mask[a] |= BUFFER      # memwatch.c passes main writes of it
                         lo, hi = self.buffer_span
                         self.buffer_span = (a, a) if lo > hi else (min(lo, a), max(hi, a))
                 continue

@@ -112,6 +112,13 @@ class Engine:
         self.hooks.append(cb)
         return hh.value
 
+    def hook_native(self, kind: int, fn: int, user: int, begin: int, end: int) -> int:
+        """A C callback (address fn) with user data on [begin, end] (memwatch.c)."""
+        hh = C.c_size_t()
+        check(uc.uc_hook_add(self.h, C.byref(hh), kind, C.c_void_p(fn), C.c_void_p(user),
+                             C.c_uint64(begin), C.c_uint64(end)), "uc_hook_add")
+        return hh.value
+
     def unhook(self, hh: int) -> None:
         check(uc.uc_hook_del(self.h, hh), "uc_hook_del")
 
@@ -132,3 +139,30 @@ class Engine:
 
     def stop(self) -> None:
         uc.uc_emu_stop(self.h)
+
+
+# tests/memwatch.c: memory hooks in C that pass on only the accesses the host
+# run's checks act on; built on demand next to the host objects
+WATCH_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memwatch.c")
+WATCH_LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "build", "host", "memwatch.dylib")
+
+
+class Watch(C.Structure):
+    _fields_ = [("top", C.c_uint64), ("size", C.c_uint64), ("mon", C.c_void_p),
+                ("machine", C.c_void_p), ("dead", C.c_void_p), ("vram", C.c_void_p),
+                ("read_cb", C.c_void_p), ("write_cb", C.c_void_p), ("mem_read", C.c_void_p),
+                ("dead_flags", C.c_int64),
+                ("all", C.c_int64), ("rbits", C.c_int64), ("wbits", C.c_int64),
+                ("seen", C.c_int64 * 2), ("passed", C.c_int64 * 2)]
+
+
+def watch_lib():
+    import subprocess
+    if not os.path.exists(WATCH_LIB) or os.path.getmtime(WATCH_LIB) < os.path.getmtime(WATCH_SRC):
+        os.makedirs(os.path.dirname(WATCH_LIB), exist_ok=True)
+        tmp = WATCH_LIB + f".{os.getpid()}"
+        subprocess.run(["cc", "-O2", "-Wall", "-Werror", "-shared", "-fPIC", "-o", tmp, WATCH_SRC],
+                       check=True)
+        os.replace(tmp, WATCH_LIB)
+    return C.CDLL(WATCH_LIB)

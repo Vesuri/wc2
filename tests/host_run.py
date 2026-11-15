@@ -41,11 +41,13 @@ Exit 1 on any difference, a runtime stop or the time limit.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import gzip
 import csv
 import struct
 import sys
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -290,6 +292,8 @@ SABOTAGE = {
     "int16-zf": "the first INT 16h AH=01h that finds a key reports none (ZF set)",
     "idle": "rt_idle returns at once: DOS's console wait takes no interrupt",
     "idle-stack": "the console wait's SP two bytes lower at its first rt_idle (RT_IDLE_DEPTH)",
+    "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
+             "spins with no service or interrupt (the run's watchdog, at 20 s)",
 }
 # Plants that are caught only by their own check (the first problem's text): a
 # milestone without speech has no DSP block, one without keys no keyboard
@@ -298,7 +302,8 @@ SABOTAGE = {
 SABOTAGE_CATCH = {"sb-block": "SB blocks", "sb-irq": "IRQ 7 without a DSP block",
                   "dsp-status": "the model's 2a", "key-hook": "keyboard intercept",
                   "hook-cf": "console read with no key buffered", "int16-zf": "zf=", "pit": "PIT",
-                  "idle": "console read with no key buffered", "idle-stack": "idle wait: stack"}
+                  "idle": "console read with no key buffered", "idle-stack": "idle wait: stack",
+                  "stall": "stalled: no service event"}
 SPEECH = ("sb-block", "dsp-status")
 KEYED = ("key-hook", "hook-cf", "int16-zf")
 IDLED = ("idle", "idle-stack")     # a milestone whose reference waits in DOS's idle stub
@@ -342,10 +347,51 @@ class MemFile:
         pass
 
 
+class DeadMask(set):
+    """The masked dead-stack bytes, mirrored into a byte per guest byte that
+    memwatch.c reads (a write to one goes to the Python hook)."""
+
+    def __init__(self, arr: bytearray):
+        super().__init__()
+        self.arr = arr
+
+    def add(self, a):
+        super().add(a)
+        self.arr[a] = 1
+
+    def update(self, *spans):
+        for span in spans:
+            span = list(span)
+            super().update(span)
+            for a in span:
+                self.arr[a] = 1
+
+    def difference_update(self, *spans):
+        for span in spans:
+            span = list(span)
+            super().difference_update(span)
+            for a in span:
+                self.arr[a] = 0
+
+    def discard(self, a):
+        super().discard(a)
+        self.arr[a] = 0
+
+
+def outside(stored: bytearray, inside: bytearray) -> list[int]:
+    """Offsets set in stored and not in inside (both bytes of 0/1)."""
+    if not int.from_bytes(stored, "little") & ~int.from_bytes(inside, "little"):
+        return []
+    return [o for o in range(len(stored)) if stored[o] and not inside[o]]
+
+
 class Host:
     # class defaults for a bare host (tests/test_host_replay_visits.py)
     sabotage = None
     hooking = False     # inside rt_key_hook
+    early = stalled = retrace_bad = display_miss = irq_lost = None
+    stall = 300
+    _masked = None
 
     def __init__(self, ref_root: Path, sabotage: str | None = None, elf: Path | None = None,
                  retrace: list | None = None, pit: list | None = None, dsp: dict | None = None):
@@ -372,8 +418,11 @@ class Host:
         self.log: list[str] = []
         self.console = b""             # plat_console: the game's DOS console output
         self.exit: int | None = None
-        self.services: list[tuple[str, dict]] = []
+        self.services: list[tuple[str, dict]] = ServiceLog()
         self.stopped_at: str | None = None
+        self.early: str | None = None     # the problem that stopped the run (stop_early)
+        self.stalled: str | None = None
+        self.stall = 300                  # seconds without progress (run's watchdog)
         self.stubs = {self.syms[n]: n for n in ("plat_alloc", "plat_free", "plat_open", "plat_create", "plat_read", "plat_write",
                                                 "plat_delete", "plat_seek",
                                                 "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_pit_count", "plat_mouse", "plat_present", "plat_palette",
@@ -395,8 +444,24 @@ class Host:
         self.presents = 0
         # D9 display: every byte the guest stores to the frame is inside the
         # rectangles of the next present (the runtime's marks vs the stores)
-        self.vram_written: set[int] = set()
+        self.vram_written = bytearray(64000)
         self.display_miss: str | None = None
+        # memwatch.c: the memory hooks in C, passing on only the accesses the
+        # checks act on (the Python hooks below keep their own tests)
+        self.machine = bytearray(GUEST_BYTES)
+        for lo, hi in machine_ranges():
+            self.machine[lo:hi] = b"\1" * (hi - lo)
+        self.dead_bytes = bytearray(GUEST_BYTES)
+        self.watch_lib = U.watch_lib()
+        w = self.watch = U.Watch()
+        self.watch_bufs = [(ctypes.c_char * len(b)).from_buffer(b)
+                           for b in (self.machine, self.dead_bytes, self.vram_written)]
+        w.top, w.size = TOP, GUEST_BYTES
+        w.machine, w.dead, w.vram = (ctypes.addressof(b) for b in self.watch_bufs)
+        w.mem_read = ctypes.cast(U.uc.uc_mem_read, ctypes.c_void_p).value
+        w.dead_flags = -1
+        w.rbits, w.wbits = irq_monitor.WRITTEN, irq_monitor.ACCESSED | irq_monitor.BUFFER
+        self.watch_ptr = ctypes.addressof(w)
         e.write(self.syms["rt_present_due"], b"\1")  # a vertical blank is always due
         if sabotage == "vram":
             e.write(self.syms["rt_vram_mark"], b"\x4e\x75")  # rts
@@ -445,14 +510,9 @@ class Host:
             for k in range(rows):
                 e.write(self.syms["dispatch_table"] + 12 * k + 6, b"\0\0")
 
-        @U.MEM_CB
-        def vram(h, kind, addr, size, value, user):  # the frame exists in mode 13h only
-            if self.gmem(0x449, 1)[0] == 0x13:
-                off = TOP - addr - size + 1 - 0xA0000
-                self.vram_written.update(range(max(off, 0), min(off + size, 64000)))
-            return True
-
-        e.hook_range(U.HOOK_MEM_WRITE, vram, TOP - 0xA0000 - 63999, TOP - 0xA0000)
+        # the frame exists in mode 13h only (memwatch.c watch_vram)
+        e.hook_native(U.HOOK_MEM_WRITE, self.native("watch_vram"), self.watch_ptr,
+                      TOP - 0xA0000 - 63999, TOP - 0xA0000)
 
         @U.CODE_CB
         def stub(h, addr, size, user):
@@ -626,7 +686,7 @@ class Host:
 
         # memory watch from the guest entry on (rt_start's own writes are not watched)
         self.in_service = False
-        self.masked: set[int] = set()
+        self.masked = set()
         self.machine_reads: set[int] = set()
 
         @U.MEM_CB
@@ -657,9 +717,7 @@ class Host:
             for a in {self.syms[x] for x in (lab, lab + "_bp") if x in self.syms}:  # R6 copy
                 e.hook_range(U.HOOK_CODE, dead_pushf, a, a)
 
-        machine = bytearray(GUEST_BYTES)
-        for lo, hi in machine_ranges():
-            machine[lo:hi] = b"\1" * (hi - lo)
+        machine = self.machine
 
         @U.MEM_CB
         def read(h, kind, addr, size, value, user):
@@ -682,11 +740,18 @@ class Host:
                 for off in (0x5d, 0x6d):
                     self.e.write(TOP - psp - off, b" ")
                 self.e.write(TOP - psp - 0xff, (b"\0\r" + bytes(126))[::-1])
+            if self.sabotage == "stall":     # before the code is translated
+                self.e.write(self.syms["R_0FA8F"], b"\x60\xfe")
             if self.sabotage == "psp":
                 a = TOP - (0x8120 + 0x5d)
                 self.e.write(a, bytes([self.mem(a, 1)[0] ^ 0x20]))
-            self.e.hook_range(U.HOOK_MEM_WRITE, write, TOP - GUEST_BYTES + 1, TOP)
-            self.e.hook_range(U.HOOK_MEM_READ, read, TOP - GUEST_BYTES + 1, TOP)
+            self.watch.read_cb = ctypes.cast(read, ctypes.c_void_p).value
+            self.watch.write_cb = ctypes.cast(write, ctypes.c_void_p).value
+            self.e.hooks += [read, write]
+            self.e.hook_native(U.HOOK_MEM_WRITE, self.native("watch_write"), self.watch_ptr,
+                               TOP - GUEST_BYTES + 1, TOP)
+            self.e.hook_native(U.HOOK_MEM_READ, self.native("watch_read"), self.watch_ptr,
+                               TOP - GUEST_BYTES + 1, TOP)
 
         # generated code: from the first guest label to program.s's data after
         # the modules (the runtime's own reads, e.g. the BIOS tick, are not the
@@ -697,6 +762,60 @@ class Host:
         self.watching = False
         a = self.syms["rt_run_guest"]
         e.hook_range(U.HOOK_CODE, guest_start, a, a)
+
+    def stop_early(self, why: str) -> None:
+        """A problem the run cannot recover from: stop now, report after."""
+        if self.early is None:
+            self.early = why
+        self.halted = True
+        self.e.stop()
+
+    def problem_now(self) -> str | None:
+        """A problem the checks after the run will report (stop_early)."""
+        mon = getattr(getattr(self, "irq", None), "problems", None)
+        return self.services.bad or self.irq_lost or self.retrace_bad or self.display_miss or \
+            (mon[0] if mon else None)
+
+    def where(self) -> str:
+        """The generated label or runtime symbol at the 68k pc."""
+        pc = self.r("pc")
+        if not hasattr(self, "sym_sorted"):
+            self.sym_sorted = sorted((a, n) for n, a in self.syms.items())
+        k = max((i for i in range(len(self.sym_sorted)) if self.sym_sorted[i][0] <= pc), default=None)
+        return f"{self.sym_sorted[k][1]}+{pc - self.sym_sorted[k][0]:x}" if k is not None else f"{pc:x}"
+
+    def native(self, name: str) -> int:
+        return ctypes.cast(getattr(self.watch_lib, name), ctypes.c_void_p).value
+
+    @property
+    def masked(self) -> set[int]:
+        return self._masked
+
+    @masked.setter
+    def masked(self, bytes_: set[int]) -> None:
+        """Any set assigned becomes the mirrored one (memwatch.c reads its bytes)."""
+        if self._masked:
+            self.dead_bytes[:] = bytes(len(self.dead_bytes))
+        self._masked = DeadMask(self.dead_bytes)
+        self._masked.update(bytes_)
+
+    @property
+    def dead_flags(self):
+        return self._dead_flags
+
+    @dead_flags.setter
+    def dead_flags(self, lin):
+        self._dead_flags = lin
+        self.watch.dead_flags = -1 if lin is None else lin
+
+    def watch_mask(self, mask: bytearray) -> None:
+        """The IRQ monitor's mask (its layout), read by memwatch.c."""
+        self.watch_mon = (ctypes.c_char * len(mask)).from_buffer(mask)
+        self.watch.mon = ctypes.addressof(self.watch_mon)
+
+    def watch_handler(self, inside: bool) -> None:
+        """A delivered handler runs (every access to Python) or returned."""
+        self.watch.all = int(inside)
 
     def r(self, name: str) -> int:
         return self.e.reg_read(U.M68K[name])
@@ -846,11 +965,11 @@ class Host:
                 x0, y0, x1, y1 = struct.unpack(">4H", self.mem(args[1] + 8 * k, 8))
                 for y in range(y0, y1):
                     shown[y * 320 + x0:y * 320 + x1] = b"\1" * (x1 - x0)
-            miss = sorted(o for o in self.vram_written if not shown[o])
+            miss = outside(self.vram_written, shown)
             if miss and not self.display_miss:
                 self.display_miss = f"present {self.presents}: {len(miss)} stored pixels outside " \
                     f"its rectangles, first x={miss[0] % 320} y={miss[0] // 320}"
-            self.vram_written.clear()
+            ctypes.memset(self.watch_bufs[2], 0, 64000)
             self.e.write(self.syms["rt_present_due"], b"\1")
         elif n == "plat_palette":
             if self.sabotage == "dac":
@@ -1160,7 +1279,36 @@ class Host:
         self.e.reg_write(U.M68K["sr"], 0x2700)
         self.e.reg_write(U.M68K["a7"], STACK_TOP)
         self.halted = False
-        err = self.e.start(self.entry, 0xFFFFFFFF, timeout_us=timeout * 1_000_000)
+        # watchdog: a problem the checks will report stops the run at once, and so
+        # does a stall (no service event and no replayed interrupt for self.stall s)
+        done = threading.Event()
+
+        def watchdog():
+            last, since = None, time.monotonic()
+            while not done.wait(1.0):
+                why = self.problem_now()
+                if why:
+                    self.early = self.early or why
+                    self.e.stop()
+                    return
+                now = (len(self.services), self.irq_i)
+                if now != last:
+                    last, since = now, time.monotonic()
+                elif time.monotonic() - since > self.stall:
+                    self.stalled = f"stalled: no service event or replayed interrupt for {self.stall} s " \
+                                   f"(service events {now[0]}, interrupts replayed {now[1]})"
+                    self.e.stop()
+                    return
+
+        guard = threading.Thread(target=watchdog, daemon=True)
+        guard.start()
+        try:
+            err = self.e.start(self.entry, 0xFFFFFFFF, timeout_us=timeout * 1_000_000)
+        finally:
+            done.set()
+            guard.join()
+        if self.stalled:
+            self.stalled += f" at {self.where()}"
         if err:
             print(f"unicorn error {U.uc.uc_strerror(err).decode()} pc={self.r('pc'):x}")
             self.exit = -1
@@ -1314,33 +1462,39 @@ def undefined_flags() -> dict:
     return out
 
 
-def compare_services(got, want, masks: dict | None = None, applied: list | None = None) -> list[str]:
-    """CF/ZF: services read no flags, so the state block may hold dead ones at
+class ServiceCheck:
+    """One service event at a time against the reference's (compare_services).
+    CF/ZF: services read no flags, so the state block may hold dead ones at
     entry; at return they are checked where the reference service changed them
     or where they agreed at entry. Services in IRQ0's handler: relocated().
     A register bit of `masks` (undefined_flags()) is not compared at that INT
     and its return; each difference it hid goes to `applied`."""
-    bad = []
-    keys = REGS + ("es", "ss", "ds", "vector")
-    entry: list = []
-    masks = undefined_flags() if masks is None else masks
-    for k, ((gk, g), (wk, w)) in enumerate(zip(got, want)):
+
+    KEYS = REGS + ("es", "ss", "ds", "vector")
+
+    def __init__(self, masks: dict | None = None, applied: list | None = None):
+        self.masks = undefined_flags() if masks is None else masks
+        self.applied = applied
+        self.entry: list = []
+
+    def add(self, k: int, got, want) -> str | None:
+        (gk, g), (wk, w) = got, want
         g, diff = relocated(g)
         if gk == "svc":
-            mask = masks.get(w.get("site"), {})
+            mask = self.masks.get(w.get("site"), {})
         else:
-            mask = masks.get(entry[-1][1].get("site"), {}) if entry else {}
-        for n in keys:
+            mask = self.masks.get(self.entry[-1][1].get("site"), {}) if self.entry else {}
+        for n in self.KEYS:
             m = mask.get(n, 0)
             if (g[n] ^ w[n]) & ~m & 0xFFFF:
                 diff.append(f"{n}={g[n]:04x}/{w[n]:04x}")
-            elif g[n] != w[n] and applied is not None:
-                applied.append((k, n, g[n], w[n]))
+            elif g[n] != w[n] and self.applied is not None:
+                self.applied.append((k, n, g[n], w[n]))
         flags = w["flags"]
         if gk == "svc":
-            entry.append((g, w))
+            self.entry.append((g, w))
         else:
-            ge, we = entry.pop() if entry else (g, w)
+            ge, we = self.entry.pop() if self.entry else (g, w)
         for n, bit in (("cf", 0x1), ("zf", 0x40), ("if", 0x200), ("df", 0x400)):
             ref = int(bool(flags & bit))
             if n in ("cf", "zf"):
@@ -1351,12 +1505,45 @@ def compare_services(got, want, masks: dict | None = None, applied: list | None 
             if g[n] != ref:
                 diff.append(f"{n}={g[n]}/{ref}")
         if gk != wk or diff:
-            bad.append(f"service #{k} {wk} int {w['vector']:02x} ax={w['ax']:04x}: "
-                       f"{' '.join(diff) or gk}")
-            break
-    if not bad and len(got) != len(want):
-        bad.append(f"service count {len(got)} vs reference {len(want)}")
-    return bad
+            return f"service #{k} {wk} int {w['vector']:02x} ax={w['ax']:04x}: {' '.join(diff) or gk}"
+        return None
+
+
+def compare_services(got, want, masks: dict | None = None, applied: list | None = None) -> list[str]:
+    """The service log against the reference's (ServiceCheck), and its length."""
+    check = ServiceCheck(masks, applied)
+    for k, (g, w) in enumerate(zip(got, want)):
+        bad = check.add(k, g, w)
+        if bad:
+            return [bad]
+    if len(got) != len(want):
+        return [f"service count {len(got)} vs reference {len(want)}"]
+    return []
+
+
+class ServiceLog(list):
+    """The host's service events; with the reference's, each is compared as it
+    is logged (ServiceCheck) and the first difference, or an event past the
+    reference's last, stops the run (Host.stop_early). The full comparison after
+    the run (compare_services) reports it."""
+
+    def __init__(self, host=None, want=None):
+        super().__init__()
+        self.host, self.want = host, want
+        self.check = ServiceCheck() if want is not None else None
+        self.bad: str | None = None
+
+    def append(self, item) -> None:
+        super().append(item)
+        if self.check is None or self.bad:
+            return
+        k = len(self) - 1
+        if k >= len(self.want):
+            self.bad = f"service event #{k} past the reference's {len(self.want)}"
+        else:
+            self.bad = self.check.add(k, item, self.want[k])
+        if self.bad:
+            self.host.stop_early(self.bad)
 
 
 def compare_ram(ram: bytes, ref: bytes, residency: Path, masked: set[int]) -> list[str]:
@@ -1486,6 +1673,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--milestone", default="m1")
     ap.add_argument("--timeout", type=int, default=1800, help="seconds of emulation before failing")
+    ap.add_argument("--stale-polls", action="store_true",
+                    help="diagnostic: run on a reference recorded with other poll points (never passes)")
+    ap.add_argument("--stall", type=int, default=300,
+                    help="seconds without a service event or replayed interrupt before failing")
     ap.add_argument("--amiga", type=Path, help="also check this A1200-model capture")
     ap.add_argument("--label", action="store_true", help="print the milestone's label and exit")
     ap.add_argument("--sabotage", action="store_true",
@@ -1507,7 +1698,7 @@ def main(argv=None) -> int:
                 continue
             if not args.plants and name in IDLED and not idle_stacks(host_reference(args.milestone)):
                 continue
-            problems = check(args.milestone, args.timeout, None, name)
+            problems = check(args.milestone, args.timeout, None, name, stall=args.stall)
             catch = SABOTAGE_CATCH.get(name, "")
             hit = [p for p in problems if catch in p]
             print(f"sabotage {name:12} ({what}): {len(problems)} problems, first: "
@@ -1516,7 +1707,8 @@ def main(argv=None) -> int:
                 missed.append(name)
         print("not caught: " + ", ".join(missed) if missed else "all sabotages caught")
         return 1 if missed else 0
-    problems = check(args.milestone, args.timeout, args.amiga, None)
+    problems = check(args.milestone, args.timeout, args.amiga, None, stall=args.stall,
+                     stale_polls=args.stale_polls)
     for p in problems:
         print(p)
     print(f"host run to {args.milestone}: {'ok' if not problems else 'FAIL'}")
@@ -1661,7 +1853,8 @@ def frame_view(ram: bytes, pages: dict) -> bytes:
 
 
 def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None,
-          trace: Path | None = None, elf: Path | None = None) -> list[str]:
+          trace: Path | None = None, elf: Path | None = None, stall: int = 300,
+          stale_polls: bool = False) -> list[str]:
     script = milestone_script(milestone)
     frame = script["frame"]
     trace = trace or host_reference(milestone)
@@ -1680,11 +1873,29 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     script["idle"] = idle_stacks(trace)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
     problems = rearm_problems() + overlay_problems(sabotage)
-    if int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes()):
+    stale = int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes())
+    if stale and not stale_polls:
         problems.append("reference recorded with other poll points: rerun tools/reference.py --host")
+    if problems:        # the lockstep would prove nothing: report them without running
+        return problems
+    if stale:
+        # --stale-polls: new poll points only add places the reference took no
+        # interrupt, so a run still finds the next problems (collect the
+        # annotations for one re-recording); it can never pass
+        problems.append("diagnostic only: the reference has other poll points (--stale-polls)")
+    want = reference_services(trace)
+    h.services = ServiceLog(h, want)
+    h.stall = 20 if sabotage == "stall" else stall
     t0 = time.monotonic()
     h.run(script, timeout)
     print(f"host run: {time.monotonic() - t0:.0f} s")
+    w = h.watch
+    print(f"memory watch: {w.seen[0]} reads, {w.seen[1]} writes; {w.passed[0]} and {w.passed[1]} "
+          f"passed to the Python hooks")
+    if h.stalled:
+        problems.append(h.stalled)
+    elif h.early:
+        print(f"stopped early: {h.early}")
     try:
         rep.complete()
     except ValueError as error:
@@ -1734,7 +1945,7 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     for y in range(200):
         lo, hi = struct.unpack_from(">2H", rows, 4 * y)
         marked[y * 320 + lo:y * 320 + hi] = b"\1" * max(0, hi - lo)
-    unmarked = sorted(o for o in h.vram_written if not marked[o])
+    unmarked = outside(h.vram_written, marked)
     if unmarked:
         problems.append(f"{len(unmarked)} pixels stored since the last present and not marked, "
                         f"first x={unmarked[0] % 320} y={unmarked[0] // 320}")
@@ -1745,7 +1956,6 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     if h.stopped_at != label:
         problems.append(f"milestone label {label} not reached (exit {h.exit}, pc={h.r('pc'):x}"
                         f"{', ' + h.log[-1] if h.log else ''})")
-    want = reference_services(trace)
     applied: list = []
     problems += compare_services(h.services, want if h.stopped_at == label else want[:len(h.services)],
                                  applied=applied)
