@@ -38,3 +38,4 @@ Changed only by the owner.
 | D6 | FM on Paula: Secret Weapons of Luftwaffe's AdLib implementation (OPL register re-hoster, effects prerendered at start-up), then judged by result | owner, 2026-11-01 |
 | D7 | Installer: from the 7 disks | owner, 2026-11-01 |
 | D8 | Lockstep of services inside IRQ0's handler: the handler keeps SWOTL's private stack (irq-plan I4); SS must be its B000h and compares as the interrupted SS; SP, and BP while it points into the private stack, compare as their offsets below 8000h applied to the interrupted SP; every other register is strict (`tests/host_run.py relocated`, `tests/amiga_replay.c`; sabotage `irq-stack`, `irq-offset`) | owner, 2026-11-10 |
+| D9 | Dead-stack exemptions in host lockstep as in X-Wing (`40030a3`, `3dca119`): a service register loaded from, or a RAM byte stored from, a masked dead-stack byte may differ; each exemption is added only when a run needs it, with a sabotage control | owner, 2026-11-14 |

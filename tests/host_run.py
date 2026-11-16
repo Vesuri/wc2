@@ -20,6 +20,9 @@ at the translator's poll points, the PIT and VGA status reads recorded):
   and the FLAGS images of annotations/flags.csv PUSHFs until rewritten;
 - every machine byte outside COMPARE (and the IRQ0 handler's private stack)
   that generated code read holds the reference value.
+The BIOS ROM (F0000h..FFFFFh) is the reference machine's, a local fixture input from
+the m0 snapshot at the WC2.EXE entry (reference_rom): SUPERTM.DRV's noise fill
+(+74D2) samples bit 0 of ROM bytes at a pseudo-random F000:SI.
 The keyboard intercept (WC2's INT 15h handler, from the runtime's BIOS INT 09h
 model: rt_key_hook) runs as often with each AX as the reference's BIOS stub
 called it (interrupts.csv, from F000:E98F); an interrupt the reference took
@@ -78,8 +81,8 @@ KEYS = {"enter": 0x1C0D, "esc": 0x011B, "space": 0x3920, "tab": 0x0F09, "backspa
                                              list(range(0x10, 0x1A)) + list(range(0x1E, 0x27))
                                              + list(range(0x2C, 0x33)))},
         **{str(k): (k + 1) << 8 | ord(str(k)) for k in range(1, 10)}, "0": 0x0B30,
-        "minus": 0x0C2D, "equals": 0x0D3D}
-GREY = {KEYS[k] for k in ("up", "down", "left", "right")}  # E0-prefixed (DOSBox KBD_up..)
+        "minus": 0x0C2D, "equals": 0x0D3D, "insert": 0x5200, "delete": 0x5300}
+GREY = {KEYS[k] for k in ("up", "down", "left", "right", "insert", "delete")}  # E0-prefixed (DOSBox KBD_up..)
 # Modifier bits belong to scripted input, above the base BIOS key word.
 KEY_MODIFIERS = {"shift": 1 << 16, "ctrl": 1 << 17, "alt": 1 << 18}
 
@@ -108,6 +111,47 @@ def key_events(key: int) -> tuple[int, ...]:
     return modifiers + body + tuple(scan | 0x80 for scan in reversed(modifiers))
 
 
+def key_bytes(key: int, repeats: int = 0) -> tuple[int, ...]:
+    """The scan bytes DOSBox-X sends for a key held long enough for `repeats`
+    typematic repeats: the makes, the key's own make again per repeat (E0 and
+    the scan for a grey key; modifiers do not repeat), then the breaks."""
+    ev = key_events(key)
+    make, brk = ev[:len(ev) // 2], ev[len(ev) // 2:]
+    body = make[-2:] if (key & 0xffff) in GREY else make[-1:]
+    return make + body * repeats + brk
+
+
+def typematic(trace: Path, keys: list) -> list[int]:
+    """Per scripted key, the typematic repeats the reference sent: its IRQ 1s
+    from key_down to key_up beyond the makes (events.csv); the breaks must be the
+    IRQ 1s after the key_up, before the next key_down, and nothing else may differ."""
+    rows, cur = [], None
+    with events(trace) as f:
+        for r in csv.DictReader(f):
+            if r["kind"] == "key_down":
+                cur = [0, 0, False]
+                rows.append(cur)
+            elif r["kind"] == "key_up":
+                cur[2] = True
+            elif r["kind"] == "irq" and r["detail"].split()[0] == "09":
+                if cur is None:
+                    raise ValueError("reference IRQ 1 before any key")
+                cur[1 if cur[2] else 0] += 1
+    codes = [k for _, k in keys if isinstance(k, int)]
+    if len(codes) != len(rows):
+        raise ValueError(f"{len(codes)} scripted keys, {len(rows)} in the reference")
+    out = []
+    for code, (held, after, _) in zip(codes, rows):
+        ev = key_events(code)
+        body = 2 if (code & 0xffff) in GREY else 1
+        extra = held - len(ev) // 2
+        if extra < 0 or extra % body or after != len(ev) // 2:
+            raise ValueError(f"key {code:x}: {held} IRQ 1s held, {after} after: not makes, "
+                             f"repeats and breaks")
+        out.append(extra // body)
+    return out
+
+
 KEY_HOLD = 600_000  # tracer: x86 instructions from key down to key up
 # Compared guest RAM: the DOS arena from the environment MCB to the top of
 # conventional memory; below it are IVT/BIOS/DOS internals the runtime models
@@ -124,6 +168,7 @@ DEAD_STACK = 0x60
 
 TABLE = REPO / "reference/milestones.csv"
 RUNS = REPO / "tmp/pc-runs"
+ROM = (0xF0000, 0x100000)
 POLLS = REPO / "build/gen/poll-points.csv"
 
 
@@ -397,6 +442,9 @@ class Host:
     def __init__(self, ref_root: Path, sabotage: str | None = None, elf: Path | None = None,
                  retrace: list | None = None, pit: list | None = None, dsp: dict | None = None):
         self.launch = ""
+        self.key_queue: list[int] = []      # scan bytes not yet in rt_key_ring
+        self.key_sent = self.key_posted = 0
+        self.rom: bytes | None = None   # F0000h..FFFFFh before the first guest instruction
         self.root = ref_root
         self.file_clock = None
         self.calendar_date = None
@@ -688,11 +736,12 @@ class Host:
         # memory watch from the guest entry on (rt_start's own writes are not watched)
         self.in_service = False
         self.masked = set()
-        self.machine_reads: set[int] = set()
+        self.machine_reads: dict[int, tuple[int, int]] = {}   # byte -> first reader (pc, services)
 
         @U.MEM_CB
         def write(h, kind, addr, size, value, user):
-            self.irq.write(TOP - addr - size + 1, size)    # I3 (tests/irq_monitor.py)
+            # memory is reversed: the 68k value's byte k is the guest's byte lin + k
+            self.irq.write(TOP - addr - size + 1, size, value & ((1 << 8 * size) - 1))    # I3
             span = range(TOP - addr - size + 1, TOP - addr + 1)
             if self.dead_flags is not None and self.dead_flags in span:
                 self.masked.update(span)
@@ -726,7 +775,9 @@ class Host:
             self.irq.read(lin, size)    # I3 (tests/irq_monitor.py)
             if (machine[lin] or machine[lin + size - 1]) and not self.in_service \
                     and self.code[0] <= self.r("pc") < self.code[1]:
-                self.machine_reads.update(b for b in range(lin, lin + size) if machine[b])
+                for b in range(lin, lin + size):
+                    if machine[b] and b not in self.machine_reads:
+                        self.machine_reads[b] = (self.r("pc"), len(self.services))
             return True
 
         @U.CODE_CB
@@ -734,13 +785,16 @@ class Host:
             if self.watching:
                 return
             self.watching = True
-            # Model the DOS shell's no-argument launch before the first guest
-            # instruction; normal fixtures retain machine.c's default PSP.
+            # The reference shell's launch with arguments (milestones.csv launch,
+            # `WC2 Origin -k`): machine.c's PSP has none, so its command tail
+            # and FCBs 1 and 2 are written here before the first guest instruction
+            if self.rom:
+                self.e.write(TOP - (ROM[1] - 1), self.rom[::-1])
             if self.launch:
                 psp = (self.u32(self.syms["load_segment"]) - 0x10) * 16
-                for off in (0x5d, 0x6d):
-                    self.e.write(TOP - psp - off, b" ")
-                self.e.write(TOP - psp - 0xff, (b"\0\r" + bytes(126))[::-1])
+                for off, data in psp_arguments(self.launch).items():
+                    for k, b in enumerate(data):
+                        self.e.write(TOP - psp - off - k, bytes([b]))
             if self.sabotage == "stall":     # before the code is translated
                 self.e.write(self.syms["R_0FA8F"], b"\x60\xfe")
             if self.sabotage == "psp":
@@ -777,9 +831,9 @@ class Host:
         return self.services.bad or self.irq_lost or self.retrace_bad or self.display_miss or \
             (mon[0] if mon else None)
 
-    def where(self) -> str:
-        """The generated label or runtime symbol at the 68k pc."""
-        pc = self.r("pc")
+    def where(self, pc: int | None = None) -> str:
+        """The generated label or runtime symbol at `pc` (default: the 68k pc)."""
+        pc = self.r("pc") if pc is None else pc
         if not hasattr(self, "sym_sorted"):
             self.sym_sorted = sorted((a, n) for n, a in self.syms.items())
         k = max((i for i in range(len(self.sym_sorted)) if self.sym_sorted[i][0] <= pc), default=None)
@@ -1090,15 +1144,23 @@ class Host:
         psp = int.from_bytes(self.mem(self.syms["load_segment"], 4), "big") - 0x10
         return psp * 16 <= seg * 16 + off < 0x9FFF * 16
 
-    def press(self, key: int) -> None:
-        """The key's make and break scan codes (runtime.h rt_key_ring); the
-        runtime's BIOS INT 09h model stores the word at the make interrupt."""
-        # DOSBox posts one IRQ per scan byte, including modifiers and E0.
-        events = key_events(key)
-        for ev in events:
+    def press(self, key: int, repeats: int = 0) -> None:
+        """Queue the key's scan bytes (key_bytes: makes, typematic repeats,
+        breaks) for runtime.h rt_key_ring, as many as it has room for now (key_fill);
+        DOSBox posts one IRQ 1 per byte, and the runtime's BIOS INT 09h model
+        stores the word at the make interrupt."""
+        self.key_queue += key_bytes(key, repeats)
+        self.key_fill()
+
+    def key_fill(self) -> None:
+        """Queued scan bytes into rt_key_ring while it has room (input.c key_head)."""
+        while self.key_queue:
             tail = self.mem(self.syms["rt_key_tail"], 1)[0]
-            self.e.write(self.syms["rt_key_ring"] + 2 * (tail % 16), struct.pack(">H", ev))
+            if (tail - self.mem(self.syms["key_head"], 1)[0]) & 0xFF >= 16:
+                return
+            self.e.write(self.syms["rt_key_ring"] + 2 * (tail % 16), struct.pack(">H", self.key_queue.pop(0)))
             self.e.write(self.syms["rt_key_tail"], bytes([(tail + 1) & 0xFF]))
+            self.key_sent += 1
 
     def run(self, script: dict | None, timeout: int) -> None:
         """Run to the script's last snapshot trigger (None: until a stop).
@@ -1108,6 +1170,7 @@ class Host:
         steps = [(t, k) for t, k in script["keys"]] + [(t, None) for t in script["snapshots"]] \
             if script else []
         releases = list(script["releases"]) if script else []
+        repeats = list(script.get("repeats", [])) if script else []
         self.irqs = list(script["irqs"]) if script else []
         idle = script.get("idle", {}) if script else {}
         self.step, self.hits, self.release = 0, 0, None
@@ -1147,7 +1210,7 @@ class Host:
                 else:
                     self.mouse_buttons = amount
             elif key is not None:
-                self.press(key)
+                self.press(key, repeats.pop(0) if repeats else 0)
                 self.release = KeyRelease(releases.pop(0))
             elif self.step == len(steps):
                 self.stopped_at = lab
@@ -1164,6 +1227,8 @@ class Host:
                 self.e.stop()
 
         def replay(addr):
+            if self.posted_at and self.r("a7") >= self.posted_at[2]:
+                self.posted_at = None   # a later poll, not one nested in the handlers
             if self.irq_i == len(self.irqs):
                 return
             n = len(self.services)
@@ -1195,6 +1260,7 @@ class Host:
             back to the same poll point (rt_irq_back at this stack depth)."""
             nonlocal makes
             key = self.irqs[self.irq_i][:3]
+            self.posted_at = (key[1], len(self.services), a7)     # for done()
             if self.hooking and not self.irq_lost:
                 # the runtime holds interrupts while the keyboard intercept runs
                 # (rt_irq0_running): the reference took this one inside it
@@ -1206,12 +1272,17 @@ class Host:
                 vector = self.irqs[self.irq_i][3]
                 guest = self.guest_vector(vector)
                 if vector == 9:
+                    self.key_fill()
+                    self.key_posted += 1
+                    if self.key_posted > self.key_sent and not self.irq_lost:
+                        self.irq_lost = f"reference irq #{self.irq_i} (IRQ 1) with no scripted scan byte"
                     makes += 1
                     vector = 9 if makes % 2 else 0x89  # make, then the key's break
                 self.post(vector)
                 self.irq_i += 1
                 if guest:
                     self.groups[a7 - 12] = key  # a7 at rt_irq_back: jsr rt_irq, movem d6-d7
+                    self.posted_at = None       # back() resumes it, not done()
                     return
 
         @U.CODE_CB
@@ -1232,6 +1303,37 @@ class Host:
                 self.irq_lost = f"interrupt replay: {e!r}"
                 self.halted = True
                 self.e.stop()
+
+        @U.CODE_CB
+        def done(h, addr, size, user):
+            # rt_irq_done: the posted interrupts ran BIOS handlers only. A service
+            # the keyboard intercept made inside them (INT 16h, WC2.EXE+0FEA5)
+            # starts a new interval, and the reference took the next interrupt at
+            # the IRET back to the poll point (visit 0): post it and poll again
+            # (rt_irq with the poll's return address and d6/d7, as from the poll).
+            # Only the exit of the poll's own rt_irq call: the intercept's drain
+            # loop (+0FEA3..+0FEAD) polls too, inside it (a7 deeper)
+            try:
+                at = self.posted_at
+                if at is None or self.r("a7") + 4 != at[2]:
+                    return
+                self.posted_at = None
+                if self.irq_i == len(self.irqs) or len(self.services) == at[1]:
+                    return
+                n = len(self.services)
+                if n != self.visit_n:
+                    self.visit_n, self.visits = n, {}
+                if self.irqs[self.irq_i][:3] == (n, at[0], self.visits.get(at[0], 0)):
+                    post_group(self.r("a7") + 4)    # a7 at the poll: before jsr rt_irq
+                    self.e.reg_write(U.M68K["pc"], self.syms["rt_irq"])
+            except Exception as e:  # ctypes drops exceptions raised in hooks
+                self.irq_lost = f"interrupt replay: {e!r}"
+                self.halted = True
+                self.e.stop()
+
+        self.posted_at = None
+        if "rt_irq_done" in self.syms:
+            self.e.hook_range(U.HOOK_CODE, done, self.syms["rt_irq_done"], self.syms["rt_irq_done"])
 
         # The poll entry precedes interrupt delivery; _np is the actual
         # instruction continuation, including returns from guarded copies.
@@ -1320,6 +1422,29 @@ class Host:
                             f"not reached (service events {len(self.services)})"
 
 
+def psp_arguments(launch: str) -> dict[int, bytes]:
+    """PSP bytes by offset for a shell command line `WC2 ARGS`: the command
+    tail at 80h (length, the text after the program name, CR) and FCBs 1 and 2
+    at 5Ch and 6Ch as COMMAND.COM fills them (INT 21h AH=29h: drive 0, the name
+    upper-cased and blank-padded). MEASURED for `WC2 Origin -k` (host-m5's
+    snapshot: tail 0A " Origin -k" 0D, FCBs ORIGIN and -K); names with a drive,
+    an extension or wildcards are not modelled."""
+    prog, _, tail = launch.partition(" ")
+    if prog.upper() != "WC2":
+        raise ValueError(f"launch of {prog}: the host runs WC2.EXE")
+    text = (" " + tail).encode("ascii") if tail else b""
+    if len(text) > 126:
+        raise ValueError("command tail longer than 126 bytes")
+    out = {0x80: bytes([len(text)]) + text + b"\r"}
+    words = tail.split()
+    for k, off in enumerate((0x5C, 0x6C)):
+        name = words[k].upper() if k < len(words) else ""
+        if len(name) > 8 or any(c in name for c in ":.*?"):
+            raise ValueError(f"FCB argument {name!r} not modelled")
+        out[off] = b"\0" + name.ljust(11).encode("ascii")
+    return out
+
+
 def trigger(spec: str) -> tuple[str, int, int]:
     """MODULE+HEX[#N] -> (label, offset, N)."""
     at, _, n = spec.partition("#")
@@ -1337,11 +1462,15 @@ def milestone_script(name: str) -> dict:
     r = rows[name]
     keys = []
     for k in filter(None, r["keys"].split(";")):
-        if "*" in k:
-            raise SystemExit(f"{name}: per-key hold {k} is not replayed yet")
+        # a per-key hold (KEY*N) is the recorder's: the release replays from the
+        # reference's key_up event (KeyRelease), whatever the hold
+        k, _, hold = k.partition("*")
+        if hold and not (hold.isdigit() and int(hold) > 0):
+            raise SystemExit(f"{name}: invalid per-key hold *{hold}")
         spec, _, key = k.rpartition("=")
         keys.append((trigger(spec), key if key.startswith(("mx", "my", "mb")) else key_code(key)))
     return {"keys": keys, "snapshots": [trigger(t) for t in r["snapshots"].split()],
+            "launch": r["launch"].partition(" ")[2] and r["launch"],
             "frame": r["vga_mode"] == "13", "speech": "0f" in r["irqs"].split()}
 
 
@@ -1355,6 +1484,15 @@ def reference_hooks(trace: Path) -> Counter:
                     and r["target_module"] != "-":
                 out[int(r["ax"], 16)] += int(r["count"])
     return out
+
+
+def reference_rom() -> bytes:
+    """The reference machine's BIOS ROM: the m0 snapshot's F0000h..FFFFFh (the
+    WC2.EXE entry; byte-identical in every reference snapshot, m0 to m6: MEASURED)."""
+    ram = RUNS / "ref-m0-a/trace/snap-m0-0/ram.bin"
+    if not ram.exists():
+        raise SystemExit("no m0 reference for the BIOS ROM: python3 tools/reference.py m0")
+    return ram.read_bytes()[ROM[0]:ROM[1]]
 
 
 def host_reference(milestone: str) -> Path:
@@ -1418,7 +1556,7 @@ class NoMonitor:
     def deliver(self): pass
     def returned(self): pass
     def read(self, lin, size): pass
-    def write(self, lin, size): pass
+    def write(self, lin, size, value=None): pass
 
     def finish(self, path) -> list[str]:
         print("irq monitor: no footprint (IRQ_PROOF off): not run")
@@ -1665,12 +1803,14 @@ def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h, irq=None) 
     reads = sorted(a for a in h.machine_reads if a < len(ref) and ram[a] != ref[a])
     print(f"{tag}: machine bytes read by the guest {len(h.machine_reads)}, {len(reads)} differ")
     for a in reads[:20]:
+        pc, n = h.machine_reads[a]
         problems.append(f"{tag}: machine byte {a:05X} read by the guest: ours {ram[a]:02x} "
-                        f"reference {ref[a]:02x}")
+                        f"reference {ref[a]:02x}, first at {h.where(pc)} after service {n}")
     return problems
 
 
 def main(argv=None) -> int:
+    global TABLE
     ap = argparse.ArgumentParser()
     ap.add_argument("--milestone", default="m1")
     ap.add_argument("--timeout", type=int, default=1800, help="seconds of emulation before failing")
@@ -1683,7 +1823,10 @@ def main(argv=None) -> int:
     ap.add_argument("--sabotage", action="store_true",
                     help="each planted runtime fault (SABOTAGE) must fail the check")
     ap.add_argument("--plants", help="with --sabotage: only these (comma-separated)")
+    ap.add_argument("--table", type=Path, default=TABLE,
+                    help="the milestone table (tools/reference.py --table; a diagnostic one in tmp/)")
     args = ap.parse_args(argv)
+    TABLE = args.table.resolve()
     if args.label:
         print(milestone_script(args.milestone)["snapshots"][-1][0])
         return 0
@@ -1869,8 +2012,11 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
              retrace=port_runs(trace, (0x3DA,)), pit=port_runs(trace, (0x40,)),
              dsp={port: port_runs(trace, (port,)) for port in (0x22C, 0x22E)})
     h.calendar_date, h.file_clock = reference_clocks(trace)
+    h.launch = script["launch"]
+    h.rom = reference_rom()
     label = script["snapshots"][-1][0]
     script["irqs"], script["releases"] = reference_inputs(trace, exact_releases=True)
+    script["repeats"] = typematic(trace, script["keys"])
     script["idle"] = idle_stacks(trace)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
     problems = rearm_problems() + overlay_problems(sabotage)

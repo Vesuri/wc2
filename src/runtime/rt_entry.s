@@ -12,6 +12,7 @@ G_DS	equ	1
 	xdef	rt_int
 	xdef	rt_irq
 	xdef	rt_irq_back
+	xdef	rt_irq_done
 	xdef	rt_irq_async
 	xdef	rt_irq_async_back
 	xdef	rt_irq_interrupt,rt_irq_interrupt_back
@@ -229,7 +230,8 @@ rt_irq_back:				; back at the poll point (host run: next interrupt)
 	rts
 irq_done:
 	subq.b	#1,rt_irq_mask
-	rts
+rt_irq_done:				; BIOS handlers only (host run: a service in the
+	rts				; keyboard intercept starts a new interval)
 
 ; IRQ0 (D8, docs/irq-plan.md I4): the guest handler of IVT 08h on the private
 ; guest stack IRQ_SS:IRQ_SP (runtime.h RT_IRQ_SS/RT_IRQ_SP) below a frame whose

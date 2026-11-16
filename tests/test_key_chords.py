@@ -2,7 +2,9 @@
 """Scripted modifiers: scan order, ring wrap and BIOS character boundaries."""
 import argparse
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 import host_run as H
 from test_mouse_irq import machine, call
 
@@ -31,12 +33,38 @@ class ChordTests(unittest.TestCase):
             key = H.key_code(name)
             self.assertEqual(H.key_events(key), expected)
             h = machine()
-            h.e.write(h.syms['rt_key_tail'], bytes([254]))
+            h.e.write(h.syms['rt_key_tail'], bytes([254]))   # an empty ring at the wrap
+            h.e.write(h.syms['key_head'], bytes([254]))
             h.press(key)
             self.assertEqual(h.mem(h.syms['rt_key_tail'], 1), bytes([(254 + len(expected)) & 255]))
             for i, scan in enumerate(expected):
                 self.assertEqual(h.mem(h.syms['rt_key_ring'] + 2 * ((254+i) % 16), 2),
                                  struct.pack('>H', scan))
+
+    def test_typematic_repeats(self):
+        down, alt_c = H.KEYS['down'], H.key_code('alt+c')
+        self.assertEqual(H.key_bytes(down, 2), (0xe0, 0x50, 0xe0, 0x50, 0xe0, 0x50, 0xe0, 0xd0))
+        self.assertEqual(H.key_bytes(alt_c, 1), (0x38, 0x2e, 0x2e, 0xae, 0xb8))
+        self.assertEqual(H.key_bytes(alt_c), H.key_events(alt_c))
+        irq = 'irq,WC2.EXE,0x1063a,09 svc=1 hits=0'
+        def trace(rows):
+            d = Path(tempfile.mkdtemp())
+            (d / 'events.csv').write_text('icount,kind,module,offset,detail\n' +
+                                          ''.join(f'0,{r}\n' for r in rows))
+            return d
+        keys = [(None, down), (None, 'mx+1'), (None, alt_c)]
+        ok = ['key_down,WC2.EXE,0x0fd10,down'] + [irq] * 6 + ['key_up,WC2.EXE,0x1063a,down skip=0'] + \
+             [irq] * 2 + ['key_down,WC2.EXE,0x0fd10,alt+c'] + [irq] * 2 + \
+             ['key_up,WC2.EXE,0x1063a,alt+c skip=0'] + [irq] * 2
+        self.assertEqual(H.typematic(trace(ok), keys), [2, 0])
+        for bad in (ok[:2] + ok[7:],                    # fewer than the makes held
+                    ok[:4] + ok[5:],                    # half a grey repeat
+                    ok[:9] + ok[10:],                   # one break missing
+                    [irq] + ok):                        # an IRQ 1 before any key
+            with self.assertRaises(ValueError):
+                H.typematic(trace(bad), keys)
+        with self.assertRaises(ValueError):
+            H.typematic(trace(ok), keys[:1])            # a key the script lacks
 
     def test_invalid_chords(self):
         for name in ('alt+alt+c', 'wat+c', 'alt+', '+c', 'alt+mx+1'):

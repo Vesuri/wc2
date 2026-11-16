@@ -22,7 +22,8 @@ Checks every guest memory access of a host run against I2's footprint
 - runtime-class buffers in conventional memory (music, effects, speech data the
   handler reads through a pointer): a generated main write of a byte between the
   handler's first and last read of that byte fails (buffer_races); a write after
-  the last read (a reload of bytes already played) is no race. The EMS page frame
+  the last read (a reload of bytes already played), or one that leaves the byte's
+  value as it was (the handler reads the same byte whenever it runs), is no race. The EMS page frame
   is left out of that rule: its bytes change page with every map (INT 67h, a
   service), so a linear byte is no buffer identity; frame reads are counted. The
   frame bytes ems.c's `copy` moves inside a handler (a page shown at its first
@@ -64,13 +65,14 @@ RUNTIME = re.compile(r"\[([0-9A-F]{4}|abs:[0-9A-F]{4}):([0-9A-F]{4})-([0-9A-F]{4
 def buffer_races(reads: dict[int, list], writes) -> list[str]:
     """Generated main writes of a buffer byte between the handler's first and last
     read of that byte. reads: linear -> [first tick, last tick, class]; writes:
-    (linear, size, who, generated, tick). A write after a byte's last read (a
-    reload of bytes already played) is no race."""
+    (linear, size, who, generated, tick[, changed]): changed, the bytes whose
+    value the write changes (absent: all). A write after a byte's last read (a
+    reload of bytes already played), or of the value the byte holds, is no race."""
     out = []
-    for lin, size, who, generated, tick in writes:
+    for lin, size, who, generated, tick, *changed in writes:
         for a in range(lin, lin + size):
             r = reads.get(a)
-            if generated and r and r[0] <= tick <= r[1]:
+            if generated and r and r[0] <= tick <= r[1] and (not changed or a in changed[0]):
                 out.append(f"irq monitor: main write of {a:05X} into {r[2]}'s buffer "
                            f"at {who} (tick {tick}, byte read in ticks {r[0]}-{r[1]})")
                 break
@@ -153,7 +155,7 @@ class Monitor:
         self.frame_service = 0     # frame bytes ems.c's copy moved inside a handler
         self.buffer_reads: dict[int, list] = {}  # linear -> [first tick, last tick, class]
         self.buffer_span = (1, 0)
-        self.buffer_writes: list[tuple[int, int, str, bool, int]] = []
+        self.buffer_writes: list[tuple[int, int, str, bool, int, set]] = []
         self.checked_bounds = 0
         self.pending_place = False
         self.seg_cache: dict = {}
@@ -327,7 +329,8 @@ class Monitor:
         if m[lin] & WRITTEN or m[lin + size - 1] & WRITTEN or size == 4 and (m[lin + 1] | m[lin + 2]) & WRITTEN:
             self.main_access(False, lin, size)
 
-    def write(self, lin: int, size: int):
+    def write(self, lin: int, size: int, value: int | None = None):
+        """value: the stored bytes, guest byte k at bits 8k (None: unknown)."""
         m = self.mask
         if m is None:
             return
@@ -336,7 +339,7 @@ class Monitor:
         if m[lin] & ACCESSED or m[lin + size - 1] & ACCESSED or \
                 size == 4 and (m[lin + 1] | m[lin + 2]) & ACCESSED or \
                 self.buffer_span[0] <= lin + size - 1 and lin <= self.buffer_span[1]:
-            self.main_access(True, lin, size)
+            self.main_access(True, lin, size, value)
 
     def handler_access(self, write: bool, lin: int, size: int):
         if self.pending_place:      # a pointer word stored since (hooks run before the store)
@@ -373,7 +376,7 @@ class Monitor:
         if stored_pointer:
             self.pending_place = True
 
-    def main_access(self, write: bool, lin: int, size: int):
+    def main_access(self, write: bool, lin: int, size: int, value: int | None = None):
         bits = 0
         for a in range(lin, lin + size):
             bits |= self.mask[a]
@@ -391,7 +394,12 @@ class Monitor:
         else:
             who = self.symbol(pc)
         if buffer:
-            self.buffer_writes.append((lin, size, who, generated and not self.h.in_service, self.tick))
+            # the hook runs before the store: guest memory holds the old bytes
+            old = self.h.gmem(lin, size)
+            changed = set(range(lin, lin + size)) if value is None else \
+                {lin + k for k in range(size) if old[k] != value >> 8 * k & 0xFF}
+            self.buffer_writes.append((lin, size, who, generated and not self.h.in_service, self.tick,
+                                       changed))
         if not hit:
             return
         if self.h.in_service or (not generated and who.split(".")[0] in INTERRUPT_SIDE):
@@ -435,7 +443,7 @@ class Monitor:
                       runtime_class_reads=dict(sorted(self.runtime_reads.items())),
                       frame_reads=self.frame_reads, frame_service=self.frame_service,
                       buffer_bytes=len(self.buffer_reads),
-                      service_buffer_writes=sorted({w for _, _, w, g, _ in self.buffer_writes if not g}))
+                      service_buffer_writes=sorted({w[2] for w in self.buffer_writes if not w[3]}))
         if out is not None:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(record, indent=1) + "\n")

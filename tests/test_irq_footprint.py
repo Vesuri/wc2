@@ -141,7 +141,11 @@ def buffer_rule(races=irq_monitor.buffer_races):
     assert len(races(reads, [w(199, 300)])) == 1, 'write reaching a byte still read passed'
     for quiet in (w(100, 300), w(100, 5), w(102, 15, False)):
         assert not races(reads, [quiet]), f'no race flagged: {quiet}'
-    return 5
+    # the bytes a write changes: a write inside the window that keeps byte 102's
+    # value and changes 103's races on 103 only; one that changes neither, not
+    assert len(races(reads, [(102, 2, 'site', True, 15, {103})])) == 1, 'changed byte in the window passed'
+    assert not races(reads, [(102, 2, 'site', True, 15, set())]), 'unchanged bytes flagged'
+    return 7
 
 
 def hold_plants():
@@ -160,6 +164,8 @@ BUFFER_PLANTS = {
     'buffer rule: first read only': lambda reads, writes: [
         w for w in writes if w[3] and any(a in reads and reads[a][0] <= w[4] for a in range(w[0], w[0] + w[1]))],
     'buffer rule: no races': lambda reads, writes: [],
+    'buffer rule: unchanged bytes race': lambda reads, writes: irq_monitor.buffer_races(
+        reads, [w[:5] for w in writes]),
 }
 
 

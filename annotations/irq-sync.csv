@@ -343,3 +343,8 @@ WC2.EXE,0x54941,1976,0xd132,0xd133,r,"reads of the INT 08h handler's tick dwords
 WC2.EXE,0x54947,1976,0xd130,0xd131,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m4)"
 WC2.EXE,0x5494D,1976,0xd132,0xd133,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m4)"
 WC2.EXE,0x54950,1976,0xd130,0xd131,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m4)"
+WC2.EXE,0x0771C,1976,0xd132,0xd133,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m5/m6)"
+WC2.EXE,0x07720,1976,0xd130,0xd131,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m5/m6)"
+WC2.EXE,0x1030C,1976,0xd132,0xd133,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m5/m6)"
+WC2.EXE,0x1030F,1976,0xd130,0xd131,r,"reads of the INT 08h handler's tick dwords D130h-D137h (+0FD70..+0FD7C): the game's clock and delay calls; found by the host-run monitor (I3, m5/m6)"
+WC2.EXE,0x1013E,1976,0xd184,0xd283,w,"the key table D184h-D283h (indexed by scan code), which the keyboard intercept's key callback (through [D150h], +103BB/+103CA) writes; main code clears a key's byte (+1013E); found by the host-run monitor (I3, m5/m6)"

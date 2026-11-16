@@ -6,11 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-15. Host lockstep at m5 and m6 (the flight route, the save and the load): DOS writes into
-    `GAMEDAT` (`SAVEGAME.WC2`, `TEMPGLOB.000`, `MEM.$$$`, `AUTO.$$$`, `TAPE.TMP`) through
-    SWOTL's I/O windows, any DOS or EMS function the traces show that the runtime lacks
-    (X-Wing has AH=0Eh, find-first directories, error 9 on a free; its dead-stack
-    exemptions need an owner decision here). Acceptance: m5 and m6 in lockstep with 0 monitor problems.
 16. Coverage beyond m6 (port-plan P6.2): reference milestones for every flight scene type,
     the ships flown, cinematics, menus, saves and the ending path; later missions start
     from saves recorded under the reference, kept as local fixture inputs. Acceptance: the
@@ -29,7 +24,9 @@ Items are in work order; numbers are identifiers and are not reused.
 
 18. Display and input on the Amiga (port-plan P6b.1, P6b.3): SWOTL's copper display,
     double buffer, changed-row C2P, display queue and frame cap; the key map, mouse and
-    joystick; WC2's own joystick calibration runs. Acceptance: the Amiga build shows m4's
+    joystick; WC2's own joystick calibration runs. The F000h segment SUPERTM.DRV's noise
+    fill samples ([drivers.md](drivers.md); the reference's is DOSBox-X's, not shippable):
+    an owner decision. Acceptance: the Amiga build shows m4's
     flight frame from generated code and the smoke flies with keyboard and joystick input.
 19. Audio on Paula (port-plan P6b.2): FM music through SWOTL's `fm_paula.c`, effects priced
     by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,

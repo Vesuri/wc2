@@ -60,3 +60,14 @@ after the data), so the sum telescopes and only the latch that ends a loop sets 
 at the last, MEASURED). The `pit` host plant therefore answers a mid-loop latch, not a low bit. The drivers keep
 variables in their code segments (`tools/code_writes.py`: class `data`, no write into a
 decoded instruction).
+
+`SUPERTM.DRV`'s noise fill (the far procedure at `+74D2`, after entry 4's) reads the BIOS
+ROM: `DS = F000h`, SI from a pseudo-random sequence in `cs:[74C2h]`/`cs:[74C4h]`, a pixel
+of colour AL where bit 0 of the ROM byte is set (DERIVED by reading). The m5/m6 routes
+run it from service 368,836 on (MEASURED, host lockstep); the shape it fills is later
+drawn by the RLE routines, so the ROM contents steer control flow (with zero ROM the
+host left the reference's path at `+29A9`, table index 0 → `+2AD6`, never traced). The
+reference machine's ROM (DOSBox-X's) is byte-identical in every snapshot, m0 to m6
+(MEASURED); host lockstep loads it from the m0 snapshot as a local fixture
+(`tests/host_run.py reference_rom`). What the Amiga build holds there is open
+([open-work.md](open-work.md) item 18).
