@@ -6,11 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6: whole game (gate 6, the current phase)
 
-16. Coverage beyond m6 (port-plan P6.2): reference milestones for every flight scene type,
-    the ships flown, cinematics, menus, saves and the ending path; later missions start
-    from saves recorded under the reference, kept as local fixture inputs. Acceptance: the
-    milestones in `reference/milestones.csv`, each recorded twice byte-identically
-    (`tools/reference.py`).
 17. Gate 6 (port-plan P6.3–4): `make test-host-all` lockstep over all milestones,
     `make test-amiga-replay` on a few, a `play_walk.sh` smoke into flight. Route runs: one
     reference and one host run check every label on a key route in order (a snapshot step
@@ -18,7 +13,7 @@ Items are in work order; numbers are identifiers and are not reused.
     labels lie on a longer route (m5's on m6's) needs no run of its own. Start from X-Wing
     `2b047e5`, `423b2dd`, `33d685a`, `c737385`. Acceptance:
     every overlay and driver translated, zero unclassified executed instructions (G6), the
-    HLE share reported, lockstep clean over all milestones.
+    HLE share reported, lockstep clean over m1–m6 (D10: wider coverage is item 16).
 
 ## P6b: Amiga platform (stream C, beside P6)
 
@@ -81,3 +76,11 @@ Items are in work order; numbers are identifiers and are not reused.
 7. `SPEECH.S00` codec (in scope, D3): disk entries flagged `E0` grow to twice their
    size when installed; needed by the installer (D7, port-plan P8.2). Acceptance:
    `tools/origin_pak.py verify` rebuilds it byte-exactly.
+
+## Deferred (owner, D10)
+
+16. Coverage beyond m6 (port-plan P6.2, deferred by D10): reference milestones for every flight scene type,
+    the ships flown, cinematics, menus, saves and the ending path; later missions start
+    from saves recorded under the reference, kept as local fixture inputs. Acceptance: the
+    milestones in `reference/milestones.csv`, each recorded twice byte-identically
+    (`tools/reference.py`).

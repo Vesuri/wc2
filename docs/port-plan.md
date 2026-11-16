@@ -361,7 +361,7 @@ runs, 44 and 116 sync sites hit, MEASURED), and its sabotages are caught.
        (14h, 40h, D1h; no version query in m2–m6, MEASURED), blocks checked against the
        reference's port log, INT 0Fh runs under the footprint monitor; the Amiga's
        speech and IRQ 7 are P6b.2.
-2. Coverage scripts (`reference/coverage.csv`): every flight scene type, the ships flown,
+2. Deferred (D10; gate 6 runs over m1–m6). Coverage scripts (`reference/coverage.csv`): every flight scene type, the ships flown,
    cinematics, menus, saves and the ending path. Later missions start from saves recorded
    under the reference, as local fixture inputs.
 3. `make test-host-all` lockstep, `make test-amiga-replay` on a few milestones, a
@@ -370,7 +370,7 @@ runs, 44 and 116 sync sites hit, MEASURED), and its sabotages are caught.
    - every overlay and driver is translated;
    - zero unclassified executed instructions (G6);
    - the HLE share is reported (0 so far);
-   - lockstep is clean over all milestones.
+   - lockstep is clean over all milestones (m1–m6 while P6.2 is deferred, D10).
 
 ### P6b. Amiga platform (stream C, beside P5–P6)
 
