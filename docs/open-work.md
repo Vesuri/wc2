@@ -33,7 +33,12 @@ Items are in work order; numbers are identifiers and are not reused.
     channel ownership stated. The Amiga `plat_sb_block` stops today: it plays the block
     and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
     3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)), and production delivers
-    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8). Acceptance: the FM checks and
+    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8). Take X-Wing's two fixes to the
+    SWOTL FM code first (not committed there as of 2026-11-16): `fm_paula.c` renders
+    additive patches (C0h bit 0) with both operators at their relative levels (WC2: 7
+    patch writes, 49 key-ons by m6), and `fm_check` measures vibrato notes (about half of
+    WC2's key-ons by m6, 87% in m1b; MEASURED from the host references' `opl.csv`), skips
+    fields whose registers change mid-field and released notes. Acceptance: the FM checks and
     their sabotage pass; the intro's speech plays on the Amiga build; the Chip cost MEASURED.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
