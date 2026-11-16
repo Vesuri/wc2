@@ -56,7 +56,7 @@ Items are in work order; numbers are identifiers and are not reused.
 
 11. Flag liveness through the dispatcher: 59 PUSHF and 2 INT sites read the whole
     FLAGS word and make every flag live at the dispatcher, so `tests/audit.csv` allows
-    1,917 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in
+    1,931 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in
     `annotations/flags.csv` (DERIVED by reading) shrink it; start from X-Wing's four
     overlay-manager rows (the same Borland overlay manager). Acceptance: the
     pairs listed with their evidence, the audit counts lowered to the new measurement, the

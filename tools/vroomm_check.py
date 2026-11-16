@@ -357,7 +357,7 @@ def fmt(acts: list[tuple]) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", default="ref-*", help="tmp/pc-runs glob (default: the milestones)")
+    ap.add_argument("--runs", default=M.CORPUS, help="tmp/pc-runs globs for the trace corpus (wc2_model.CORPUS)")
     ap.add_argument("--sabotage", choices=SABOTAGE, help="run a broken model; every trace must fail")
     args = ap.parse_args()
     traces = M.runs(args.runs)

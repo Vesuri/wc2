@@ -77,7 +77,7 @@ def buffer_range(trace: Path, image: bytes) -> tuple[int, int, int] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", default="ref-*", help="tmp/pc-runs glob for the trace corpus")
+    ap.add_argument("--runs", default=M.CORPUS, help="tmp/pc-runs globs for the trace corpus (wc2_model.CORPUS)")
     args = ap.parse_args()
     traces = M.runs(args.runs)
     image = M.image_file()

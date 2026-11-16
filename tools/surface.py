@@ -454,7 +454,7 @@ def drivers(corpus: Corpus, prog: Program, out: list[str]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", default="ref-*", help="tmp/pc-runs glob for the trace corpus")
+    ap.add_argument("--runs", default=M.CORPUS, help="tmp/pc-runs globs for the trace corpus (wc2_model.CORPUS)")
     ap.add_argument("--write", type=Path, help="write the markdown there (docs/external-surface.md)")
     args = ap.parse_args()
     prog = Program()

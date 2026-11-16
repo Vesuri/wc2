@@ -78,8 +78,16 @@ def link_owners(mods: dict[str, Module], linear: int) -> list[str]:
     return [m.name for m in mods.values() if m.link_lo <= linear < m.link_hi]
 
 
-def runs(pattern: str = "ref-*") -> list[Path]:
-    return sorted(p / "trace" for p in RUNS.glob(pattern) if (p / "trace/summary.txt").exists())
+# The trace corpus: the milestone runs (tools/reference.py, ref-<name>-a/b) and the host
+# references (--host, host-<name>): the same original under the same emulator, the latter
+# with the current poll points, whose interrupt timing reaches code the former need not.
+CORPUS = "ref-* host-*"
+
+
+def runs(patterns: str = CORPUS) -> list[Path]:
+    """Traces of the tmp/pc-runs runs matching any of the space-separated globs."""
+    found = {p for g in patterns.split() for p in RUNS.glob(g)}
+    return sorted(p / "trace" for p in found if (p / "trace/summary.txt").exists())
 
 
 def executed(traces: list[Path]) -> dict[str, set[int]]:

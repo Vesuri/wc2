@@ -420,7 +420,7 @@ def static_seeds(sw: Sweep, prog: Program) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", default="ref-*", help="tmp/pc-runs glob for the trace corpus")
+    ap.add_argument("--runs", default=M.CORPUS, help="tmp/pc-runs globs for the trace corpus (wc2_model.CORPUS)")
     ap.add_argument("--annotations", action="store_true", help="write annotations/indirect.csv")
     args = ap.parse_args()
     prog = Program()
