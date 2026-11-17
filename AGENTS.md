@@ -91,7 +91,7 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 | [docs/source-inventory.md](docs/source-inventory.md) | facts and hashes of the original files |
 | [docs/pc-reference-loop.md](docs/pc-reference-loop.md) | running the installer or the game under DOSBox |
 | [docs/wc1-wc2-comparison.md](docs/wc1-wc2-comparison.md) | WC1/WC2 code and data sharing; the WC1 reuse plan |
-| [docs/vroomm.md](docs/vroomm.md), [docs/drivers.md](docs/drivers.md), [docs/external-surface.md](docs/external-surface.md) | the overlay manager, the drivers, the game's DOS, BIOS, EMS and port use (the P2 map) |
+| [docs/vroomm.md](docs/vroomm.md), [docs/drivers.md](docs/drivers.md), [docs/external-surface.md](docs/external-surface.md), [docs/indirect-coverage.md](docs/indirect-coverage.md) | the overlay manager, the drivers, the game's DOS, BIOS, EMS and port use (the P2 map); the indirect sites no trace ran |
 
 ## Shared environment and knowledge
 
