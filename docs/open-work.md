@@ -4,24 +4,16 @@ The single list of open work. Remove items when done; history is in git.
 Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
 Items are in work order; numbers are identifiers and are not reused.
 
-## P6: whole game (gate 6, the current phase)
-
-17. Gate 6 (port-plan P6.3–4): `make test-host-all` lockstep over all milestones,
-    `make test-amiga-replay` on a few, a `play_walk.sh` smoke into flight. Route runs: one
-    reference and one host run check every label on a key route in order (a snapshot step
-    inside `keys`, in the recorder patch and `milestone_script`), so a milestone whose
-    labels lie on a longer route (m5's on m6's) needs no run of its own. Start from X-Wing
-    `2b047e5`, `423b2dd`, `33d685a`, `c737385`. Acceptance:
-    every overlay and driver translated, zero unclassified executed instructions (G6), the
-    HLE share reported, lockstep clean over m1–m6 (D10: wider coverage is item 16).
-
 ## P6b: Amiga platform (stream C, beside P6)
 
 18. Display and input on the Amiga (port-plan P6b.1, P6b.3): SWOTL's copper display,
     double buffer, changed-row C2P, display queue and frame cap; the key map, mouse and
     joystick; WC2's own joystick calibration runs. The F000h segment SUPERTM.DRV's noise
     fill samples ([drivers.md](drivers.md); the reference's is DOSBox-X's, not shippable):
-    an owner decision. Acceptance: the Amiga build shows m4's
+    an owner decision. The smoke into flight (moved from gate 6: the production build stops
+    at the first SB block until item 19, and the game starts speech before flight, m2):
+    `amiga/play_walk.sh` and `.gdb` are still SWOTL's steep-bank script and need WC2's
+    keys and a flight label. Acceptance: the Amiga build shows m4's
     flight frame from generated code and the smoke flies with keyboard and joystick input.
 19. Audio on Paula (port-plan P6b.2): FM music through SWOTL's `fm_paula.c`, effects priced
     by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,
