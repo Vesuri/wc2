@@ -2,7 +2,7 @@
 ; execute through the production rt_irq path, including its return checks.
 	xdef rt_replay_point,rt_replay_enter,rt_replay_return,rt_replay_done
 	xref replay_point,replay_next,replay_enter,replay_return
-	xref replay_cs,replay_ip,rt_irq
+	xref replay_cs,replay_ip,rt_irq,rt_video_flush
 	section .text,code
 rt_replay_enter:
 	move.w ccr,-(sp)
@@ -64,6 +64,10 @@ rt_replay_point:
 .done:
 	movem.l (sp)+,d0-d7/a0-a6
 	move.w (sp)+,ccr
+	; the frame drawn since the last present is shown before the capture (video.c)
+	movem.l d0-d1/a0-a1,-(sp)
+	jsr rt_video_flush
+	movem.l (sp)+,d0-d1/a0-a1
 ; Hold the recorded final guest state while the real VBI publishes its queued
 ; frame. Returning here would execute unrecorded guest code during the capture.
 rt_replay_done:

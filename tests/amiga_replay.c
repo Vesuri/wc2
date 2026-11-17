@@ -57,15 +57,22 @@ static void rep_next(void)
 
 volatile uint32_t replay_services, replay_interrupts, replay_steps;
 volatile uint32_t replay_cs, replay_ip;
-volatile uint32_t replay_vga_reads, replay_pit_reads, replay_dsp_reads;
-static uint32_t retrace_index, retrace_used, pit_index, pit_used;
-/* counts as objects: a fixture without reads compares without -Wtype-limits */
-static const uint32_t retrace_count = REPLAY_RETRACE, pit_count = REPLAY_PIT;
+volatile uint32_t replay_vga_reads, replay_pit_reads, replay_dsp_reads, replay_sb_blocks;
+/* The 3DAh and 40h read runs (replay_data.h streams, amiga_replay.py run_stream):
+ * the current run and the reads used of it. */
+struct run_stream { const uint8_t *p; uint32_t left, service, value, repeat, used; };
+static struct run_stream retrace_runs = {replay_retrace_stream, REPLAY_RETRACE, 0, 0, 0, 0};
+static struct run_stream pit_runs = {replay_pit_stream, REPLAY_PIT, 0, 0, 0, 0};
 /* the DSP status ports' runs (22Ch, 22Eh): next row, reads used of it */
 static const struct replay_retrace *const dsp_runs[2] = {replay_dsp_write, replay_dsp_data};
 static const uint32_t dsp_count[2] = {REPLAY_DSP_WRITE, REPLAY_DSP_DATA};
 static uint32_t dsp_index[2], dsp_used[2];
-static uint32_t service_hash = 2166136261u, step_hits, release_at;
+static uint32_t service_hash = 2166136261u, step_hits;
+/* A key's release (tests/host_run.py KeyRelease; X-Wing c737385): at its service
+ * event, after skip visits of the next step's point in that interval (skip < 0: at
+ * the event); visits count from key-down and restart at each service event. */
+static uint32_t release_pending, release_service, release_interval, release_visits;
+static int32_t release_skip;
 static uint32_t visits[REPLAY_POINTS], epochs[REPLAY_POINTS];
 static uint32_t pending[64], vectors[64], depth, makes;
 static int32_t mouse_x, mouse_y;
@@ -94,17 +101,28 @@ static void service(const uint32_t *r, uint32_t vector, unsigned returning)
         unsigned k = i < 6 ? i : i + 6; /* d0-d5/a4-a5 */
         word[i] = (uint16_t)r[k] ^ (i == 4 || i == 5 ? 0x7fff : 0);
     }
-    if (rt_irq0_running) {
+    /* the keyboard intercept runs on the interrupted stack: compared as is (host_run
+     * relocates only inside rt_irq_async) */
+    if (rt_irq0_running && !rt_key_hook_running) {
         if (ss != RT_IRQ_SS) fail("replay service in IRQ0 off the private stack", ss, replay_services);
         uint16_t sp = *(const uint16_t *)(rt_irq_saved + RT_STATE_BYTES + 8);
         ss = *(const uint16_t *)(rt_irq_saved + 2);
         if (word[4] <= word[5] && word[5] <= RT_IRQ_SP) word[5] = (uint16_t)(word[5] - RT_IRQ_SP + sp);
         word[4] = (uint16_t)(word[4] - RT_IRQ_SP + sp);
     }
-    for (unsigned i = 0; i < 8; ++i)
-        hash_word(word[i]);
-    hash_word(G_ES); hash_word(ss); hash_word(G_DS);
-    hash_word(vector);
+    /* ax cx dx bx sp bp si di es ss ds vector, as the generator's keys */
+    uint16_t v[12] = {word[0], word[1], word[2], word[3], word[4], word[5], word[6], word[7],
+                      G_ES, ss, G_DS, (uint16_t)vector};
+    /* undefined-flag bits at this event (annotations/undefined-flags.csv, as
+     * host_run.ServiceCheck), cleared on both sides of the hash */
+    static uint32_t mask_index;
+    static const uint32_t mask_count = REPLAY_MASKS;
+    while (mask_index < mask_count && replay_masks[mask_index].event == replay_services) {
+        v[replay_masks[mask_index].word] &= (uint16_t)~replay_masks[mask_index].mask;
+        ++mask_index;
+    }
+    for (unsigned i = 0; i < 12; ++i)
+        hash_word(v[i]);
     hash_word((G_DF ? 0x400 : 0) | (G_IF ? 0x200 : 0));
     hash_word(returning);
     if (replay_services >= REPLAY_SERVICES)
@@ -171,11 +189,28 @@ static void executed(uint32_t point)
 }
 
 /* Return group index+1, zero for no delivery, or -1 for the final snapshot. */
+/* A held key's release (host_run KeyRelease.ready), at each pass of a point the
+ * host's step hook watches: the poll points and DOS's idle point. */
+static void release_check(uint32_t point)
+{
+    if (release_pending) {
+        int target = replay_steps < REPLAY_STEPS && point == replay_script[replay_steps].point;
+        if (replay_services != release_interval) {
+            release_interval = replay_services;
+            release_visits = 0;
+        }
+        if (target) ++release_visits;
+        if (replay_services != release_service ? replay_services > release_service :
+                release_skip < 0 || (target && release_visits > (uint32_t)release_skip))
+            release_pending = 0;
+    }
+}
+
 int32_t replay_point(uint32_t point)
 {
     if (point >= REPLAY_POINTS) fail("replay point", point, 0);
-    if (release_at && replay_services >= release_at) release_at = 0;
-    if (replay_steps < REPLAY_STEPS && !release_at) {
+    release_check(point);
+    if (replay_steps < REPLAY_STEPS && !release_pending) {
         const struct replay_step *step = &replay_script[replay_steps];
         if (point == step->point && ++step_hits == step->hits) {
             ++replay_steps; step_hits = 0;
@@ -195,7 +230,11 @@ int32_t replay_point(uint32_t point)
                 for (int i = 2; i >= 0; --i)
                     if (step->value & (1u << (9 + i)))
                         rt_key_ring[rt_key_tail++ % RT_KEY_RING] = modifiers[i] | 0x80;
-                release_at = step->release;
+                release_pending = 1;
+                release_service = step->release;
+                release_skip = step->skip;
+                release_interval = 0xffffffffu;
+                release_visits = 0;
                 break;
             }
             case 2: mouse_x += step->value; break;
@@ -204,13 +243,14 @@ int32_t replay_point(uint32_t point)
             case 0:
                 if (replay_steps == REPLAY_STEPS) {
                     /* which: services 1, interrupts 2, depth 4, REP 8, active REP 16,
-                     * VGA 32, PIT 64, DSP 128 */
+                     * VGA 32, PIT 64, DSP 128, SB blocks 256 */
                     uint32_t which = (replay_services != REPLAY_SERVICES) |
                         (replay_interrupts != REPLAY_IRQS) << 1 | (depth != 0) << 2 |
                         (replay_rep_index != REPLAY_REPS) << 3 | (replay_rep_active != 0) << 4 |
                         (replay_vga_reads != REPLAY_VGA_READS) << 5 |
                         (replay_pit_reads != REPLAY_PIT_READS) << 6 |
-                        (replay_dsp_reads != REPLAY_DSP_READS) << 7;
+                        (replay_dsp_reads != REPLAY_DSP_READS) << 7 |
+                        (replay_sb_blocks != REPLAY_BLOCKS) << 8;
                     if (which)
                         fail("replay incomplete", which, replay_pit_reads);
                     return -1;
@@ -306,18 +346,40 @@ uint32_t replay_rep(uint32_t point, uint32_t done, const uint32_t *r)
 }
 
 /* The reference's next 3DAh value, read in the same service-event interval. */
+static uint32_t stream_varint(const uint8_t **p)
+{
+    uint32_t v = 0;
+    for (unsigned shift = 0;; shift += 7) {
+        uint8_t b = *(*p)++;
+        v |= (uint32_t)(b & 127) << shift;
+        if (!(b & 128)) return v;
+    }
+}
+
+/* The stream's next read: its value, or the named stop after the last run or
+ * outside the run's service-event interval. */
+static uint8_t run_read(struct run_stream *s, const char *after, const char *interval,
+                        volatile uint32_t *reads)
+{
+    while (s->used == s->repeat) {
+        if (!s->left) fail(after, *reads, replay_services);
+        --s->left;
+        uint32_t v = stream_varint(&s->p);
+        s->service += v >> 1;
+        s->value = *s->p++;
+        s->repeat = (v & 1) ? stream_varint(&s->p) : 1;
+        s->used = 0;
+    }
+    if (s->service != replay_services) fail(interval, *reads, replay_services);
+    ++s->used;
+    ++*reads;
+    return (uint8_t)s->value;
+}
+
 uint8_t replay_vga_status(void)
 {
-    while (retrace_index < retrace_count && retrace_used == replay_retrace[retrace_index].repeat) {
-        ++retrace_index;
-        retrace_used = 0;
-    }
-    if (retrace_index == retrace_count) fail("replay VGA status after the last", replay_vga_reads, replay_services);
-    const struct replay_retrace *r = &replay_retrace[retrace_index];
-    if (r->service != replay_services) fail("replay VGA status interval", replay_vga_reads, replay_services);
-    ++retrace_used;
-    ++replay_vga_reads;
-    return (uint8_t)r->value;
+    return run_read(&retrace_runs, "replay VGA status after the last", "replay VGA status interval",
+                    &replay_vga_reads);
 }
 
 /* The reference's next read of DSP status port 22Ch or 22Eh, in the same
@@ -342,16 +404,8 @@ uint8_t replay_dsp_status(uint32_t port)
  * the count the latch took. */
 static uint8_t pit_byte(void)
 {
-    while (pit_index < pit_count && pit_used == replay_pit[pit_index].repeat) {
-        ++pit_index;
-        pit_used = 0;
-    }
-    if (pit_index == pit_count) fail("replay PIT read after the last", replay_pit_reads, replay_services);
-    const struct replay_retrace *r = &replay_pit[pit_index];
-    if (r->service != replay_services) fail("replay PIT read interval", replay_pit_reads, replay_services);
-    ++pit_used;
-    ++replay_pit_reads;
-    return (uint8_t)r->value;
+    return run_read(&pit_runs, "replay PIT read after the last", "replay PIT read interval",
+                    &replay_pit_reads);
 }
 
 uint16_t replay_pit_count(uint32_t ch)
@@ -359,4 +413,41 @@ uint16_t replay_pit_count(uint32_t ch)
     if (ch) fail("replay PIT channel", ch, replay_services);
     uint8_t lo = pit_byte();
     return (uint16_t)(lo | pit_byte() << 8);
+}
+
+/* A Sound Blaster block the DSP model starts (platform.h plat_sb_block): the
+ * reference's next, in order (tests/host_run.py reference_blocks, the host check);
+ * its IRQ 7 is a replayed interrupt. */
+void replay_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
+{
+    static const uint32_t block_count = REPLAY_BLOCKS;
+    if (replay_sb_blocks == block_count) fail("replay SB block after the last", linear, replay_services);
+    const struct replay_block *b = &replay_blocks[replay_sb_blocks];
+    if (b->linear != linear || b->length != length || b->rate != rate)
+        fail("replay SB block differs (index, linear)", replay_sb_blocks, linear);
+    ++replay_sb_blocks;
+}
+
+/* DOS's console wait (input.c rt_key_wait, rt_entry.s rt_idle): the interrupts
+ * the reference took in its INT 28h idle stub, as tests/host_run.py posts them at
+ * rt_idle_poll. A pass (rt_idle's entry, pass = 1) checks a held key's release and
+ * posts the next row if it is at this service event; after each delivery
+ * (pass = 0) the next row follows in the same pass only while the rows so far went
+ * to the BIOS's handlers (the host's loop stops after a guest-handled one; that
+ * group's next waits for the next pass). Visits are not counted at the idle point
+ * (its rows have hits 0). Returns 1 if one was posted. */
+static uint32_t idle_bios;      /* the last idle row posted went to a BIOS handler */
+
+uint32_t replay_idle(uint32_t pass)
+{
+    if (pass && REPLAY_IDLE_POINT < REPLAY_POINTS) release_check(REPLAY_IDLE_POINT);
+    if (!pass && !idle_bios) return 0;
+    if (replay_interrupts == REPLAY_IRQS) return 0;
+    const struct replay_irq *irq = &replay_irqs[replay_interrupts];
+    if (irq->point != REPLAY_IDLE_POINT) return 0;
+    if (replay_services > irq->service) fail("replay missed idle interrupt", replay_interrupts, replay_services);
+    if (replay_services != irq->service) return 0;
+    idle_bios = !rt_guest_vector((uint8_t)irq->vector);     /* machine.c, as host_run guest_vector */
+    post();
+    return 1;
 }

@@ -165,6 +165,7 @@ uint8_t rt_dac_in(void);
 extern volatile uint8_t rt_present_due;
 void rt_video_refresh(void);
 void rt_video_frame(void);      /* INT 33h AX=3: the game's frame boundary */
+void rt_video_flush(void);      /* diagnostic replay only (WC2_REPLAY): pending rows shown */
 /* Production platforms with a vertical blank counter (rt_fields) set
  * rt_frame_cap: the frame boundary returns at most once per field, so each
  * frame takes at least one field of mouse motion (translator-design D9). Sync
@@ -206,6 +207,7 @@ void rt_bios_int15(void);       /* a guest INT 15h intercept's chain (machine.c)
  * in progress; rt_opl_pair: the main thread's OPL index/data pair is open;
  * rt_irq_hold: a generated non-atomic sync instruction runs. */
 extern volatile uint8_t rt_irq0_running, rt_irq_mask, rt_opl_pair, rt_irq_hold, rt_irq_interrupting;
+extern volatile uint8_t rt_key_hook_running;    /* machine.c rt_key_hook_enter/leave */
 int rt_irq0_ready(void);
 int rt_irq0_take(void);
 void rt_irq_interrupt(void);

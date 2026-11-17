@@ -199,6 +199,16 @@ static void present(void)
     }
 }
 
+#ifdef WC2_REPLAY
+/* Diagnostic replay (tests/amiga_replay.s rt_replay_done): the rows stored since
+ * the last present are shown before the capture, so a milestone label inside a
+ * frame compares the reference's live VGA memory with the same conversion. */
+void rt_video_flush(void)
+{
+    present();
+}
+#endif
+
 /* Frames end at the game's mouse poll: polled within the last second of
  * IRQ0 deliveries at the programmed rate. */
 static int framed(void)

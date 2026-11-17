@@ -91,7 +91,7 @@ G_DS	equ	1
 	xref	rt_irq_interrupting
 
 	ifd WC2_REPLAY
-	xref rt_replay_enter,rt_replay_return
+	xref rt_replay_enter,rt_replay_return,replay_idle
 	endif
 
 	section	.text,code
@@ -395,9 +395,15 @@ rt_key_hook_back:			; (host run: the handler returned)
 ; convention, from a service with rt_r current: the interrupts the reference
 ; took in DOSBox-X's INT 28h idle stub (its HLT with IF set), delivered by
 ; rt_irq as at a poll point with the stub's CS:IP (rt_idle_cs, rt_idle_ip).
-; The host run posts them at rt_idle_poll; d0 = 1 if one was posted.
+; The host run posts them at rt_idle_poll, the Amiga replay in replay_idle; d0 = 1
+; if one was posted.
 rt_idle:
 	movem.l	d2-d7/a2-a6,-(a7)
+	ifd WC2_REPLAY
+	pea	1.w			; a pass: posts the reference's next idle interrupt
+	jsr	replay_idle		; (tests/amiga_replay.c)
+	addq.l	#4,a7
+	endif
 	movea.l	rt_guest,a6
 	bsr	load_regs
 	moveq	#0,d7
@@ -409,7 +415,24 @@ rt_idle_poll:				; (host run: the reference's next idle interrupt)
 	tst.b	G_IRQ(a6)
 	sne	rt_idle_posted
 	beq.s	.none
+.deliver:
 	jsr	rt_irq
+	ifd WC2_REPLAY
+	movem.l	d0-d1/a0-a1,-(a7)	; the rest of the reference's group in this pass:
+	clr.l	-(a7)			; the guest registers stay live (load_regs would
+	jsr	replay_idle		; re-run seg_check), C's scratch kept
+	addq.l	#4,a7
+	move.l	d0,d6
+	movem.l	(a7)+,d0-d1/a0-a1
+	tst.l	d6
+	beq.s	.none
+	moveq	#0,d7
+	move.w	rt_idle_ip,d7
+	moveq	#0,d6
+	move.w	rt_idle_cs,d6
+	swap	d6
+	bra.s	.deliver
+	endif
 .none:	bsr	save_regs
 	moveq	#1,d0
 	and.b	rt_idle_posted,d0

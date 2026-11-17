@@ -23,6 +23,7 @@
 uint16_t replay_pit_count(uint32_t ch);   /* tests/amiga_replay.c */
 uint8_t replay_vga_status(void);
 uint8_t replay_dsp_status(uint32_t port);
+void replay_sb_block(uint32_t linear, uint32_t length, uint32_t rate);
 #endif
 
 struct DosLibrary *DOSBase = 0;
@@ -427,11 +428,16 @@ uint8_t plat_dsp_status(uint32_t port, uint32_t value)
 #endif
 }
 
-/* Speech on Paula and IRQ 7's delivery are open-work 19: a block stops. */
+/* Speech on Paula and IRQ 7's delivery are open-work 19: a block stops. The
+ * diagnostic replay checks the block against the reference's and replays its IRQ 7. */
 void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
 {
+#ifdef WC2_REPLAY
+    replay_sb_block(linear, length, rate);
+#else
     (void)rate;
     rt_stop("Sound Blaster block: no Amiga speech yet (linear, length)", linear, length);
+#endif
 }
 
 /* Diagnostic key script (argument KEYS=when:key,...; when is a frame from

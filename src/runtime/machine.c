@@ -296,6 +296,7 @@ uint32_t rt_key_hook_enter(void)
     rt_r.ax = (uint16_t)(0x4f00 | rt_hook_al);
     G_CCR |= CCR_C;
     rt_irq0_running = 1;
+    rt_key_hook_running = 1;
     return deliver(0x15, BIOS_SEG, BIOS_INT09_INT15);
 }
 
@@ -304,6 +305,7 @@ void rt_key_hook_leave(void)
     rt_hook_al = (uint8_t)rt_r.ax;
     rt_hook_cf = G_CCR & CCR_C;
     rt_irq0_running = 0;
+    rt_key_hook_running = 0;
 }
 
 /* jmp far to the BIOS INT 15h (a guest intercept chaining): AH=4Fh sets CF in
@@ -488,6 +490,9 @@ static void int1a(uint16_t cs, uint16_t ip)
  * entry. Held to the handler's return: its EOI (SPAZ+0A80) precedes the IRET
  * by register pops. */
 volatile uint8_t rt_irq0_running;
+/* The keyboard intercept runs (rt_key_hook): as a hardware interrupt's handler
+ * (rt_irq0_running) but on the interrupted stack, not IRQ0's private one. */
+volatile uint8_t rt_key_hook_running;
 /* Runtime services in progress (rt_entry.s entries); rt_opl_pair: the main
  * thread wrote the OPL index and not yet the data; rt_irq_hold: a generated
  * instruction that meets handler-written memory in more than one 68k access
