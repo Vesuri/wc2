@@ -9,8 +9,7 @@ Items are in work order; numbers are identifiers and are not reused.
 18. Display and input on the Amiga (port-plan P6b.1, P6b.3): SWOTL's copper display,
     double buffer, changed-row C2P, display queue and frame cap; the key map, mouse and
     joystick; WC2's own joystick calibration runs. The F000h segment SUPERTM.DRV's noise
-    fill samples ([drivers.md](drivers.md); the reference's is DOSBox-X's, not shippable):
-    an owner decision. The smoke into flight (moved from gate 6: the production build stops
+    fill samples ([drivers.md](drivers.md)) filled from a seeded generator (D11). The smoke into flight (moved from gate 6: the production build stops
     at the first SB block until item 19, and the game starts speech before flight, m2):
     `amiga/play_walk.sh` and `.gdb` are still SWOTL's steep-bank script and need WC2's
     keys and a flight label. Acceptance: the Amiga build shows m4's

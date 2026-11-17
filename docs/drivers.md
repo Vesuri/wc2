@@ -69,5 +69,7 @@ drawn by the RLE routines, so the ROM contents steer control flow (with zero ROM
 host left the reference's path at `+29A9`, table index 0 → `+2AD6`, never traced). The
 reference machine's ROM (DOSBox-X's) is byte-identical in every snapshot, m0 to m6
 (MEASURED); host lockstep loads it from the m0 snapshot as a local fixture
-(`tests/host_run.py reference_rom`). What the Amiga build holds there is open
-([open-work.md](open-work.md) item 18).
+(`tests/host_run.py reference_rom`). Of its 64 KB, 95.8% are zero and 1.4% have bit 0
+set (MEASURED, m0 snapshot); a PC BIOS of the period is dense code and data (INFERRED). The
+Amiga build fills the segment from a seeded generator (D11, [open-work.md](open-work.md)
+item 18).
