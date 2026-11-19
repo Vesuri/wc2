@@ -40,18 +40,17 @@ DanceDiverse3 set (`Palette24Bit`, `setPalette24Bit`) is kept for it.
 1. **Entry.** `start.c`'s `_start` replaces the shared one (L86; the link holds it at the
    hunk start): without `pr_CLI` it takes the WBStartup message before the constructors
    (L84). Open dos/graphics outside `Forbid`; require AGA (L8); parse the arguments with
-   `ReadArgs` (`TFH/S,ANALOGJOYSTICK/S,MUSIC/S,BENCH/S,KEYS/K` from `Input()`'s buffer,
+   `ReadArgs` (`ANALOGJOYSTICK/S,MUSIC/S,BENCH/S,KEYS/K` from `Input()`'s buffer,
    where the Shell and the slave's `RunCommand` put the line; `?` prompts; a bad line:
    `PrintFault`, 20), or from Workbench `CurrentDir` to the icon's drawer and read its
-   tool types (same keywords; `KEYS` copied). The release image (`SWOTL_RELEASE`,
-   [release.md](release.md)) takes `TFH` and `ANALOGJOYSTICK` only.
+   tool types (same keywords; `KEYS` copied). The release image (`WC2_RELEASE`,
+   [release.md](release.md)) takes `ANALOGJOYSTICK` only.
 2. **Reserve.** Every game-owned block, all-or-nothing, largest first; Chip only for DMA
    data (L53, L54); only find-first's name list and records are allocated later, inside
    their I/O window (`plat_alloc`): one directory pass (`plat_dir_names`), then one
    `Lock`/`Examine` per matching name (`plat_file_info`). Failure frees everything before
    takeover; `main` returns 20 (0 after a run), which `_start` returns (L86).
-3. **Load.** The optional TFH `sfx.rsc` (argument `TFH`) before takeover (L82); the
-   guest's own files later, through I/O windows.
+3. **Load.** The guest's own files, later, through I/O windows.
 4. **Build.** Bitmaps, copper lists and palettes completely, then publish them to the ISR
    (L15).
 5. **Take over** in SL's order (L2, L3), VERTB vector (L10), keyboard SP off in CIA-A's

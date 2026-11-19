@@ -496,6 +496,9 @@ user's improved slave.
 
 1. WHDLoad kickemu slave, Installer 43 script, ReadMe, icons and release audits from
    SWOTL. Memory comes from a MemFree measurement, as `docs/whdload.md` there does.
+   - Status: `whdload/`, `release/`, the release tools ([whdload.md](whdload.md),
+     [release.md](release.md)); the slave's four FS-UAE checks, the archive audit and the
+     Installer's nine modes pass (MEASURED 2026-11-19).
 2. Installer from the 7 disks (D7). A helper unpacks `WC2.LZC` and `SPEECH.S00` (the codecs in
    `tools/origin_pak.py`, checked by `make inspect`), unless P2 shows the game reads them packed. It checks each
    disk's hash, writes to staging and replaces `data/` only on success, as SWOTL's

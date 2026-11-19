@@ -39,6 +39,17 @@ brings its x86 front end here (owner's direction, 2026-11-09); its 68020 lowerin
 | `tests/host_run.py`, `tests/rep_replay.py` | `49b792b` | P5: X-Wing's lockstep (poll-point interrupts, REP slices through the diagnostic image, VGA status replay, launch and key handling) merged by three-way merge against SWOTL `658fc60`; WC2: host references `tmp/pc-runs/host-<m>`, the PIT reads replayed beside 3DAh (`port_runs`, `trace/replay-ports.csv`), the overlay probe (each overlay alone at a buffer CS) and sabotage `overlay` for SWOTL's resident check, `pit`; `rep_replay`'s cache split (generation keyed by translator, annotations and labels; the link also by the runtime objects) |
 | `tests/amiga_replay.{py,c}` | `49b792b`, `2de0225` | P5: X-Wing's replay (REP stream, service-hash checkpoints, early-return stop, the replay machine's Zorro III board, 32 MB for WC2) merged; WC2: 3DAh and PIT streams, drivers at their load paragraphs, an overlay point's CS from its stub's word 10h, `fresh_run_directory` kept for `test_replay_run_isolation` |
 
+## P8 imports (SWOTL `b6fbf17`)
+
+| Path | Treatment |
+|---|---|
+| `whdload/Wc2Slave.s`, `whdload/Makefile`, `smoke_name.i` | from `SwotlSlave.s`: Custom1 is the analog joystick (no TFH, OCS, 512 KB variants), ReqAGA, `ws_DontCache` `(Wc2)` (WC2.EXE stays cached: overlays and 4-byte relocation reads), the sizes measured here |
+| `release/Install` | WC2's 7 disks: images, the disks' files, or the PC floppies one by one through PC0: |
+| `release/icons/` | copied as is |
+| `tools/test_whdload.py` | the run check by WC2.EXE's load image in guest RAM; a 68030 with Zorro III by default (D1); no TFH, OCS or effect-cache checks; the fixture's data drawer made writable (`ref/` is read-only, so cleanup failed) |
+| `tools/package_release.py`, `check_release.py`, `test_release_installer.py` | WC2's members; originals refused by the committed `reference/*.sha256` (no `originals.sha256`); the installer test's floppy mode assigns PC0: per disk |
+| `tools/install-data/` | not SWOTL's archive code: AmigaXDev install-data's I/O and SHA-256 vendored as SWOTL does; `install.c` WC2's (INSTALL.DAT methods, the codecs of `origin_pak.py`) |
+
 ## Not imported
 
 | SWOTL path | Why |
@@ -46,8 +57,7 @@ brings its x86 front end here (owner's direction, 2026-11-09); its 68020 lowerin
 | `src/runtime/compute_*.s`, `sfx.c` | SWOTL native routines and SPAZ effect capture |
 | `src/platform/amiga/tfh_paula.*` | Their Finest Hour samples |
 | `tests/audit.csv` and the tests of SWOTL routines: `test_compute_*`, `test_point_*`, `test_polygon_classify*`, `test_rasterize`, `test_edge_submit`, `test_terrain_*`, `test_ground_vertices`, `test_scenery`, `test_sprite_packet`, `test_line_pixels`, `test_priority_search`, `test_opl_delay`, `test_tfh`, `test_sfx_*`, `test_sound_hooks`, `test_pointer_static`, `test_gameport`, `test_machine_vectors`, `test_amiga_file_sharing`, `test_mouse_scale` | SWOTL routines, fixtures or scenes |
-| `tools/`: `swotl_model`, `plink_check`, `load_image` (adapted at P1.4, below), `ovl_info`, `sweep`, `code_writes`, `compute_oracle`, `native_entries`, `sound_reference`, `sfx_levels`, `pointer_static`, `tfh_*`, `ghidra_import`, `m68k_cost_probe`, `fm_effect_check.cpp`, `fsuae-input-lua.patch`, `install-data/`, release tools (`originals`, `pack_preinstalled`, `package_release`, `check_release`, `test_release_installer`, `test_whdload`) | game-specific: rewritten or adapted in their phase (P1, P2, P8) |
-| `whdload/`, `release/` | P8 |
+| `tools/`: `swotl_model`, `plink_check`, `load_image` (adapted at P1.4, below), `ovl_info`, `sweep`, `code_writes`, `compute_oracle`, `native_entries`, `sound_reference`, `sfx_levels`, `pointer_static`, `tfh_*`, `ghidra_import`, `m68k_cost_probe`, `fm_effect_check.cpp`, `fsuae-input-lua.patch`, `originals`, `pack_preinstalled`, `run_whdload`, `whdload_preload` | game-specific: rewritten or adapted in their phase (P1, P2, P8) |
 | other docs | SWOTL facts and history |
 
 ## Imported tests not yet in `make test`

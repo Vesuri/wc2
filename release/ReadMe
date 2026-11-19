@@ -1,0 +1,98 @@
+ THIS PACKAGE COMES WITH ABSOLUTELY NO WARRANTY OF ANY KIND, EITHER EXPRESS OR
+ IMPLIED, STATUTORY OR OTHERWISE. THE ENTIRE RISK AS TO USE, RESULTS AND
+ PERFORMANCE OF THE PACKAGE IS ASSUMED BY YOU AND IF THE PACKAGE SHOULD PROVE
+ TO BE DEFECTIVE, YOU ASSUME THE ENTIRE COST OF ALL NECESSARY SERVICING,
+ REPAIR OR OTHER REMEDIATION.
+ UNDER NO CIRCUMSTANCES, CAN THE AUTHOR BE HELD RESPONSIBLE FOR ANY DAMAGE
+ CAUSED IN ANY USUAL, SPECIAL, OR ACCIDENTAL WAY, ALSO IF THE OWNER OR A THIRD
+ PARTY HAS BEEN POINTED AT SUCH POSSIBILITIES OF DAMAGE.
+
+ This install applies to "Wing Commander II: Vengeance of the Kilrathi", an
+ unofficial Amiga port of the 1991 PC game by Origin Systems.
+
+ This is an early alpha release. The game runs from the start to flight,
+ but it is silent: music, sound effects and the digitised speech are not in
+ this version, and its speed has not been tuned yet.
+
+
+ Requirements:
+ -------------
+ This install requires WHDLoad version 17.0 or better and an AGA Amiga
+ (A1200 or A4000) with a 68030 or better; a 68040 or 68060 is recommended.
+ The game runs as the PC original's VGA version (256 colours, 320x200).
+
+ It needs 8 MB of Fast memory. The data cache needs the MMU: WHDLoad uses
+ it on a 68040 or 68060, on a 68030 only with the WHDLoad option MMU (add
+ the tooltype MMU to the icon).
+
+ With PreLoad, WHDLoad (seen with 20.1) can stop at exit on an empty
+ Workbench screen after the game has created a file, such as a saved game.
+ The new file is then lost. Add the tooltype NoWriteCache to the icon to
+ avoid this; WHDLoad then writes files at once.
+
+ The game requires an installed A1200 or A4000 Kickstart 3.1 image.
+ The kickstart image must be located in the directory "Devs:Kickstarts" and
+ must be named "kick40068.A1200" or "kick40068.A4000". Additionally the file
+ "kick40068.A1200.RTB" or "kick40068.A4000.RTB" must be installed in the same
+ directory as the kickstart image. It can be found in the archive
+ "util/boot/skick346.lha" on aminet.
+
+
+ Installation:
+ -------------
+ The install does not include the original game files. It installs them from
+ the seven 1.44 MB PC floppies of Wing Commander II. Other releases are not
+ supported. Run the Install icon and choose either
+
+ - a drawer containing the disk images
+
+     Disk1.img  Disk2.img  Disk3.img  Disk4.img  Disk5.img  Disk6.img  Disk7.img
+
+   or the files of all seven disks copied into one drawer, or
+ - the PC floppies themselves, one after the other in PC0: (CrossDOS, a
+   high-density drive).
+
+ Every file is checked; damaged or other disks are refused. The install
+ unpacks the files as the original installer does. The installed game takes
+ 17 MB; the install needs 32 MB free while it runs, 42 MB from PC floppies.
+
+ The game executable "Wc2" is not part of the install archive on the
+ WHDLoad WWW-Page. Download it from the matching release at
+
+ https://github.com/Vesuri/wc2/releases
+
+ and the installer will ask for it. The full release archive there already
+ includes it.
+
+ To update, select the same parent drawer and choose Keep. Use existing (the
+ default) keeps the installed game files; Replace installs them again from the
+ disks. Saved games are kept either way.
+
+
+ Playing:
+ --------
+ Keyboard and mouse work as in the PC original; keys are at their US
+ keyboard positions. See the original manual for the controls. Esc skips
+ the cinematics. A joystick in port 2 works as the cursor keys; its two
+ buttons work as the left and right mouse buttons. Set the Custom1 tooltype
+ to 1 for a proportional (analog) joystick in port 2 instead, and calibrate
+ it with Ctrl+J in flight, as in the original. Quit from the game's menus.
+ The WHDLoad QuitKey (Help) quits immediately.
+
+
+ History:
+ --------
+ version 0.1 (19.11.2026):
+ - first alpha: the game from the start to flight, translated from the PC
+   original; no sound yet
+
+
+ Contact:
+ --------
+ https://github.com/Vesuri/wc2/issues
+
+
+ Credits:
+ --------
+ Amiga port by Vesuri. WHDLoad by Wepl. The installer helper uses AmigaXDev's
+ installer I/O (LGPL-2.1-or-later, LICENSE.LGPL.txt).

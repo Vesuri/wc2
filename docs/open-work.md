@@ -57,10 +57,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P8: package (0.1 alpha ahead of the gates, D12)
 
-25. WHDLoad slave, Installer script, ReadMe and icons (port-plan P8.1), from SWOTL:
-    `whdload/Wc2Slave.s`, `release/`. Memory from MemFree runs. Acceptance: the slave's
-    smoke, boot and load modes pass; the release image runs under WHDLoad into the game;
-    the Installer script installs from the disks in FS-UAE.
 26. Release tests (port-plan P8.3, C7): the full matrix. Acceptance: each row run and
     recorded in `docs/whdload.md` with its result.
 27. `make release` (port-plan P8.4): a clean build, an allowlisted package that refuses

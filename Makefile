@@ -2,7 +2,7 @@
 
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
-	test-guards host amiga smoke size install-data test-install-data clean
+	test-guards host amiga smoke size install-data test-install-data amiga-release whdload test-whdload clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -267,6 +267,21 @@ smoke: amiga
 
 size: amiga
 	$(PYTHON) tools/hunk_size.py amiga/out/Wc2.exe
+
+# Release image: built in build/amiga-release with RELEASE=1 (the player's options
+# only, amiga_platform.c), stripped to amiga/out/Wc2-release.exe. Then the slaves
+# (whdload/Makefile) and their FS-UAE checks (tools/test_whdload.py, docs/whdload.md).
+amiga-release: amiga
+	mkdir -p build/amiga-release && ln -sf ../../amiga/Makefile build/amiga-release/Makefile
+	. amiga/env.sh && $(MAKE) -C build/amiga-release REPO=../.. RELEASE=1
+	. amiga/env.sh && elf2hunk build/amiga-release/out/Wc2.elf amiga/out/Wc2-release.exe -s
+	$(PYTHON) tools/hunk_size.py --release-of build/amiga-release/out/Wc2.exe amiga/out/Wc2-release.exe
+
+whdload:
+	$(MAKE) -C whdload all test smoke boot-test load-test memfree
+
+test-whdload: whdload amiga-release
+	. amiga/env.sh && for m in smoke boot load run; do $(PYTHON) tools/test_whdload.py --mode $$m || exit 1; done
 
 # Installer helper (tools/install-data/README.md): the host build and its test against
 # the original installer's tree, the 68020 build and its run in FS-UAE.

@@ -1,0 +1,124 @@
+; Wing Commander II WHDLoad installation. Commodore Installer V43 or newer.
+; From Secret Weapons of the Luftwaffe's Install (docs/upstream.md): WHDLoad Install
+; Template conventions.
+; $VER: Install 0.1 (19.11.2026)
+(set @app-name "Wing Commander II")
+(set #prefix "WC2")
+(set #exe-version 0)			;the game executable this install accepts: its $VER:
+(set #exe-revision 1)			;must read exactly #exe-version.#exe-revision
+(set #exe-url "https://github.com/Vesuri/wc2/releases")
+(if (< @installer-version (* 43 65536))
+  (abort "This installation requires Amiga Installer 43 or newer."))
+(welcome)
+(set #source (pathonly @icon))
+(set @execute-dir #source)
+; Show the instructions before asking for the destination or original data.
+; WHDLoad's template falls back to More on systems without MultiView.
+(set #readme (tackon #source "ReadMe"))
+(if (exists #readme)
+  (if (<> 0 (run ("SYS:Utilities/MultiView \"%s\"" #readme)))
+    (run ("SYS:Utilities/More \"%s\"" #readme))))
+; Same prerequisite check as the WHDLoad install template.
+(if (<> 0 (run "cd SYS:\nWhich WHDLoad >NIL:"))
+  (abort "Install WHDLoad 17 or newer first. It must be accessible via the command path. See https://www.whdload.de/"))
+(set #kick-ready 0)
+(if (and (exists "Devs:Kickstarts/kick40068.A1200") (exists "Devs:Kickstarts/kick40068.A1200.RTB")) (set #kick-ready 1))
+(if (and (exists "Devs:Kickstarts/kick40068.A4000") (exists "Devs:Kickstarts/kick40068.A4000.RTB")) (set #kick-ready 1))
+(if (<> (getassign "WHDCOMMON") "")
+  ((if (and (exists "WHDCOMMON:kick40068.A1200") (exists "WHDCOMMON:kick40068.A1200.RTB")) (set #kick-ready 1))
+   (if (and (exists "WHDCOMMON:kick40068.A4000") (exists "WHDCOMMON:kick40068.A4000.RTB")) (set #kick-ready 1))))
+(if (= #kick-ready 0)
+  (message "WHDLoad needs a Kickstart 3.1 image and matching .RTB file in Devs:Kickstarts or WHDCOMMON: before playing. See ReadMe for supported image names." (all)))
+;The game executable: beside the script (the full archive) or asked for (the
+;whdload.de archive does not include it); getversion (its $VER:, version * 65536
+;+ revision) must be exactly this release's.
+(set #exe (tackon #source "Wc2"))
+(set #exe-prompt
+  (cat ("Select the Wing Commander II %ld.%ld executable \"Wc2\".\n\n" #exe-version #exe-revision)
+    "It is not included in this install archive. Download it from the matching release at\n" #exe-url))
+(set #exe-valid 0)
+(while (= #exe-valid 0)
+  (if (= (exists #exe) 1)
+    (if (= (getversion #exe) (+ (* #exe-version 65536) #exe-revision))
+      (set #exe-valid 1)
+      (set #exe-prompt
+        (cat ("\"%s\" is not the Wing Commander II %ld.%ld executable.\n\n" #exe #exe-version #exe-revision)
+          "Please select the \"Wc2\" executable from the matching release at\n" #exe-url))))
+  (if (= #exe-valid 0)
+    (set #exe
+      (askfile (prompt #exe-prompt)
+        (help "The game executable Wc2 is in the full release archive and beside it on the release page. Its version must match this install.")
+        (default #source)))))
+(if (getenv "WHDLInstPath")
+  (set @default-dest (getenv "WHDLInstPath")))
+(set #parent
+  (askdir (prompt "Where should Wing Commander II be installed? A WC2 drawer will be created here.")
+    (help "Choose a writable hard disk drawer with at least 32 MB free, 42 MB when installing from PC floppies. The installed game takes 17 MB; the files are first unpacked into a staging drawer beside it.")
+    (default @default-dest)))
+(run ("setenv WHDLInstPath \"%s\"\ncopy ENV:WHDLInstPath ENVARC:" #parent))
+(set #dest (tackon #parent #prefix))
+(set #data (tackon #dest "data"))
+(set #helper (tackon #source "WC2InstallData"))
+(set #staging (tackon #dest "InstallStaging"))
+(set #copies (tackon #dest "InstallDisks"))
+(if (exists #dest)
+  ((set #remove-existing
+     (askbool
+       (prompt ("The drawer \"%s\" already exists. Remove it, including saved games, before installing?" #dest))
+       (help "Remove deletes the whole WC2 drawer. Keep updates the program and keeps your saved games; you can then keep or replace the game files.")
+       (choices "Remove" "Keep") (default 0)))
+   (if #remove-existing
+     (delete #dest (all) (infos) (optional "force") (help @delete-help)))))
+(set #install-data 1)
+(if (= (exists (tackon #data "WC2.EXE")) 1)
+  (set #install-data
+    (askchoice
+      (prompt "The Wing Commander II game files are already installed. Use the existing files or replace them from the disks?")
+      (help "Use existing keeps the installed game files and skips the disk question. Replace installs all game files again from the seven disks; files the game created, such as saved games, are kept.")
+      (choices "Use existing" "Replace") (default 0))))
+(if #install-data
+  (set #from-floppies
+    (askchoice
+      (prompt "Where are the seven Wing Commander II disks?")
+      (help "Disk images: a drawer with Disk1.img to Disk7.img (images of the seven 1.44 MB PC floppies), or with the files copied from all seven disks. PC floppies: the original disks, read one by one in PC0: (CrossDOS, a high-density drive). Other releases are not supported. Game files are not included.")
+      (choices "Disk images or copied files" "PC floppies in PC0:") (default 0))))
+(if (and #install-data (= #from-floppies 0))
+  (set #disks
+    (askdir (prompt "Select the drawer containing Disk1.img to Disk7.img or the files of all seven disks.")
+      (help "Disk1.img to Disk7.img are images of the seven 1.44 MB Wing Commander II floppies. A drawer with all their files copied into it works too.")
+      (default #source))))
+(if (= (exists #dest) 0) (makedir #dest (infos) (help @makedir-help)))
+(if (= (exists #data) 0) (makedir #data (help @makedir-help)))
+; Extract into a private staging drawer; data/ changes only after success.
+(if (exists #staging) (delete #staging (all) (optional "force") (help @delete-help)))
+(if (exists #copies) (delete #copies (all) (optional "force") (help @delete-help)))
+(if (and #install-data #from-floppies)
+  ((makedir #copies (help @makedir-help))
+   (set #disks #copies)
+   (set #n 1)
+   (while (< #n 8)
+     (message ("Insert Wing Commander II disk %ld into the PC floppy drive (PC0:), then select Proceed.\n\nPC0: needs CrossDOS (Workbench 2.1 or newer) and a high-density drive. Each disk's files are copied, then all are checked and unpacked." #n))
+     (copyfiles (source "PC0:") (dest #copies) (all) (help @copyfiles-help))
+     (set #n (+ #n 1)))))
+(if #install-data
+  ((working "Checking and unpacking the game files from the seven disks...")
+   (if (<> 0 (run ("Stack 16384\n\"%s\" \"%s\" \"%s\"" #helper #disks #staging)))
+     ((if (exists #staging) (delete #staging (all) (optional "force") (help @delete-help)))
+      (if (exists #copies) (delete #copies (all) (optional "force") (help @delete-help)))
+      (abort "The Wing Commander II disks could not be installed. Check that all seven disks or disk images are there and unmodified. Existing game files were not changed.")))
+   (copyfiles (source #staging) (dest #data) (all) (help @copyfiles-help))
+   (delete #staging (all) (optional "force") (help @delete-help))
+   (if (exists #copies) (delete #copies (all) (optional "force") (help @delete-help)))))
+(copyfiles (source #exe) (dest #data) (newname "Wc2") (help @copyfiles-help))
+(copyfiles (source (tackon #source "Wc2.slave")) (dest #dest) (help @copyfiles-help))
+(copyfiles (source (tackon #source "Wc2.inf")) (dest #dest) (newname "Wc2.info") (help @copyfiles-help))
+(tooltype (dest (tackon #dest "Wc2")) (setdefaulttool "WHDLoad")
+  (settooltype "Slave" "Wc2.slave") (settooltype "PreLoad" "") (settooltype "Custom1")
+  (setstack 16384) (noposition))
+(copyfiles (source (tackon #source "ReadMe")) (dest #dest) (infos) (help @copyfiles-help))
+; openwbobject was added after Installer 43; retain the template version gate.
+(if (>= @installer-version (+ (* 44 65536) 10))
+  (openwbobject #dest))
+(set @default-dest #dest)
+(complete 100)
+(exit)
