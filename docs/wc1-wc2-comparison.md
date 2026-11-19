@@ -68,7 +68,7 @@ Full per-module tables: `make compare` (`tmp/compare/`).
 - Same container format and the same LZW in both games: a shared file's packed payloads
   are byte-identical; only the flag byte differs (WC1 `01`, WC2 `20`). The decoder
   rebuilds 133 of WC2's installed files byte-exactly; the installer leaves 47 packed;
-  `SPEECH.S00` uses another codec.
+  `SPEECH.S00` adds a 4-bit delta speech codec (WC2 only, install method 8).
 - 27 file names are common, but the content is mostly new: 40 container entries
   (258,330 of 13,711,477 unpacked bytes) are identical, chiefly 26 Roland tracks of WC1's
   `MUSIC.MID` reused in `MUSIC.R00`, plus `ARROW.VGA`, `CAMP.000`, parts of `FONTS.FNT`,

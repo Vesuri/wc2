@@ -55,16 +55,22 @@ Items are in work order; numbers are identifiers and are not reused.
    whether the Amiga WC1 has a matching native routine. Acceptance: a table of hot WC2
    modules with their WC1 PC and Amiga WC1 counterparts, MEASURED.
 
-## P8: package
+## P8: package (0.1 alpha ahead of the gates, D12)
 
-3. Map the game executable: Borland C++ 1991 medium model, 80186+, VROOMM overlays
-   (`tools/bc_exe.py`, the P2 map: `make map`; the runtime image at entry and after overlay loads is proven by
-   `tools/load_image.py`, [pc-reference-loop.md](pc-reference-loop.md)). Open: the
-   `WC2.LZC` packing method, a `make inspect` target (playbook §3; port-plan P8.2).
-   Acceptance: an independent `WC2.LZC` unpack equals the installed `WC2.EXE`.
-7. `SPEECH.S00` codec (in scope, D3): disk entries flagged `E0` grow to twice their
-   size when installed; needed by the installer (D7, port-plan P8.2). Acceptance:
-   `tools/origin_pak.py verify` rebuilds it byte-exactly.
+24. Installer helper (port-plan P8.2): `tools/install-data/` installs from the 7 disks (images
+    or their files) by the original's `INSTALL.DAT`, every disk file and every file written
+    checked by SHA-256. Acceptance: `make test-install-data` (both sources byte-identical to
+    the original installer's tree, the refusals); the Amiga helper builds with no unresolved
+    symbols and installs in FS-UAE.
+25. WHDLoad slave, Installer script, ReadMe and icons (port-plan P8.1), from SWOTL:
+    `whdload/Wc2Slave.s`, `release/`. Memory from MemFree runs. Acceptance: the slave's
+    smoke, boot and load modes pass; the release image runs under WHDLoad into the game;
+    the Installer script installs from the disks in FS-UAE.
+26. Release tests (port-plan P8.3, C7): the full matrix. Acceptance: each row run and
+    recorded in `docs/whdload.md` with its result.
+27. `make release` (port-plan P8.4): a clean build, an allowlisted package that refuses
+    originals, an independent check, version 0.1 (19.11.2026). Acceptance: `make release`
+    and its check pass from a clean tree; the tag is the owner's.
 
 ## Deferred (owner, D10)
 

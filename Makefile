@@ -1,6 +1,6 @@
 ## Wing Commander II — repository-level targets.
 
-.PHONY: all help test-host test-amiga extract install hash check-ref prepare-reference reference-staging compare \
+.PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size clean
 
@@ -19,6 +19,8 @@ help:
 	@echo
 	@echo "  make extract            ref-originals/*.7z -> tmp/union (hash-checked)"
 	@echo "  make install            run the original installer headless -> ref/ (hash-checked)"
+	@echo "  make inspect            WC2.EXE's MZ header; every disk file unpacked (LZW, speech,"
+	@echo "                          .LZC) equals the installer's copy (the P8.2 codecs)"
 	@echo "  make hash               re-record $(INSTALL_HASHES) from ref/ (deliberate change only)"
 	@echo "  make check-ref          verify ref/ against $(INSTALL_HASHES)"
 	@echo "  make prepare-reference  copy ref/ to disposable $(REFERENCE_ROOT)"
@@ -58,6 +60,11 @@ install:
 	chmod -R a-w ref
 	@echo "INSTALL_REF_OK ref/"
 
+# Playbook §2's gate; needs make extract and make install.
+inspect:
+	PYTHONPATH='$(AMIGA_PYLIB)' $(PYTHON) -m amigaxdev.dos.mz_info ref/WING2/WC2.EXE
+	$(PYTHON) tools/origin_pak.py verify tmp/union ref/WING2
+
 hash:
 	cd ref && find . -type f ! -name .DS_Store -print0 | LC_ALL=C sort -z | \
 		xargs -0 shasum -a 256 > "$(abspath $(INSTALL_HASHES))"
@@ -80,7 +87,7 @@ reference-staging: prepare-reference
 compare:
 	@mkdir -p tmp/compare
 	. amiga/env.sh && python3 tools/bc_exe.py tmp/wc1/disk01/WC.EXE ref/WING2/WC2.EXE
-	. amiga/env.sh && python3 tools/origin_pak.py verify tmp/union ref/WING2/GAMEDAT || true
+	. amiga/env.sh && python3 tools/origin_pak.py verify tmp/union ref/WING2 || true
 	. amiga/env.sh && python3 tools/wc_compare.py tmp/wc1/disk01/WC.EXE ref/WING2/WC2.EXE \
 		--control ref/WING2/INSTALL.EXE --csv tmp/compare/funcs.csv | tee tmp/compare/report.txt
 

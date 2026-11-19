@@ -3,8 +3,10 @@
 
   python3 tools/origin_pak.py list FILE...
   python3 tools/origin_pak.py unpack SRC DST          rebuild SRC with every entry unpacked
-  python3 tools/origin_pak.py verify DISKDIR GAMEDAT  rebuild every disk file, compare with
-                                                      the installer's unpacked copy
+  python3 tools/origin_pak.py program SRC.LZC DST     the program in a one-entry `.LZC`
+  python3 tools/origin_pak.py verify DISKDIR WING2    install DISKDIR (the 7 disks' files) by
+                                                      its INSTALL.DAT, compare with the
+                                                      original installer's WING2 tree
 
 Layout (DERIVED; `verify` against WC2's installed GAMEDAT is the check):
   u32 total file size
@@ -13,8 +15,20 @@ Layout (DERIVED; `verify` against WC2's installed GAMEDAT is the check):
     256 = reset dictionary and width, 257 = end, no early width change)
   flags & 0xC0 != 0: stored; the installer sets 0xC0 on every entry it unpacks
   flags == 0xFF: alias of the entry at the same offset (or of the file end); kept as is
-`SPEECH.S00` is not handled: its entries are flagged 0xE0 on disk, yet the installer
-doubles their size (a speech codec; the installer has a "Speech de-compression error").
+  flags == 0xE0 (`SPEECH.S00`): speech, 8-bit unsigned PCM in 4-bit deltas: the first byte
+    is the first sample, then two codes per byte, high nibble first: bit 3 the sign, m the
+    low 3 bits, delta (m << L) + (L ? 1 << (L - 1) : 0) at level L (0..3, from 0); the
+    sample clamps to 0..255; m >= 5 raises L, m == 0 lowers it. n bytes give 2n - 1
+    samples; the installer keeps the flag. Only in files of method 8 below: elsewhere
+    (`COMMUNIC.T*`, `INTEL.*`) 0xE0 entries are stored data
+`.LZC` (`WC2.LZC`, `README.LZC`): a one-entry container; the installer writes the entry's
+data as the `.EXE`.
+INSTALL.DAT (disk 1), the installer's file table: 20-byte records, the last all zero:
+  name[13] (NUL-padded), disk (1..7), method, 0, u16 unknown, u16 size & FFFFh
+  method 1, 7: copied (some stay packed: `BRIEF.PAL`); 2, 3: container unpacked;
+  6: `.LZC` -> `.EXE` beside GAMEDAT; 8: container unpacked, every entry speech (a packed
+  entry is LZW, then speech). `INSTALL.*` is the installer itself, in WING2 (DERIVED;
+  `verify` against the original installer's tree is the check)
 The installer leaves some files packed (`verify` counts them).
 WC1 marks packed entries 0x01 and WC2 0x20; the payloads of a shared file are identical.
 """
@@ -79,17 +93,32 @@ def parse(b):
 	return [(o, fl, starts[starts.index(o) + 1] if 0 < o < len(b) else o) for o, fl in ents]
 
 
-def entry_data(b, o, fl, end):
+def speech(data):
+	out = bytearray(data[:1])
+	s, lev = data[0], 0
+	for c in data[1:]:
+		for code in (c >> 4, c & 15):
+			m = code & 7
+			d = (m << lev) + (1 << (lev - 1) if lev else 0)
+			s = max(0, min(255, s - d if code & 8 else s + d))
+			out.append(s)
+			lev = min(3, lev + 1) if m >= 5 else max(0, lev - 1) if m == 0 else lev
+	return bytes(out)
+
+
+def entry_data(b, o, fl, end, voice=False):
+	if fl == 0xE0 and voice:
+		return speech(b[o:end])
 	if fl & 0xC0:
 		return b[o:end]
 	size = struct.unpack_from('<I', b, o)[0]
 	d = lzw(b[o + 4:end])
 	if len(d) != size:
 		raise ValueError(f'entry at {o:#x}: unpacked {len(d)} != declared {size}')
-	return d
+	return speech(d) if voice else d
 
 
-def unpack(b):
+def unpack(b, voice=False):
 	ents = parse(b)
 	head = 4 + 4 * len(ents)
 	body = bytearray()
@@ -104,13 +133,45 @@ def unpack(b):
 			continue
 		if o not in done:
 			done[o] = head + len(body)
-			body += entry_data(b, o, fl, end)
+			body += entry_data(b, o, fl, end, voice)
 		table.append(done[o] | (fl | 0xC0) << 24)
 	for i, (o, fl, end) in enumerate(ents):
 		if fl == 0xFF:
 			table[i] = (done[o] if o < len(b) else head + len(body)) | 0xFF << 24
 	out = struct.pack('<I', head + len(body)) + b''.join(struct.pack('<I', t) for t in table) + body
 	return out
+
+
+def program(b):
+	ents = parse(b)
+	if len(ents) != 1:
+		raise ValueError(f'{len(ents)} entries, not a one-entry .LZC')
+	return entry_data(b, *ents[0])
+
+
+def table(b):
+	"""INSTALL.DAT -> [(name, disk, method)]."""
+	out = []
+	for i in range(0, len(b) - 19, 20):
+		r = b[i:i + 20]
+		name = r[:13].split(b'\0')[0].decode('ascii')
+		if not name:
+			break
+		out.append((name, r[13], r[14]))
+	return out
+
+
+def install(name, method, b):
+	"""-> (path under WING2, bytes) for one disk file, as the installer writes it."""
+	if name.upper().startswith('INSTALL.'):
+		return name, b
+	if method in (1, 7):
+		return 'GAMEDAT/' + name, b
+	if method in (2, 3, 8):
+		return 'GAMEDAT/' + name, unpack(b, method == 8)
+	if method == 6:
+		return name.rsplit('.', 1)[0] + '.EXE', program(b)
+	raise ValueError(f'{name}: install method {method}')
 
 
 def main():
@@ -123,33 +184,32 @@ def main():
 				' '.join(sorted({f'{fl:02X}' for _, fl, _ in ents})))
 	elif cmd == 'unpack':
 		open(args[1], 'wb').write(unpack(open(args[0], 'rb').read()))
+	elif cmd == 'program':
+		open(args[1], 'wb').write(program(open(args[0], 'rb').read()))
 	elif cmd == 'verify':
 		src, inst = args
-		ok = bad = skip = same = 0
-		for n in sorted(os.listdir(inst)):
-			sp = os.path.join(src, n)
-			if not os.path.exists(sp):
+		got = {}
+		for name, disk, method in table(open(os.path.join(src, 'INSTALL.DAT'), 'rb').read()):
+			path, data = install(name, method, open(os.path.join(src, name), 'rb').read())
+			got[path] = data
+		want = set()
+		for d, _, files in os.walk(inst):
+			for f in files:
+				want.add(os.path.relpath(os.path.join(d, f), inst).replace(os.sep, '/'))
+		ok = bad = 0
+		for path in sorted(want | set(got)):
+			if path == 'WC2.CFG':     # the answers, not a disk file
 				continue
-			b = open(sp, 'rb').read()
-			ib = open(os.path.join(inst, n), 'rb').read()
-			if b == ib:
-				same += 1
-				continue
-			try:
-				u = unpack(b)
-			except (ValueError, IndexError, struct.error) as e:
-				print(f'not a container: {n} ({e})')
-				skip += 1
-				continue
-			if u == ib:
+			if path not in got or path not in want:
+				print(f'{"MISSING" if path not in got else "EXTRA"} {path}')
+				bad += 1
+			elif got[path] == open(os.path.join(inst, path), 'rb').read():
 				ok += 1
 			else:
-				print(f'MISMATCH {n}')
+				print(f'MISMATCH {path}')
 				bad += 1
-		print(f'{ok} unpacked and match, {same} left packed by the installer, {bad} mismatch, '
-			f'{skip} not containers')
+		print(f'{ok} files match the installed tree, {bad} differ')
 		sys.exit(1 if bad else 0)
-
 
 if __name__ == '__main__':
 	main()

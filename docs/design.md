@@ -15,7 +15,7 @@ translator output). Phases, the copy map and proposed decisions: [port-plan.md](
 
 Facts that decide feasibility, open unless marked ([open-work.md](open-work.md)):
 
-- the executable: measured as installed; the `WC2.LZC` packing is open;
+- the executable: measured as installed; `WC2.LZC` is the resource container's LZW (`make inspect`);
 - memory: the installer says music needs EMS; how much conventional and EMS memory the game
   uses decides the A1200 Fast RAM requirement;
 - the external surface: VGA mode 13h access, sound drivers (`*.DRV`), speech, timer rate,
@@ -41,3 +41,4 @@ Changed only by the owner.
 | D9 | Dead-stack exemptions in host lockstep as in X-Wing (`40030a3`, `3dca119`): a service register loaded from, or a RAM byte stored from, a masked dead-stack byte may differ; each exemption is added only when a run needs it, with a sabotage control | owner, 2026-11-14 |
 | D10 | Coverage beyond m6 (port-plan P6.2: every flight scene type, ship, cinematic, menu, save, the ending) is deferred; gate 6 runs over m1–m6 | owner, 2026-11-16 |
 | D11 | The BIOS ROM segment F000h, which `SUPERTM.DRV`'s noise fill samples ([drivers.md](drivers.md)): the Amiga build fills it from a seeded pseudo-random generator, not from an emulator's BIOS; DOSBox-X's (1.4% of bytes with bit 0 set) is not era-appropriate. Host lockstep keeps the reference machine's bytes as a local fixture, since it compares with that run | owner, 2026-11-17 |
+| D12 | Release 0.1 alpha, version 0.1 dated 19.11.2026: P8 (package) is done ahead of P6b.2 audio (open-work 19), P6b.4 memory (20) and gate 7 (P7); the alpha ships without item 19 (speech, prerendered effects) at the current speed. Its installer works from the 7 disks (the `WC2.LZC` and `SPEECH.S00` codecs, open-work 3 and 7, first), and the full C7 release matrix (port-plan P8.3) runs before it. Later releases keep the gate order | owner, 2026-11-19 |

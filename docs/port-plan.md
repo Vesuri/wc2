@@ -153,7 +153,7 @@ can run beside stream A (reference and map, P1–P2) once P0 is in.
      segment;
    - each driver from its file, unpacked by `tools/origin_pak.py` if packed.
 
-   The DOSBox-X entry dump diff closes open-work 3's entry part.
+   The DOSBox-X entry dump diff proves the image at entry.
 5. Feasibility estimate (feeds open-work 6; checks D1's 68030 minimum). Measure the reference's flight frame
    time at fixed cycles (ticks per frame from WC2's own clock or from the frame boundary)
    and apply SWOTL's ratio:
@@ -496,8 +496,8 @@ user's improved slave.
 
 1. WHDLoad kickemu slave, Installer 43 script, ReadMe, icons and release audits from
    SWOTL. Memory comes from a MemFree measurement, as `docs/whdload.md` there does.
-2. Installer from the 7 disks (D7). A helper unpacks `WC2.LZC` (open-work 3's codec) and
-   `SPEECH.S00` (open-work 7), unless P2 shows the game reads them packed. It checks each
+2. Installer from the 7 disks (D7). A helper unpacks `WC2.LZC` and `SPEECH.S00` (the codecs in
+   `tools/origin_pak.py`, checked by `make inspect`), unless P2 shows the game reads them packed. It checks each
    disk's hash, writes to staging and replaces `data/` only on success, as SWOTL's
    `tools/install-data/` does.
 3. Release tests (C7), all before the first release:
