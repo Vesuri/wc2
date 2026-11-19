@@ -2,7 +2,7 @@
 
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
-	test-guards host amiga smoke size clean
+	test-guards host amiga smoke size install-data test-install-data clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -19,6 +19,8 @@ help:
 	@echo
 	@echo "  make extract            ref-originals/*.7z -> tmp/union (hash-checked)"
 	@echo "  make install            run the original installer headless -> ref/ (hash-checked)"
+	@echo "  make install-data       the installer helper, host and 68020 (tools/install-data)"
+	@echo "  make test-install-data  its host test and its FS-UAE run against the installed tree"
 	@echo "  make inspect            WC2.EXE's MZ header; every disk file unpacked (LZW, speech,"
 	@echo "                          .LZC) equals the installer's copy (the P8.2 codecs)"
 	@echo "  make hash               re-record $(INSTALL_HASHES) from ref/ (deliberate change only)"
@@ -265,6 +267,15 @@ smoke: amiga
 
 size: amiga
 	$(PYTHON) tools/hunk_size.py amiga/out/Wc2.exe
+
+# Installer helper (tools/install-data/README.md): the host build and its test against
+# the original installer's tree, the 68020 build and its run in FS-UAE.
+install-data:
+	. amiga/env.sh && $(MAKE) -C tools/install-data all amiga
+
+test-install-data: install-data
+	$(MAKE) -C tools/install-data test
+	. amiga/env.sh && $(PYTHON) tools/install-data/test_amiga.py build/install-data/WC2InstallData.exe
 
 clean:
 	$(MAKE) -C amiga clean

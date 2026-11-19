@@ -500,6 +500,10 @@ user's improved slave.
    `tools/origin_pak.py`, checked by `make inspect`), unless P2 shows the game reads them packed. It checks each
    disk's hash, writes to staging and replaces `data/` only on success, as SWOTL's
    `tools/install-data/` does.
+   - Status: `tools/install-data/` (WC2InstallData) installs by the original's `INSTALL.DAT`
+     from the images or the disks' files, each disk file and each file written checked by
+     SHA-256; byte-identical to the original installer's tree on the host and on the
+     emulated 68020 (`make test-install-data`, MEASURED 2026-11-19).
 3. Release tests (C7), all before the first release:
    - exit to DOS from every exit path;
    - save and load;

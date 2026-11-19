@@ -57,11 +57,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P8: package (0.1 alpha ahead of the gates, D12)
 
-24. Installer helper (port-plan P8.2): `tools/install-data/` installs from the 7 disks (images
-    or their files) by the original's `INSTALL.DAT`, every disk file and every file written
-    checked by SHA-256. Acceptance: `make test-install-data` (both sources byte-identical to
-    the original installer's tree, the refusals); the Amiga helper builds with no unresolved
-    symbols and installs in FS-UAE.
 25. WHDLoad slave, Installer script, ReadMe and icons (port-plan P8.1), from SWOTL:
     `whdload/Wc2Slave.s`, `release/`. Memory from MemFree runs. Acceptance: the slave's
     smoke, boot and load modes pass; the release image runs under WHDLoad into the game;
