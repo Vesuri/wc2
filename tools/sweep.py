@@ -23,7 +23,9 @@ follows fall-through, near and far direct jumps and calls; stops at returns and 
 jumps; never sweeps linearly. Switch forms (Borland): `cmp bx,N; ja/jbe; shl bx,1;
 jmp cs:[bx+T]` (N+1 entries) and the value search `mov cx,N ... mov ax,cs:[bx+V];
 cmp; je; inc bx; inc bx; loop; ...; jmp cs:[bx+V+2N]`; others come from
-annotations/tables.csv.
+annotations/tables.csv (also `call/jmp cs:[di+T]` and `add di,T; call/jmp cs:[di]`, the
+table at T). `call/jmp cs:[V]` through a code-pointer variable takes its targets from
+annotations/code-vars.csv; every decoded write to V must store one of them.
 
 Agreement (gate 2): every executed instruction start is a start reached from the seeds
 above (`executed_not_reached` 0) and no flow conflicts with another (`conflicts` 0);
@@ -137,6 +139,15 @@ def noreturn() -> set[tuple[str, int]]:
         return {(r["module"], int(r["offset"], 16)) for r in csv.DictReader(f)}
 
 
+def code_vars() -> dict[tuple[str, int], tuple[list[int], set[int]]]:
+    """annotations/code-vars.csv: a near code-pointer word cs:[V] with every value its
+    writers store (targets, IPs) and the writers that store a register (sites)."""
+    with (M.REPO / "annotations/code-vars.csv").open() as f:
+        return {(r["module"], int(r["variable"], 16)): ([int(t, 16) for t in r["targets"].split()],
+                                                       {int(w, 16) for w in r["writers"].split()})
+                for r in csv.DictReader(f)}
+
+
 def tables() -> dict[tuple[str, int], int]:
     with (M.REPO / "annotations/tables.csv").open() as f:
         return {(r["module"], int(r["site"], 16)): int(r["entries"]) for r in csv.DictReader(f)}
@@ -157,6 +168,7 @@ class Sweep:
         self.tables: dict[tuple[str, int], list[int]] = {}
         self.pending: list[tuple[Unit, int, int, object]] = []
         self.curated = tables()
+        self.code_vars = code_vars()
         self.noreturn = noreturn()
         self.code_ptrs: set[tuple[str, int, str, int]] = set()
         self.searches: dict[tuple[str, int], tuple[int, int, int]] = {}
@@ -261,15 +273,35 @@ class Sweep:
 
     def switch(self, u: Unit, off: int, cs: int, i) -> None:
         ops = i.operands
-        if i.mnemonic != "jmp" or not ops or ops[0].type != x86.X86_OP_MEM:
+        if i.mnemonic not in ("jmp", "call") or not ops or ops[0].type != x86.X86_OP_MEM:
             return
         mem = ops[0].mem
-        if i.reg_name(mem.segment) != "cs" or i.reg_name(mem.base) != "bx" or mem.index:
-            return
+        reg = i.reg_name(mem.base)
         f = u.file
         disp = mem.disp & 0xFFFF
+        if i.reg_name(mem.segment) == "cs" and not mem.base and not mem.index and (f, disp) in self.code_vars:
+            # `call/jmp cs:[V]` through a curated code-pointer variable (check_code_vars)
+            targets = [self.p.near(u, cs, ip) for ip in self.code_vars[(f, disp)][0]]
+            self.tables[(f, off)] = targets
+            for t in targets:
+                self.seed(u, t, f"code variable {u.name}:{disp:X} at {off:X}", cs)
+            return
+        if i.reg_name(mem.segment) != "cs" or reg not in ("bx", "di") or mem.index:
+            return
         prev = self.before(f, off)
         n = self.curated.get((f, off))
+        if i.mnemonic == "call" or reg == "di":
+            # curated only: `call/jmp cs:[di+T]`, or `add di,T; call/jmp cs:[di]`
+            # (SUPERTM.DRV's sprite and line routines), the table at T
+            add = prev[0][1] if prev else None
+            if n is None:
+                return
+            if reg == "di" and disp == 0 and add is not None and add.mnemonic == "add" and \
+                    add.op_str.startswith("di, ") and add.operands[1].type == x86.X86_OP_IMM:
+                disp = add.operands[1].imm & 0xFFFF
+            elif reg != "di" or disp == 0:
+                self.conflicts.append((f, off, "curated table form"))
+                return
         if n is None and prev and prev[0][1].mnemonic == "shl" and prev[0][1].op_str == "bx, 1":
             cmp = next((p for _, p in prev[1:6] if p.mnemonic == "cmp" and p.op_str.startswith("bx, ")
                         and p.operands[1].type == x86.X86_OP_IMM), None)
@@ -303,6 +335,27 @@ class Sweep:
         self.tables[(f, off)] = targets
         for t in targets:
             self.seed(u, t, f"switch {u.name}+{off:X}", cs)
+
+    def check_code_vars(self) -> None:
+        """Every decoded write to a curated code-pointer variable (V or V+1 by any segment
+        with no base or index, so a DS equal to CS is covered) is `mov [V], imm` with imm a
+        listed target, or a listed register writer; any other is a conflict."""
+        for (f, v), (ips, writers) in self.code_vars.items():
+            for at, i in self.insn.get(f, {}).items():
+                ops = i.operands
+                if not ops or ops[0].type != x86.X86_OP_MEM or ops[0].mem.base or ops[0].mem.index \
+                        or ops[0].mem.disp & 0xFFFF not in (v, v + 1) \
+                        or i.mnemonic in ("call", "jmp", "cmp", "test", "push"):
+                    continue
+                src = ops[1] if len(ops) > 1 else None
+                ok = i.mnemonic == "mov" and ops[0].mem.disp & 0xFFFF == v and ops[0].size == 2 and (
+                    (src.type == x86.X86_OP_IMM and src.imm & 0xFFFF in ips) or
+                    (src.type == x86.X86_OP_REG and at in writers))
+                if not ok:
+                    self.conflicts.append((f, at, f"code variable {v:X}: unlisted write"))
+            seen = {at for at in writers if at in self.insn.get(f, {})}
+            for at in sorted(writers - seen):
+                self.conflicts.append((f, at, f"code variable {v:X}: listed writer not decoded"))
 
     def search_loop(self, u: Unit, off: int, cs: int, i) -> None:
         """Borland's value search: `mov cx,N; mov bx,T; L: mov ax,cs:[bx+V]; cmp ax,x;
@@ -454,6 +507,8 @@ def main() -> int:
         sw.run()
         if not new:
             break
+
+    sw.check_code_vars()
 
     # stub cells: executed stub bytes are the two-form entries and the return-trap header
     stub_cells = 0

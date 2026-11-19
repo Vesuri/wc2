@@ -211,6 +211,11 @@ extern volatile uint8_t rt_key_hook_running;    /* machine.c rt_key_hook_enter/l
 int rt_irq0_ready(void);
 int rt_irq0_take(void);
 void rt_irq_interrupt(void);
+/* Production IRQ 7 at the end of a DSP block (machine.c): run from the
+ * platform's block timer as IRQ0's handler is (rt_irq7_interrupt). */
+extern volatile uint32_t rt_irq7_runs;
+int rt_irq7_ready(void);
+void rt_irq7_interrupt(void);
 void rt_irq_abort(void) __attribute__((noreturn));
 /* IRQ0 entry (rt_entry.s rt_irq_async, docs/irq-plan.md I4): the guest handler
  * of IVT 08h runs on a private guest stack, below a frame whose CS:IP is this
@@ -261,6 +266,7 @@ extern uint8_t rt_hook_al, rt_hook_cf;
 void rt_key_hook(void);
 int rt_guest_vector(uint8_t vector);
 int rt_key_available(void);
+extern volatile uint32_t rt_key_polls;   /* input.c: the guest's keyboard polls */
 /* A read that waits for a key (input.c): returns with one buffered, or stops
  * with `what`. rt_idle (rt_entry.s): one replayed interrupt of the reference's
  * DOS idle wait at RT_IDLE_SEG:RT_IDLE_OFF, RT_IDLE_DEPTH bytes below the INT
@@ -293,8 +299,7 @@ extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 cle
 /* Gameport (port 201h), set by the platform before rt_start: 0 answers as the
  * reference's absent joystick; 1 is stick A, whose axis one-shots time out
  * after rt_joystick_axis[] (X, Y) reads following the trigger and whose
- * buttons are rt_joystick_buttons (bit 0 button 1, bit 1 button 2). 1 also
- * makes the launch's joystick argument (4th) Y (docs/source-inventory.md). */
+ * buttons are rt_joystick_buttons (bit 0 button 1, bit 1 button 2). */
 extern uint8_t rt_joystick;
 extern volatile uint16_t rt_joystick_axis[2];
 extern volatile uint8_t rt_joystick_buttons;

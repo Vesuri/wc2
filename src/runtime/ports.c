@@ -33,7 +33,7 @@ uint8_t rt_music_skip = 0;
 
 /* Gameport: with rt_joystick, the trigger latches the axes and each read
  * counts; an axis bit stays 1 for its latched number of reads, so the game's
- * timing loop (root +04466) measures the latch on any CPU. Stick B's axes
+ * timing loop (WC2.EXE+14F5A) measures the latch on any CPU. Stick B's axes
  * never time out and its buttons read released, as the reference's. */
 uint8_t rt_joystick;
 volatile uint16_t rt_joystick_axis[2];

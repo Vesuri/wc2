@@ -9,7 +9,7 @@ p=Path(__file__).resolve().parent
 source=(p/'amiga_replay.c').read_text()
 base=C.DATA.replace('#define REPLAY_IRQS 3u','#define REPLAY_IRQS 0u').replace('#define REPLAY_SERVICES 1u','#define REPLAY_SERVICES 0u')
 control=base
-joystick=base.replace('#define REPLAY_STEPS 1u','#define REPLAY_STEPS 2u').replace('{{2,1,0,0,0}}','{{2,1,5,3,0},{2,1,0,0,0}}')
+joystick=base.replace('#define REPLAY_STEPS 1u','#define REPLAY_STEPS 2u').replace('{{2,1,0,0,0,-1}}','{{2,1,5,3,0,-1},{2,1,0,0,0,-1}}')
 harness=C.HARNESS[:C.HARNESS.index('int main(void)')]+r'''
 int main(void) {
     G_IF=1;

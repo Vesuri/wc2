@@ -146,23 +146,49 @@ edge through one table to a PC set 1 make/break code and posts it to `rt_key_rin
 vector 09h; unmapped codes are counted (`amiga_unmapped_keys`, L76). Presses stay pending until the original reads them (L75);
 typematic repeat runs in the VBI (L77). The mouse (port 0) is sampled per VBI
 (L79–80) and at each INT 33h request (`Input::sample`), so a frame's motion runs up to
-its poll; its deltas feed the runtime's INT 33h driver (`plat_mouse`; in flight scaled to
+its poll; a button pressed at any sample is held until the next INT 33h read
+(`mouseLatched`: the game polls AX=03h only between frames, and a short click on a menu
+item was lost, user report); its deltas feed the runtime's INT 33h driver (`plat_mouse`; in flight scaled to
 a fixed frame time, `rt_mouse_scale`; vertical counts 1:1, `rt_mickeys_y`;
 [translator-design](translator-design.md) D9), and the counts
 not yet taken feed the pointer sprite's lead (`rt_pointer_lead`, the guest's own motion
 rule). Port 2 (`Input.cpp`): by default a digital joystick whose directions are
 cursor-key edges (typematic as keys) and whose fire and pin-9 buttons are mouse
 buttons 1 and 2; port `201h` answers as the reference's absent one. With
-`ANALOGJOYSTICK` (`rt_joystick`) the launch's joystick argument is `Y` and port 2 is a
-proportional stick: POTGO START per field, each field's POT1DAT (X the high byte, pin 9, Y the
-low, pin 5: the HRM's names swapped the axes on a real stick, user report 0.91; unaveraged:
-HRM 8-1-4-4's jitter is the stick's pots, the PC original reads raw) + 16 is the reads before each axis one-shot times out
-(`src/runtime/ports.c`; the game's probe wants 16–1000, its calibration scales);
-buttons on pins 3/4 reach the gameport only (the calibration screen waits for a
-gameport button; the game ors gameport and swapped mouse buttons, root `+037B6`,
-so a mouse copy made each stick button both, user report 0.92). POTINP's mouse buttons are
-read before the START (its discharge pulls the pins low). Oracle:
-`tests/test_gameport.py` runs the game's probe, calibration and read on Unicorn.
+`ANALOGJOYSTICK` (`rt_joystick`) port 2 is a proportional stick: POTGO START per field,
+each field's POT1DAT (X the high byte, pin 9, Y the low, pin 5: the HRM's names swapped
+the axes on a real stick, SWOTL user report 0.91; unaveraged: HRM 8-1-4-4's jitter is
+the stick's pots, the PC original reads raw) + 16 is the reads before each axis one-shot
+times out (`src/runtime/ports.c`), counted by the game's timing loop `WC2.EXE+14F5A`;
+buttons on pins 3/4 reach the gameport only (in SWOTL the game ors gameport and swapped
+mouse buttons, so a mouse copy made each stick button both, SWOTL user report 0.92).
+POTINP's mouse buttons are read before the START (its discharge pulls the pins low).
+WC2 calibrates in flight: Ctrl+J. The flight key handler `WC2.EXE+04C58` runs once per
+flight frame on the scan byte at DGROUP 43C0h; on scan 24h with the game's Ctrl bits
+(word D148h & 1800h, set by its key reader `WC2.EXE+10100` for scan 1Dh; Alt is 600h) it
+calls overlay stub `17BF:002F` (entry 3), `WC2.EXE+36FFA`, whose prompts are DGROUP
+8738h, 8766h, 8793h and 87C1h (DERIVED by reading). The game keeps its own key state: its
+INT 15h intercept (`WC2.EXE+0FD93`) calls `WC2.EXE+1036B` per scan code, which marks the
+table at DGROUP D184h (40h made, 80h broken); the reader turns it into press, repeat and
+release events whose character comes from `WC2.EXE+10785` (lower case unless the game's
+Shift bits C0h are set; MEASURED on the Amiga build at the personnel screen: `c` made
+at 40h, broken at 80h). The personnel screen's [C]reate takes Shift+C on the Amiga build
+(user report); the reference took a plain `c` whose make and break (about 120,000
+instructions apart) fell inside one reader call, so the game saw only the release
+(INFERRED). Human-length presses on the original may behave as on the Amiga build.
+The personnel menu reads keys and clicks as events from the game's reader (emitted at
+`WC2.EXE+0FFF0`, every 4–7 fields there, MEASURED). Scripted input to it is unreliable
+(MEASURED, open-work 23): a 5-field Shift+C can fall between two reads (only a release
+arrives, with no character), and seen presses held 10 or 20 fields were also not acted on
+(7 of 12, 2 of 4 and 0 of 4 runs took Create at 5, 10 and 20 fields). A click 5 fields
+after a move came before the hover highlight; a later one was dropped; the menu snaps the
+pointer to the item under it (an AX=4 of its own, which lost a following move); a held
+button repeats clicks every 5 fields; an Enter there acts as a click and, on no item,
+exits to the OS. The menu puts the pointer at (400,54) on entry (MEASURED). The name
+prompt reads keys through DOS, and its first poll comes before it takes them (a `k1:a`
+lost the first key, MEASURED), so the smoke types the names 150 ticks after Shift+C. Esc held for 10 fields skips each
+cinematic scene; a repeated Esc must stop at the title's own BUTTONS.V00, since Esc on the
+title menu quits to the OS (MEASURED: hand-back at field 1,953).
 
 ## Files
 

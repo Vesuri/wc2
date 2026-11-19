@@ -119,10 +119,38 @@ static int32_t truncate_at(int32_t handle)
     return !files[handle] ? -1 : SetFileSize(files[handle], 0, OFFSET_CURRENT) < 0 ? -1 : 0;
 }
 
+/* Diagnostic key script (below): the file a step waits for (fNAME), set by
+ * the field task, and whether the guest has opened it since. */
+static const char *volatile script_file = 0;
+static volatile int script_file_n = 0;
+static volatile UBYTE script_file_seen = 0;
+
+static void script_opened(const char *path)
+{
+    const char *name = path, *want = script_file;
+    int n = script_file_n;
+    for (const char *p = path; *p; ++p) {
+        if (*p == '/' || *p == '\\' || *p == ':') {
+            name = p + 1;
+        }
+    }
+    if (!want) {
+        return;
+    }
+    int k = 0;
+    while (k < n && name[k] && (name[k] | 0x20) == (want[k] | 0x20)) {
+        ++k;
+    }
+    if (k == n && !name[k]) {
+        script_file_seen = 1;
+    }
+}
+
 /* MODE_OLDFILE reads and writes an existing file. */
 int32_t plat_open(const char *path, int32_t mode)
 {
     (void)mode;
+    script_opened(path);
     amiga_io_begin();
     int32_t handle = open_as(path, MODE_OLDFILE);
     amiga_io_end();
@@ -337,6 +365,83 @@ static void cia_load(uint32_t divisor)
     *cr |= CIACRAF_LOAD | CIACRAF_START;          /* continuous */
 }
 
+/* The DSP block's end (plat_sb_block) on CIA-B's other timer, one-shot, in
+ * runs of at most FFFFh E-clocks: length / rate after the 14h command (the
+ * reference acknowledged IRQ 7 within 3.0 ms of it, docs/pc-reference-loop.md).
+ * Production then runs INT 0Fh's guest handler at once when the runtime allows
+ * it (machine.c rt_irq7_ready), as cia_tick runs IRQ0's, else retries after
+ * SB_RETRY E-clocks (about 1 ms); the sync bench posts vector 0Fh for the next
+ * poll point. No sound yet (open-work 19). */
+#define SB_RETRY 709u
+static struct Interrupt sb_interrupt;
+static WORD sb_bit = -1;
+static volatile uint32_t sb_left;  /* E-clocks of the block still to time */
+static volatile UBYTE sb_due;      /* the block's IRQ 7 is not yet delivered */
+/* Blocks timed, IRQ 7 tries the runtime deferred, and the most for one block
+ * (fixtures: each try is SB_RETRY E-clocks late). */
+volatile ULONG amiga_sb_blocks = 0, amiga_sb_retries = 0, amiga_sb_retry_max = 0;
+#ifndef WC2_SYNC
+static ULONG sb_tries;
+#endif
+
+static void sb_load(uint32_t ticks)
+{
+    volatile UBYTE *cr = sb_bit == CIAICRB_TA ? &CIAB->ciacra : &CIAB->ciacrb;
+    volatile UBYTE *lo = sb_bit == CIAICRB_TA ? &CIAB->ciatalo : &CIAB->ciatblo;
+    volatile UBYTE *hi = sb_bit == CIAICRB_TA ? &CIAB->ciatahi : &CIAB->ciatbhi;
+    if (ticks == 0) {
+        ticks = 1;
+    }
+    *cr &= sb_bit == CIAICRB_TA ? 0xc0 : 0x80;    /* stop; keep TOD/serial bits */
+    *lo = (UBYTE)ticks;
+    *hi = (UBYTE)(ticks >> 8);
+    *cr |= CIACRAF_LOAD | CIACRAF_RUNMODE | CIACRAF_START;  /* one-shot */
+}
+
+static void sb_arm(void)
+{
+    uint32_t run = sb_left > 0xffffu ? 0xffffu : sb_left;
+    sb_left -= run;
+    sb_load(run);
+}
+
+static ULONG sb_timer(void)
+{
+    if (sb_left) {
+        sb_arm();
+        return 0;
+    }
+    if (!sb_due) {
+        return 0;
+    }
+#ifdef WC2_SYNC
+    sb_due = 0;
+    rt_irq_ring[rt_irq_tail % RT_IRQ_RING] = 0x0f;
+    ++rt_irq_tail;
+    RT_RAISE_IRQ();
+#else
+    if (!rt_irq7_ready()) {
+        ++amiga_sb_retries;
+        ++sb_tries;
+        sb_load(SB_RETRY);
+        return 0;
+    }
+    if (sb_tries > amiga_sb_retry_max) {
+        amiga_sb_retry_max = sb_tries;
+    }
+    sb_tries = 0;
+    sb_due = 0;
+    UWORD sr;
+    *(volatile UWORD *)0xdff09c = INTF_EXTER;
+    __asm__ volatile("move.w %%sr,%0" : "=d"(sr) : : "memory");
+    __asm__ volatile("move.w %0,%%sr" : : "d"((UWORD)((sr & ~0x0700) | 0x0200)) : "memory");
+    rt_irq0_running = 1;
+    rt_irq7_interrupt();            /* may start the next block (plat_sb_block) */
+    __asm__ volatile("move.w %0,%%sr" : : "d"(sr) : "memory");
+#endif
+    return 0;
+}
+
 static int timer_open(void)
 {
     cia_base = (struct Library *)OpenResource((CONST_STRPTR)CIABNAME);
@@ -350,6 +455,13 @@ static int timer_open(void)
         if (!AddICRVector(cia_base, bit, &cia_interrupt)) {
             cia_bit = bit;
             cia_load(0x10000);
+            sb_interrupt.is_Node.ln_Type = NT_INTERRUPT;
+            sb_interrupt.is_Node.ln_Name = (char *)"WC2 DSP block";
+            sb_interrupt.is_Code = (void (*)(void))sb_timer;
+            WORD other = bit == CIAICRB_TA ? CIAICRB_TB : CIAICRB_TA;
+            if (!AddICRVector(cia_base, other, &sb_interrupt)) {
+                sb_bit = other;     /* else a DSP block stops (plat_sb_block) */
+            }
             return 1;
         }
     }
@@ -358,6 +470,11 @@ static int timer_open(void)
 
 static void timer_close(void)
 {
+    if (sb_bit >= 0) {
+        *(sb_bit == CIAICRB_TA ? &CIAB->ciacra : &CIAB->ciacrb) &= ~CIACRAF_START;
+        RemICRVector(cia_base, sb_bit, &sb_interrupt);
+        sb_bit = -1;
+    }
     if (cia_bit >= 0) {
         *(cia_bit == CIAICRB_TA ? &CIAB->ciacra : &CIAB->ciacrb) &= ~CIACRAF_START;
         RemICRVector(cia_base, cia_bit, &cia_interrupt);
@@ -428,22 +545,45 @@ uint8_t plat_dsp_status(uint32_t port, uint32_t value)
 #endif
 }
 
-/* Speech on Paula and IRQ 7's delivery are open-work 19: a block stops. The
- * diagnostic replay checks the block against the reference's and replays its IRQ 7. */
+/* A DSP block is timed silently and ends with IRQ 7 (sb_timer); speech on
+ * Paula is open-work 19. The diagnostic replay checks the block against the
+ * reference's and replays its IRQ 7. */
 void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
 {
 #ifdef WC2_REPLAY
     replay_sb_block(linear, length, rate);
 #else
-    (void)rate;
-    rt_stop("Sound Blaster block: no Amiga speech yet (linear, length)", linear, length);
+    if (sb_bit < 0 || rate == 0) {
+        rt_stop("Sound Blaster block without the CIA-B block timer (linear, length)", linear, length);
+    }
+    /* E-clocks per byte in 24.8: rate >= 3906 Hz (time constant 0) keeps
+     * length (<= 65536) times it inside 32 bits */
+    uint32_t eclock = amiga_ntsc ? 715909u : 709379u;
+    uint32_t ticks = length * ((eclock << 8) / rate) >> 8;
+    Disable();
+    sb_due = 1;
+    sb_left = ticks;
+    sb_arm();
+    Enable();
+    ++amiga_sb_blocks;
 #endif
 }
 
-/* Diagnostic key script (argument KEYS=when:key,...; when is a frame from
+/* Diagnostic key script (argument KEYS=when:key,..., quoted when it holds
+ * ax=/ay=: ReadArgs ends an unquoted item at '=' and the start fails; when is a frame from
  * the start, or pN: N guest mouse reads after the previous step, which waits
  * for a screen that is polling rather than for a time the host load moves;
- * keys a-z 0-9 enter esc space or $hex raw codes, mouse buttons lmb rmb,
+ * kN: N guest keyboard polls after the previous step (rt_key_polls: a prompt
+ * that reads keys, as pN for a screen that reads the mouse); dN: N frames after the previous step;
+ * tN: N CIA ticks after the previous step (the guest timer's rate: a reference
+ * milestone's WC2.EXE+fd10#N counts, reference/milestones.csv); fNAME: the guest opens file NAME
+ * after the previous step (a screen's own data: the reference's open order);
+ * uNAME:KEY: KEY now and every SCRIPT_REPEAT frames until the guest opens NAME
+ * (Esc through a cinematic's scenes, however long each takes to load);
+ * keys a-z 0-9 enter esc space up down left right or $hex raw codes, mouse
+ * buttons lmb rmb, port 2's stick ju jd jl jr (directions) jf jg (buttons 1
+ * and 2), alt+KEY, ctrl+KEY or shift+KEY with the left Alt, Ctrl or Shift held around it, a held step name*N (N frames), the proportional stick's pot counts
+ * ax=N ay=N (0-255, kept until changed; ax=- the pots again),
  * mouse motion mx+N mx-N my+N my-N counts; shot and quit call
  * amiga_script_mark for a debugger fixture; unknown names are logged at the
  * start and skipped): fed from the field task at each vertical blank into
@@ -453,11 +593,42 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
  * buffer). */
 #define SCRIPT_LMB 0x100
 #define SCRIPT_RMB 0x101
+#define SCRIPT_JOY 0x200            /* | the amiga_joystick_script bit */
+static ULONG script_joystick = 0;
 static const char *key_script = 0;
 static ULONG key_up_frame = 0;
 static ULONG key_up_reads = 0;
 static ULONG step_reads = 0;    /* amiga_mouse_reads at the previous step */
+static ULONG step_frame = 0;    /* amiga_frames at the previous step */
+static ULONG step_polls = 0;    /* rt_key_polls at the previous step */
+static ULONG step_ticks = 0;    /* amiga_ticks at the previous step */
+#define SCRIPT_REPEAT 60
+static ULONG repeat_frame = 0;  /* amiga_frames at a u step's last press */
 static int key_up = -1;         /* the held raw key or SCRIPT_LMB/RMB */
+static int key_mod = -1;        /* the modifier held around it */
+#define RAW_LALT 0x64
+#define RAW_CTRL 0x63
+#define RAW_LSHIFT 0x60
+
+/* alt+KEY or ctrl+KEY: the modifier's raw code, the name advanced past it;
+ * -1 none. */
+static int modifier(const char **name, int *n)
+{
+    static const struct { char word[7]; UBYTE raw; } mods[3] = {
+        {"alt+", RAW_LALT}, {"ctrl+", RAW_CTRL}, {"shift+", RAW_LSHIFT}};
+    for (int m = 0; m < 3; ++m) {
+        int k = 0;
+        while (mods[m].word[k] && k < *n && (*name)[k] == mods[m].word[k]) {
+            ++k;
+        }
+        if (!mods[m].word[k] && *n > k) {
+            *name += k;
+            *n -= k;
+            return mods[m].raw;
+        }
+    }
+    return -1;
+}
 
 void __attribute__((noinline)) amiga_script_mark(int quit)
 {
@@ -468,6 +639,10 @@ static void script_event(int code, int up)
 {
     if (code == SCRIPT_LMB || code == SCRIPT_RMB) {
         amiga_mouse_script_buttons(up ? 0 : code == SCRIPT_LMB ? 1 : 2);
+    } else if (code >= SCRIPT_JOY) {
+        ULONG bit = 1u << (code - SCRIPT_JOY);
+        script_joystick = up ? script_joystick & ~bit : script_joystick | bit;
+        amiga_joystick_script(script_joystick);
     } else {
         amiga_key(code, up);
     }
@@ -495,6 +670,14 @@ static int raw_of(const char *name, int n)
             }
         }
     }
+    static const char *const stick[6] = {"ju", "jd", "jl", "jr", "jf", "jg"};
+    for (int k = 0; k < 6; ++k) {
+        if (named(name, n, stick[k])) return SCRIPT_JOY + k;
+    }
+    if (named(name, n, "up")) return 0x4c;
+    if (named(name, n, "down")) return 0x4d;
+    if (named(name, n, "right")) return 0x4e;
+    if (named(name, n, "left")) return 0x4f;
     if (named(name, n, "enter")) return 0x44;
     if (named(name, n, "esc")) return 0x45;
     if (named(name, n, "space")) return 0x40;
@@ -517,10 +700,34 @@ static int motion(const char *name, int n)
            (name[2] == '+' || name[2] == '-');
 }
 
+static int axis(const char *name, int n)
+{
+    return n > 3 && name[0] == 'a' && (name[1] == 'x' || name[1] == 'y') && name[2] == '=';
+}
+
+/* A step's name without its hold suffix *N; *hold the frames (5 without). */
+static int held(const char *name, int n, ULONG *hold)
+{
+    *hold = 5;
+    for (int k = 0; k < n; ++k) {
+        if (name[k] == '*') {
+            ULONG v = 0;
+            for (int j = k + 1; j < n && name[j] >= '0' && name[j] <= '9'; ++j) {
+                v = v * 10 + (ULONG)(name[j] - '0');
+            }
+            *hold = v;
+            return k;
+        }
+    }
+    return n;
+}
+
 static int known(const char *name, int n)
 {
-    return motion(name, n) || named(name, n, "shot") || named(name, n, "quit") ||
-           raw_of(name, n) >= 0;
+    ULONG hold;
+    modifier(&name, &n);
+    return motion(name, n) || axis(name, n) || named(name, n, "shot") ||
+           named(name, n, "quit") || raw_of(name, held(name, n, &hold)) >= 0;
 }
 
 /* At the start (main program): the field task cannot log. */
@@ -541,26 +748,107 @@ static void key_script_check(void)
     }
 }
 
+static void script_press(const char *name, int n)
+{
+    ULONG hold;
+    int mod = modifier(&name, &n);
+    int code = raw_of(name, held(name, n, &hold));
+    if (code < 0) {
+        return;
+    }
+    if (mod >= 0) {
+        script_event(mod, 0);
+        key_mod = mod;
+    }
+    script_event(code, 0);
+    key_up = code;
+    key_up_frame = amiga_frames + hold;
+    key_up_reads = amiga_mouse_reads + (code == SCRIPT_LMB || code == SCRIPT_RMB ? 2 : 0);
+}
+
+/* A u step's KEY (after the ':' at p), every SCRIPT_REPEAT frames. */
+static void script_repeat(const char *p)
+{
+    if (amiga_frames - repeat_frame < SCRIPT_REPEAT) {
+        return;
+    }
+    repeat_frame = amiga_frames;
+    const char *name = *p == ':' ? p + 1 : p;
+    const char *end = name;
+    while (*end > ' ' && *end != ',') {
+        ++end;
+    }
+    script_press(name, (int)(end - name));
+}
+
+/* A u step is done: past its KEY, the baselines for the next step. */
+static void script_skip(const char *p)
+{
+    while (*p > ' ' && *p != ',') {
+        ++p;
+    }
+    key_script = *p == ',' ? p + 1 : p;
+    step_reads = amiga_mouse_reads;
+    step_frame = amiga_frames;
+    step_polls = rt_key_polls;
+    step_ticks = amiga_ticks;
+}
+
 static void key_script_step(void)
 {
     if (key_up >= 0 && amiga_frames >= key_up_frame && amiga_mouse_reads >= key_up_reads) {
         script_event(key_up, 1);
         key_up = -1;
+        if (key_mod >= 0) {
+            script_event(key_mod, 1);
+            key_mod = -1;
+        }
     }
     if (!key_script || *key_script <= ' ' || key_up >= 0) {
         return;
     }
     ULONG when = 0;
     const char *p = key_script;
-    int reads = *p == 'p';
-    p += reads;
-    while (*p >= '0' && *p <= '9') {
-        when = when * 10 + (ULONG)(*p++ - '0');
-    }
-    if (reads ? amiga_mouse_reads - step_reads < when : amiga_frames < when) {
-        return;
+    char kind = *p >= '0' && *p <= '9' ? 0 : *p++;
+    if (kind == 'f' || kind == 'u') {
+        const char *file = p;
+        while (*p > ' ' && *p != ',' && *p != ':') {
+            ++p;
+        }
+        if (script_file != file) {
+            script_file_seen = 0;
+            script_file_n = (int)(p - file);
+            script_file = file;
+            if (kind == 'u') {
+                repeat_frame = amiga_frames - SCRIPT_REPEAT;
+            }
+        }
+        if (!script_file_seen) {
+            if (kind == 'u') {
+                script_repeat(p);
+            }
+            return;
+        }
+        script_file = 0;
+        if (kind == 'u') {
+            script_skip(p);
+            return;
+        }
+    } else {
+        while (*p >= '0' && *p <= '9') {
+            when = when * 10 + (ULONG)(*p++ - '0');
+        }
+        if (kind == 'p' ? amiga_mouse_reads - step_reads < when :
+                kind == 'k' ? rt_key_polls - step_polls < when :
+                kind == 't' ? amiga_ticks - step_ticks < when :
+                kind == 'd' ? amiga_frames - step_frame < when : amiga_frames < when) {
+            return;
+        }
     }
     step_reads = amiga_mouse_reads;
+    step_frame = amiga_frames;
+    step_polls = rt_key_polls;
+    step_ticks = amiga_ticks;
     const char *name = *p == ':' ? ++p : p;
     while (*p > ' ' && *p != ',') {
         ++p;
@@ -576,18 +864,19 @@ static void key_script_step(void)
         amiga_mouse_move(name[1] == 'x' ? v : 0, name[1] == 'y' ? v : 0);
         return;
     }
+    if (axis(name, n)) {
+        int v = 0;
+        for (int k = 3; k < n && name[k] >= '0' && name[k] <= '9'; ++k) {
+            v = v * 10 + name[k] - '0';
+        }
+        amiga_joystick_script_axis(name[1] == 'y', name[3] == '-' ? -1 : v);
+        return;
+    }
     if (named(name, n, "shot") || named(name, n, "quit")) {
         amiga_script_mark(name[0] == 'q');
         return;
     }
-    int code = raw_of(name, n);
-    if (code < 0) {
-        return;
-    }
-    script_event(code, 0);
-    key_up = code;
-    key_up_frame = amiga_frames + 5;
-    key_up_reads = amiga_mouse_reads + (code >= SCRIPT_LMB ? 2 : 0);
+    script_press(name, n);
 }
 
 void plat_service(void)

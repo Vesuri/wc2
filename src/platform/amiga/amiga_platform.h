@@ -31,6 +31,8 @@ void amiga_io_end(void);
 void amiga_key(int raw, int up);
 void amiga_mouse_move(int16_t dx, int16_t dy);
 void amiga_mouse_script_buttons(uint32_t buttons);
+void amiga_joystick_script(uint32_t bits);      /* key script: directions 0-3, buttons 4-5 */
+void amiga_joystick_script_axis(int axis, int count);  /* pot count, -1 the pots */
 
 /* The FM re-hoster's next commands (Audio.cpp), from plat_service. */
 void amiga_audio_service(void);

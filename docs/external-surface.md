@@ -94,14 +94,14 @@ Mouse event handlers (INT 33h AX=000Ch/0014h/0018h): none.
 |---|---|---|---|---|
 | DMA controller | 0 | 18603 | 002h 003h 00Ah 00Bh 00Ch 083h | WC2.EXE |
 | PIC | 21 | 235099 | 020h 021h | WC2.EXE |
-| PIT | 134350758 | 67175730 | 040h 043h | STRAX.DRV WC2.EXE |
+| PIT | 134350722 | 67175712 | 040h 043h | STRAX.DRV WC2.EXE |
 | keyboard controller, speaker | 0 | 0 | never touched |  |
 | game port | 688128 | 21 | 201h | WC2.EXE |
 | Sound Blaster DSP and mixer | 10522 | 6306 | 226h 22Ah 22Ch 22Eh | WC2.EXE |
 | OPL at the Sound Blaster (220h/221h, 228h/229h) | 0 | 0 | never touched |  |
 | OPL at 388h/389h | 0 | 11990520 | 388h 389h | STRAX.DRV |
 | MPU-401 | 0 | 0 | never touched |  |
-| VGA | 235988041 | 815430 | 3C7h 3C8h 3C9h 3DAh | TM.DRV WC2.EXE |
+| VGA | 235988129 | 815430 | 3C7h 3C8h 3C9h 3DAh | TM.DRV WC2.EXE |
 
 | Dir | Port | Sites (×count) |
 |---|---|---|
@@ -113,9 +113,9 @@ Mouse event handlers (INT 33h AX=000Ch/0014h/0018h): none.
 | out | 020h | WC2.EXE+06CBF×2280, WC2.EXE+10093×232798 |
 | in | 021h | WC2.EXE+06CC8×21 |
 | out | 021h | WC2.EXE+06CBF×21 |
-| in | 040h | STRAX.DRV+0071E×11990520, STRAX.DRV+00722×11990520, STRAX.DRV+0072E×53424585, STRAX.DRV+00732×53424585, WC2.EXE+56D56×18 (+3) |
+| in | 040h | STRAX.DRV+0071E×11990520, STRAX.DRV+00722×11990520, STRAX.DRV+0072E×53424567, STRAX.DRV+00732×53424567, WC2.EXE+56D56×18 (+3) |
 | out | 040h | WC2.EXE+100D1×81, WC2.EXE+100D5×81, WC2.EXE+1494A×18, WC2.EXE+1494C×18, WC2.EXE+149BE×18 (+1) |
-| out | 043h | STRAX.DRV+0071A×11990520, STRAX.DRV+0072A×53424585, WC2.EXE+100CD×81, WC2.EXE+14946×18, WC2.EXE+149BA×18 (+2) |
+| out | 043h | STRAX.DRV+0071A×11990520, STRAX.DRV+0072A×53424567, WC2.EXE+100CD×81, WC2.EXE+14946×18, WC2.EXE+149BA×18 (+2) |
 | out | 083h | WC2.EXE+06CBF×2067 |
 | in | 201h | WC2.EXE+14F6E×688107, WC2.EXE+14F85×21 |
 | out | 201h | WC2.EXE+14F6D×21 |
@@ -130,7 +130,7 @@ Mouse event handlers (INT 33h AX=000Ch/0014h/0018h): none.
 | out | 3C8h | TM.DRV+02DDC×196671, WC2.EXE+111FC×4608 |
 | in | 3C9h | TM.DRV+02E12×10314, TM.DRV+02E17×10314, TM.DRV+02E1C×10314 |
 | out | 3C9h | TM.DRV+02DE2×196671, TM.DRV+02DE7×196671, TM.DRV+02DEC×196671, WC2.EXE+11202×4608, WC2.EXE+11207×4608 (+1) |
-| in | 3DAh | WC2.EXE+14868×54856, WC2.EXE+1486D×235902243 |
+| in | 3DAh | WC2.EXE+14868×54856, WC2.EXE+1486D×235902331 |
 
 Static in/out sites 57 (DERIVED), traced 44; never traced: WC2.EXE+02F63 in dx, WC2.EXE+02F68 in dx, WC2.EXE+02F74 in dx, WC2.EXE+02F79 in dx, WC2.EXE+02F82 in dx, WC2.EXE+02F87 in dx, WC2.EXE+14FE4 out dx, WC2.EXE+14FE5 in dx, WC2.EXE+14FF5 in dx, WC2.EXE+14FFD out dx, WC2.EXE+15002 in dx, WC2.EXE+1500E in dx, WC2.EXE+561A2 out dx.
 
@@ -139,7 +139,7 @@ Static in/out sites 57 (DERIVED), traced 44; never traced: WC2.EXE+02F63 in dx, 
 | Port | Writer | Values (×count) |
 |---|---|---|
 | 40h | WC2.EXE | 00h×120, 4Dh×57, AEh×57 |
-| 43h | STRAX.DRV | 06h×65415105 |
+| 43h | STRAX.DRV | 06h×65415087 |
 | 43h | WC2.EXE | 06h×1760274, 36h×117 |
 
 IRQ 0 taken in ref-m6-a: 34429. 
@@ -150,7 +150,7 @@ The game's divisor (DERIVED from the counter 0 writes and the handler's tick cou
 Modes set (INT 10h AH=00h): 13h at WC2.EXE+5600E×21.
 Palette services (INT 10h AH=10h): none.
 Register writes by port: 3C7h×10314, 3C8h×201279, 3C9h×603837.
-Input status (3DAh) reads by site, the retrace waits: WC2.EXE+1486D×235902243, WC2.EXE+14868×54856.
+Input status (3DAh) reads by site, the retrace waits: WC2.EXE+1486D×235902331, WC2.EXE+14868×54856.
 
 | Module | Reads | Writes | A000h pages (256 B) | Highest |
 |---|---|---|---|---|
@@ -292,7 +292,7 @@ Entries are the entry-table indices whose address a far call from outside the dr
 |---|---|---|---|---|---|
 | WC2.EXE | 106687 | 55746 | 83 | 6175 (3074) | 0 (0) |
 | TM.DRV | 2378 | 1180 | 53 | 0 (0) | 0 (0) |
-| SUPERTM.DRV | 7169 | 6300 | 53 | 0 (0) | 0 (0) |
+| SUPERTM.DRV | 8170 | 6300 | 53 | 0 (0) | 0 (0) |
 | STRAX.DRV | 1391 | 1252 | 45 | 0 (0) | 0 (0) |
 
 | Module | Opcode | Instruction | Starts | Executed |

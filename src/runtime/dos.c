@@ -757,6 +757,7 @@ void rt_int21(uint16_t cs, uint16_t ip)
     case 0x07:
     case 0x08: read_char(cs, ip); break;
     case 0x0b:  /* CON input status */
+        ++rt_key_polls;
         SET_AL(rt_r.ax, rt_key_available() ? 0xff : 0x00);
         break;
     case 0x1a:

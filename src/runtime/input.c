@@ -296,6 +296,10 @@ static void bios_key(uint8_t scan)
     wr8(BDA_FLAGS3, f3);
 }
 
+/* The guest's keyboard polls: INT 16h AH=01h, DOS AH=0Bh, console waits (a
+ * diagnostic key script paces on them, amiga_platform.c). */
+volatile uint32_t rt_key_polls;
+
 int rt_key_available(void)
 {
     return rd16(BDA_HEAD) != rd16(BDA_TAIL);
@@ -323,6 +327,7 @@ uint8_t rt_idle_posted;
 
 void rt_key_wait(const char *what, uint8_t vector, uint16_t cs, uint16_t ip)
 {
+    ++rt_key_polls;
     if (rt_key_available()) {
         return;
     }
@@ -391,6 +396,7 @@ void rt_int16(void)
         rt_r.ax = key;
         break;
     case 0x01:  /* check for a key: ZF clear and AX the key; IF set (CALLBACK_SIF) */
+        ++rt_key_polls;
         for (;;) {
             if (!rt_key_available()) {
                 G_CCR |= CCR_Z;

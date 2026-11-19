@@ -6,20 +6,13 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6b: Amiga platform (stream C, beside P6)
 
-18. Display and input on the Amiga (port-plan P6b.1, P6b.3): SWOTL's copper display,
-    double buffer, changed-row C2P, display queue and frame cap; the key map, mouse and
-    joystick; WC2's own joystick calibration runs. The F000h segment SUPERTM.DRV's noise
-    fill samples ([drivers.md](drivers.md)) filled from a seeded generator (D11). The smoke into flight (moved from gate 6: the production build stops
-    at the first SB block until item 19, and the game starts speech before flight, m2):
-    `amiga/play_walk.sh` and `.gdb` are still SWOTL's steep-bank script and need WC2's
-    keys and a flight label. Acceptance: the Amiga build shows m4's
-    flight frame from generated code and the smoke flies with keyboard and joystick input.
 19. Audio on Paula (port-plan P6b.2): FM music through SWOTL's `fm_paula.c`, effects priced
     by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,
-    channel ownership stated. The Amiga `plat_sb_block` stops today: it plays the block
+    channel ownership stated. The Amiga `plat_sb_block` is silent today: it times the block
     and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
-    3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)), and production delivers
-    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8). Take X-Wing's two fixes to the
+    3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)); production delivers
+    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8), up to 57 retries of about 1 ms
+    late for one block (MEASURED over the intro's blocks). Playing it keeps that timing. Take X-Wing's two fixes to the
     SWOTL FM code first (not committed there as of 2026-11-16): `fm_paula.c` renders
     additive patches (C0h bit 0) with both operators at their relative levels (WC2: 7
     patch writes, 49 key-ons by m6), and `fm_check` measures vibrato notes (about half of
@@ -29,6 +22,11 @@ Items are in work order; numbers are identifiers and are not reused.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).
+23. The flight smoke's personnel menu route (`amiga/play_walk.sh`, owner-accepted for item 18
+    on its passing runs): scripted Create is taken in about half the runs, then the names go
+    astray or an Enter quits ([amiga-arch.md](amiga-arch.md) "Input" has the measured
+    mechanisms). Read the menu's event handling (`WC2.EXE+0FFF0`'s consumer) and script it from
+    that. Acceptance: 8 parallel runs of `amiga/play_walk.sh` all print `WC2_PLAY_OK`.
 
 ## Owner report (no phase)
 

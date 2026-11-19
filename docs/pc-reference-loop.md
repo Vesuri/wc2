@@ -121,7 +121,9 @@ put there, or lies in a read's trailing paragraph outside the module.
   the personnel menu ([L]oad, [S]ave, [D]elete). Saves go to `SAVEGAME.WC2` (8 slots,
   which pilot creation writes first).
 - Input path to flight: main menu (about 2400 timer ticks), click "Start New Game"; the
-  intro with speech (about 13,600 ticks, not skippable by Esc or clicks); the pilot file
+  intro with speech (about 13,600 ticks; the reference's scripted Esc taps and clicks did
+  not skip it, but Esc held for 10 fields skips each scene on the Amiga build: OPTIONS.V00
+  at field 5,945 instead of 57,132, MEASURED); the pilot file
   ([C]reate, first name, last name, callsign); quarters (airlock = fly, left terminal =
   save/load, right door = storyline); the flight-deck briefing and launch (about 6400
   ticks).

@@ -15,7 +15,7 @@ G_DS	equ	1
 	xdef	rt_irq_done
 	xdef	rt_irq_async
 	xdef	rt_irq_async_back
-	xdef	rt_irq_interrupt,rt_irq_interrupt_back
+	xdef	rt_irq_interrupt,rt_irq_interrupt_back,rt_irq7_interrupt
 	xdef	rt_irq_abort
 	xdef	rt_exit
 	xdef	rt_exit_guest
@@ -82,7 +82,7 @@ G_DS	equ	1
 	xref	rt_music_skip
 	xref	rt_pointer_ds
 	xref	rt_pointer_tracked
-	xref	rt_irq0_enter
+	xref	rt_irq0_enter,rt_irq7_enter
 	xref	rt_irq0_leave
 	xref	rt_irq_saved
 	xref	rt_irq0_running
@@ -284,8 +284,16 @@ irq_restore:
 ; into rt_r, which is kept as it is; the handler reads interrupted registers
 ; only to save them (I2). The SS base is the private stack's; the handler
 ; loads DS and ES before it uses them. C calling convention.
+; rt_irq7_interrupt: the same for INT 0Fh, the DSP block's IRQ 7 (machine.c
+; rt_irq7_ready, rt_irq7_enter); a3 holds the entry until it is called.
+rt_irq7_interrupt:
+	movem.l	d2-d7/a2-a6,-(a7)
+	lea	rt_irq7_enter,a3
+	bra.s	irq_interrupt
 rt_irq_interrupt:
 	movem.l	d2-d7/a2-a6,-(a7)
+	lea	rt_irq0_enter,a3
+irq_interrupt:
 	movea.l	rt_guest,a6
 	st	rt_irq0_running
 	st	rt_irq_interrupting
@@ -304,7 +312,7 @@ rt_irq_interrupt:
 	move.l	(a1)+,(a0)+
 	move.w	#IRQ_SS,G_SS(a6)
 	move.w	#IRQ_SP,rt_r+8
-	jsr	rt_irq0_enter
+	jsr	(a3)			; rt_irq0_enter or rt_irq7_enter
 	lea	rt_r,a0
 	movem.w	(a0),d0-d5/a4-a5
 	eori.w	#$7fff,d4
@@ -668,7 +676,11 @@ rt_run_guest:
 ; d6/d7/a0 clobbered.
 rt_vram_mark:
 	tst.w	rt_vdrv_depth
-	beq.l	rt_vram_stray		; video memory outside a driver call
+	bne.s	.inside
+	move.l	(a7),-(a7)		; the generated store's return address,
+	sub.l	#rt_vram_mark,(a7)	; as an offset any build's map names
+	jsr	rt_vram_stray		; video memory outside a driver call
+.inside:
 	movem.l	d0-d2,-(a7)
 	and.l	#$ffff,d7
 	move.l	d7,d0

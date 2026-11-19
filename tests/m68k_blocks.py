@@ -691,6 +691,9 @@ def walk_entry(u, run, reg: str) -> dict | None:
 PROBE = D.STUB + 0x800  # move.w ccr,(PROBE+$100).l: the CCR the CPU computes
 
 
+NORETURN = {(r["module"], int(r["offset"], 16)) for r in image.rows("noreturn.csv")}
+
+
 def ccr_at_stop(m) -> int:
     """The 68k CCR where the run stopped. Unicorn's SR register read can miss
     lazily computed condition codes, so a probe instruction stores the CCR."""
@@ -917,7 +920,11 @@ def main(argv=None, on_batch=None) -> int:
             entry = addr[lab(mod, run[0])]
             if posted:
                 m.irq_calls, m.irq_keep = [], posted == "watch"
-            mo, mf, mfx, mmem, mouts, mwrites, info = m.run(entry, case, h.rng,
+            # Entered inside a run (a switch's jump after other instructions): R13
+            # may have dropped the jump's CS base, which the run's earlier lines put
+            # in a0; only that a6-based base is ever dropped (translator/reuse.py)
+            held = None if (mod, run[0]) in p.leaders else {"a0": D.TOP - cs * 16 - 0x7FFF}
+            mo, mf, mfx, mmem, mouts, mwrites, info = m.run(entry, case, h.rng, init=held,
                                                             skip_entry=not empty, irq=False,
                                                             posted=bool(posted))
             calls, m.irq_calls = m.irq_calls, None
@@ -1042,8 +1049,10 @@ def main(argv=None, on_batch=None) -> int:
                     saved_inside, m.inside = m.inside, set()
                     m.stop, m.entry = None, None
                     m.e.start(native, 0xFFFFFFFF, 1000)
-                    want = site if good else ("rt_ret_far_mismatch" if far
-                                              else "rt_ret_mismatch")
+                    # a call to a noreturn.csv routine: its return is the stop
+                    noreturn = any(t in NORETURN for t in p.succ[(mod, run[-1])])
+                    want = ("rt_stop_unknown" if noreturn else site) if good else (
+                        "rt_ret_far_mismatch" if far else "rt_ret_mismatch")
                     if m.stop != want:
                         diffs.append(f"return protocol: {'right' if good else 'wrong'} "
                                      f"{'CS' if bad_cs else 'IP'} reached {m.stop}, want {want}")
@@ -1258,7 +1267,16 @@ def main(argv=None, on_batch=None) -> int:
             assert operand.seg == "cs" and operand.width == 16
             assert operand.base and not operand.index
             entries = int(row["entries"])
-            offset = u.off_of(u.cs[site], operand.disp)
+            table, base = operand.disp, 0
+            if operand.base == "di" and not operand.disp:
+                # `add di,T; call/jmp cs:[di]` (tools/sweep.py): the table at T, DI at
+                # the jump T plus the index
+                prev = max(o for o in u.insns if o < site)
+                add = u.insns[prev]
+                assert add.op == "add" and prev + add.size == site, ("curated table form", row)
+                assert add.operands[0] == Reg("di") and isinstance(add.operands[1], Imm)
+                table = base = add.operands[1].value & 0xFFFF
+            offset = u.off_of(u.cs[site], table)
             words = bytes(reloc[mod][offset:offset + 2 * entries])
             assert len(words) == 2 * entries
             targets = set()
@@ -1266,8 +1284,8 @@ def main(argv=None, on_batch=None) -> int:
                 target = (mod, u.off_of(u.cs[site], int.from_bytes(words[2*k:2*k+2], "little")))
                 targets.add(target)
                 before = count[mod]
-                block_cases(mod, [site], 2, {operand.base: 2*k},
-                            memory=[((SEG0[mod] + u.cs[site])*16 + operand.disp, words)],
+                block_cases(mod, [site], 2, {operand.base: (base + 2*k) & 0xFFFF},
+                            memory=[((SEG0[mod] + u.cs[site])*16 + table, words)],
                             expected=emit.label(*target))
                 assert count[mod] - before == 2, ("table row not compared", row, k)
                 table_rows += 1

@@ -14,7 +14,7 @@ CASES = (
 
 def check_chords(source, broken=False):
     for value, scans in CASES:
-        data = DATA.replace('{{2,1,0,0,0}}', '{{2,1,1,' + str(value) + ',1}}')
+        data = DATA.replace('{{2,1,0,0,0,-1}}', '{{2,1,1,' + str(value) + ',1,-1}}')
         assertions = '\n'.join(f'assert(rt_key_ring[{(254+i)%16}] == {scan});'
                                for i, scan in enumerate(scans))
         harness = HARNESS.replace('    G_IF = 1;', f'''

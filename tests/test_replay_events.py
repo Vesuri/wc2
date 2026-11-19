@@ -23,15 +23,22 @@ DATA = '''
 #define REPLAY_DSP_READS 0u
 struct replay_point_info { uint32_t cs, ip, slot; };
 struct replay_irq { uint32_t service, point, hits, vector; };
-struct replay_step { uint32_t point, hits, kind; int32_t value; uint32_t release; };
+struct replay_step { uint32_t point, hits, kind; int32_t value; uint32_t release; int32_t skip; };
+struct replay_block { uint32_t linear, length, rate; };
+struct replay_mask { uint32_t event, word, mask; };
+#define REPLAY_BLOCKS 0u
+#define REPLAY_MASKS 0u
+#define REPLAY_IDLE_POINT 3u
 struct replay_retrace { uint32_t service, value, repeat; };
 static const struct replay_point_info replay_points[] = {{1,2,0},{3,4,0},{5,6,0}};
 static const struct replay_irq replay_irqs[] = {{0,0,1,8},{0,0,1,8},{1,1,0,9}};
-static const struct replay_step replay_script[] = {{2,1,0,0,0}};
-static const struct replay_retrace replay_retrace[] = {{0,0,0}};
-static const struct replay_retrace replay_pit[] = {{0,0,0}};
+static const struct replay_step replay_script[] = {{2,1,0,0,0,-1}};
+static const uint8_t replay_retrace_stream[] = {0};
+static const uint8_t replay_pit_stream[] = {0};
 static const struct replay_retrace replay_dsp_write[] = {{0,0,0}};
 static const struct replay_retrace replay_dsp_data[] = {{0,0,0}};
+static const struct replay_block replay_blocks[] = {{0,0,0}};
+static const struct replay_mask replay_masks[] = {{0,0,0}};
 #define REPLAY_HASH_STEP 1u
 #define REPLAY_FINAL_HASH SERVICE_HASH
 static const uint32_t replay_service_hashes[] = {SERVICE_HASH};
@@ -54,6 +61,8 @@ volatile uint8_t rt_irq0_running;
 uint8_t rt_irq_saved[RT_STATE_BYTES + sizeof(struct rt_regs)];
 void rt_ems_touch(uint32_t a, uint32_t n)      /* no EMS frame here: a frame access stops */
 { (void)a; (void)n; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
+volatile uint8_t rt_key_hook_running;
+int rt_guest_vector(uint8_t vector) { (void)vector; return 1; }  /* no idle point here */
 int main(void) {
     G_IF = 1;
     if (test_case == 3 || test_case == 4) {
@@ -114,7 +123,7 @@ def check(source, broken=False, data=DATA, harness=HARNESS,
 
 
 def check_keyboard(source, broken=False):
-    data = DATA.replace('{{2,1,0,0,0}}', '{{2,1,1,0x14b,1}}')
+    data = DATA.replace('{{2,1,0,0,0,-1}}', '{{2,1,1,0x14b,1,-1}}')
     harness = HARNESS.replace('    G_IF = 1;', '''
     G_IF = 1;
     if (test_case == 5) {

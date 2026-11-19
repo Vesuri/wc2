@@ -53,8 +53,17 @@ static uint8_t mouseCounterY = 0;
 static int32_t mouseDX = 0;
 static int32_t mouseDY = 0;
 static uint8_t mouseButtons = 0;
+// Buttons pressed at any sample since the last INT 33h read: the game polls
+// AX=03h only between its frames, and a click shorter than that gap was lost
+// (user report: a short click on a menu item did nothing, a longer one worked).
+static uint8_t mouseLatched = 0;
 static uint8_t scriptButtons = 0;
 static uint8_t joystickDirections = 0;  // bits 0-3: up, down, left, right
+// Diagnostic key script (amiga_platform.c): stick directions (bits 0-3, as
+// joystickDirections) and buttons (bits 4-5) or'd into port 2's, and the
+// proportional stick's pot counts in place of POT1DAT's (-1: the pots).
+static uint8_t scriptJoystick = 0;
+static int16_t scriptAxis[2] = {-1, -1};
 static uint16_t potButtons = 0xffff;    // POTINP as read before the pot START
 static bool potStarted = false;
 
@@ -125,7 +134,7 @@ bool Input::begin()
 #endif
     repeatKey = 0xff;
     mouseDX = mouseDY = 0;
-    mouseButtons = scriptButtons = 0;
+    mouseButtons = mouseLatched = scriptButtons = 0;
     joystickDirections = 0;
     potButtons = 0xffff;
     potStarted = false;
@@ -164,11 +173,12 @@ void Input::end()
 // 9 and 1 (Hardware Manual table 8-1).
 static uint8_t joystickButtons(uint16_t pins)
 {
+    uint8_t script = scriptJoystick >> 4;
     if (rt_joystick) {
         uint16_t joy = *joy1datPointer;
-        return (uint8_t)((joy >> 9 & 1) | (joy & 2));
+        return (uint8_t)((joy >> 9 & 1) | (joy & 2) | script);
     }
-    return (uint8_t)((*ciaapraPointer & 0x80 ? 0 : 1) | (pins & (1 << 14) ? 0 : 2));
+    return (uint8_t)((*ciaapraPointer & 0x80 ? 0 : 1) | (pins & (1 << 14) ? 0 : 2) | script);
 }
 
 // JOY0DAT's counters are 8 bits and wrap: the delta is taken every field
@@ -193,6 +203,7 @@ void Input::sample()
     mouseButtons = (uint8_t)((AmigaHardware::isLeftMouseButtonPressed() ? 1 : 0) |
                              (pins & (1 << 10) ? 0 : 2) |
                              (pins & (1 << 8) ? 0 : 4) | (rt_joystick ? 0 : joystick));
+    mouseLatched |= mouseButtons;
     rt_joystick_buttons = joystick;
     Enable();
 }
@@ -204,7 +215,7 @@ static void digitalJoystick()
     uint16_t joy = *joy1datPointer;
     uint8_t right = joy >> 1 & 1, left = joy >> 9 & 1;
     uint8_t now = (uint8_t)(((joy >> 8 ^ left) & 1) | ((joy ^ right) & 1) << 1 |
-                            left << 2 | right << 3);
+                            left << 2 | right << 3) | (scriptJoystick & 15);
     uint8_t changed = now ^ joystickDirections;
     joystickDirections = now;
     for (uint8_t d = 0; d < 4; ++d) {
@@ -224,8 +235,8 @@ static void analogJoystick()
 {
     if (potStarted) {
         uint16_t counts = *pot1datPointer;
-        rt_joystick_axis[0] = (uint16_t)(16 + (counts >> 8));
-        rt_joystick_axis[1] = (uint16_t)(16 + (counts & 0xff));
+        rt_joystick_axis[0] = (uint16_t)(16 + (scriptAxis[0] >= 0 ? scriptAxis[0] : counts >> 8));
+        rt_joystick_axis[1] = (uint16_t)(16 + (scriptAxis[1] >= 0 ? scriptAxis[1] : counts & 0xff));
     }
     *potgoPointer = 1;
     potStarted = true;
@@ -273,7 +284,10 @@ void Input::pendingMotion(int32_t* dx, int32_t* dy)
 
 void Input::setScriptButtons(uint8_t buttons)
 {
+    Disable();
     scriptButtons = buttons;
+    mouseLatched |= buttons;    // a scripted click shorter than the game's poll gap
+    Enable();
 }
 
 extern "C" uint32_t plat_mouse(int32_t* dx, int32_t* dy)
@@ -286,7 +300,8 @@ extern "C" uint32_t plat_mouse(int32_t* dx, int32_t* dy)
     *dx = mouseDX;
     *dy = mouseDY;
     mouseDX = mouseDY = 0;
-    uint32_t buttons = mouseButtons | scriptButtons;
+    uint32_t buttons = mouseLatched | scriptButtons;  // includes this sample's mouseButtons
+    mouseLatched = 0;
     Enable();
     ++amiga_mouse_reads;
     return buttons;
@@ -305,4 +320,14 @@ extern "C" void amiga_mouse_move(int16_t dx, int16_t dy)
 extern "C" void amiga_mouse_script_buttons(uint32_t buttons)
 {
     Input::setScriptButtons((uint8_t)buttons);
+}
+
+extern "C" void amiga_joystick_script(uint32_t bits)
+{
+    scriptJoystick = (uint8_t)bits;
+}
+
+extern "C" void amiga_joystick_script_axis(int axis, int count)
+{
+    scriptAxis[axis & 1] = (int16_t)count;
 }

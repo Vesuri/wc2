@@ -124,9 +124,13 @@ static inline void set_busy(uint8_t on)
     __asm__ volatile("" ::: "memory");
 }
 
-void rt_vram_stray(void)
+void rt_vram_stray(uint32_t at) __attribute__((noreturn));
+/* at: the store's generated code, as its return address less rt_vram_mark's
+ * (rt_entry.s), so the stop names it in any build's map (production has no
+ * guest IP). */
+void rt_vram_stray(uint32_t at)
 {
-    rt_stop("video memory store outside a graphics driver call", 0, 0);
+    rt_stop("video memory store outside a graphics driver call, rt_vram_mark+", at >> 16, at & 0xffff);
 }
 
 static void vram_all(void)

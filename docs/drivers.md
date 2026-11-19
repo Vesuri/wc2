@@ -40,7 +40,12 @@ its data and calls them with `call far [mem]` from root and overlay code, e.g.
 `WC2.EXE+40C0` → `TM.DRV+199C` (entry 11, the rectangle copy to the screen, P1's
 frame chain) and the timer handler `WC2.EXE+0FD8E` → `STRAX.DRV+12BA` (entry 4, the
 music tick). Traced entries: `TM.DRV` 1, 3–15; `SUPERTM.DRV` 1–4; `STRAX.DRV` 1, 2,
-4–9.
+4–9. The game's driver loader `WC2.EXE+565B3..566B1` copies the loaded graphics driver's
+table words 1–22 and 25 (offsets 2..2Ch, 32h) with its segment into 23 DGROUP slots (A83Ch,
+A840h, A844h, DECAh..DF0Eh, DF12h, DF26h; `annotations/driver-slots.csv`, DERIVED by
+reading), then writes the callback 1581:0021 over words 23–24. Every far call through one
+of them is a driver call (D9), traced or not: WC2's joystick calibration (Ctrl+J) fills
+the screen through DF06h (`TM.DRV` entry 19, 1B6Ch), which no reference trace reached.
 
 The drivers call back into the game through far pointers the game writes into them:
 `TM.DRV` `cs:[2Eh]` and `SUPERTM.DRV` `cs:[0Ch]` → `WC2.EXE+15831`, `STRAX.DRV`
@@ -71,5 +76,13 @@ reference machine's ROM (DOSBox-X's) is byte-identical in every snapshot, m0 to 
 (MEASURED); host lockstep loads it from the m0 snapshot as a local fixture
 (`tests/host_run.py reference_rom`). Of its 64 KB, 95.8% are zero and 1.4% have bit 0
 set (MEASURED, m0 snapshot); a PC BIOS of the period is dense code and data (INFERRED). The
-Amiga build fills the segment from a seeded generator (D11, [open-work.md](open-work.md)
-item 18).
+Amiga build fills the segment from a seeded xorshift32 (D11, `src/runtime/machine.c`
+`bios_rom_noise`).
+
+`SUPERTM.DRV` dispatches its drawing inner loops through forms the sweep cannot bound by
+itself; their targets are curated with evidence and checked by `tools/sweep.py`:
+`annotations/tables.csv` (`call/jmp cs:[di+T]` and `add di,T; call/jmp cs:[di]`: eight
+two-entry direction tables and four 32-entry tables) and `annotations/code-vars.csv` (the
+code-pointer words `cs:[6C2h]`, 32 targets, and `cs:[6C4h]`, 16, called from 32 sites;
+every decoded write to them must store a listed target, `check_code_vars`). Flight runs
+targets no trace reached (`+4CFA` through `cs:[6C4h]`, MEASURED on the Amiga build).

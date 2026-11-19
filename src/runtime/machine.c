@@ -166,6 +166,26 @@ static void exec_root(uint16_t psp_seg)
 #undef HW
 }
 
+#ifndef WC2_SYNC
+/* The BIOS ROM segment F000h (D11): SUPERTM.DRV's noise fill samples bit 0 of
+ * its bytes at a pseudo-random F000:SI (docs/drivers.md), as a PC's ROM of the
+ * period gave it code and data. Production fills it from a seeded xorshift32,
+ * the same bytes every start; the BIOS bytes the runtime models (the
+ * configuration table, the model byte) are written over it in rt_start. Sync
+ * builds keep zero: host lockstep loads the reference machine's ROM. */
+#define ROM_NOISE_SEED 0x57433242u
+static void bios_rom_noise(void)
+{
+    uint32_t x = ROM_NOISE_SEED;
+    for (uint32_t a = 0xf0000; a < 0x100000; ++a) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        wr8(a, (uint8_t)(x >> 24));
+    }
+}
+#endif
+
 void rt_start(uint8_t *mem)
 {
     rt_guest = mem + RT_GUEST_BYTES - 1;
@@ -173,6 +193,9 @@ void rt_start(uint8_t *mem)
         rt_guest[k] = 0;
     }
     rt_fill(0, 0, RT_GUEST_BYTES);
+#ifndef WC2_SYNC
+    bios_rom_noise();
+#endif
     for (uint32_t k = 0; k < sizeof vectors / sizeof vectors[0]; ++k) {
         wr16(vectors[k].vector * 4, vectors[k].off);
         wr16(vectors[k].vector * 4 + 2, vectors[k].seg);
@@ -621,6 +644,29 @@ int rt_irq0_take(void)
     ++irq_head;
     rt_irq_pending = irq_head != rt_irq_tail;
     return 1;
+}
+
+/* Production IRQ 7 (the DSP block ended, platform.h plat_sb_block): the
+ * platform's block timer runs INT 0Fh's guest handler as IRQ0's, through
+ * rt_irq7_interrupt on the private stack, when IRQ0 could run with nothing
+ * posted before it (the order kept); else the timer tries again. The handler
+ * pushes the interrupted registers and loads DS itself (WC2.EXE +6F3F) and is
+ * in the handler footprint (build/gen/irq-footprint.csv). */
+volatile uint32_t rt_irq7_runs;
+
+int rt_irq7_ready(void)
+{
+    return rt_sb_playing && G_IF && !rt_irq0_running && !rt_irq_mask && !rt_opl_pair &&
+           !rt_irq_hold && irq_head == rt_irq_tail && !rt_bench && guest_vector(0x0f);
+}
+
+void rt_irq7_enter(void)
+{
+    rt_sb_playing = 0;
+    deliver(0x0f, RT_IRQ_SS, RT_IRQ_SP);
+    G_IRQ = 0;
+    rt_irq0_running = 1;
+    ++rt_irq7_runs;
 }
 
 /* After the restore: re-arm from what is posted (runtime.h). */

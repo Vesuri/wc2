@@ -523,6 +523,17 @@ class Program:
                              if m in self.units and m not in VRAM_MODULES
                              and o in self.units[m].insns and self.units[m].insns[o].op == "callf"
                              and any(t[0] in VRAM_MODULES for t in sw + tr)}
+        # ... and every other `call far [V]` through a pointer V (no base or index) that a
+        # traced driver call reads: the game's driver table slots are read by about 170
+        # sites no trace ran (firing in flight, user report)
+        slots = {(m, v) for (m, o) in self.driver_calls
+                 if (v := self.pointer_slot(self.units[m].insns[o])) is not None}
+        # ... and through every slot the game's driver loader fills (driver-slots.csv):
+        # the calibration (Ctrl+J) fills through DF06h, which no trace read
+        slots |= {(r["module"], ("ds", int(r["slot"], 16))) for r in image.rows("driver-slots.csv")}
+        self.driver_calls |= {(m, o) for m, u in self.units.items() if m not in VRAM_MODULES
+                              for o, i in u.insns.items()
+                              if i.op == "callf" and (m, self.pointer_slot(i)) in slots}
         # VROOMM: overlays by their code range, the stub cells far transfers reach
         self.ovls = M.overlays() if M.ROOT in self.units else []
         self.ovl_of = {f"O{o.stub >> 4:04X}": o for o in self.ovls}
@@ -658,6 +669,14 @@ class Program:
     def near_node(self, mod: str, off: int, ip: int):
         u = self.units[mod]
         return (mod, u.off_of(u.cs[off], ip))
+
+    @staticmethod
+    def pointer_slot(i):
+        """The (segment, offset) of a `call far [V]` operand with no base or index."""
+        m = i.operands[0] if i.operands else None
+        if isinstance(m, Mem) and m.base is None and m.index is None:
+            return m.seg, m.disp
+        return None
 
     def build_edges(self) -> None:
         for mod, u in self.units.items():

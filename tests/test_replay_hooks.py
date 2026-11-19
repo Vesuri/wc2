@@ -36,6 +36,12 @@ replay_return:
 replay_next:
  moveq #0,d0
  rts
+rt_video_flush:
+ move.l #$56789012,d0
+ move.l #$67890123,d1
+ movea.l #$78901234,a0
+ movea.l #$89012345,a1
+ rts
 rt_irq:
  rts
 replay_cs: dc.l 0
@@ -77,6 +83,8 @@ def check_terminal(body, broken=False):
               ' moveq #99,d0\n jmp $20000\n' + body +
               '\nreplay_point: moveq #-1,d0\n rts\n'
               'replay_rep:\nreplay_enter:\nreplay_return:\nreplay_next:\nrt_irq: rts\n'
+              # C ABI: the flush may clobber d0-d1/a0-a1; the held state must survive it
+              'rt_video_flush: moveq #-1,d0\n moveq #-1,d1\n suba.l a0,a0\n suba.l a1,a1\n rts\n'
               'replay_cs: dc.l 0\nreplay_ip: dc.l 0\n')
     with tempfile.TemporaryDirectory(prefix='swotl-replay-end-') as tmp:
         code = D.assemble(source, Path(tmp) / 'end.bin')
@@ -110,7 +118,8 @@ def check_copy(hook, target, body, broken=False):
         source = (' org $10000\n' + hook + '\n jmp $20000\n' + target + ':\n jmp $20004\n' + body +
                   f'\nreplay_point: moveq #{posted},d0\n rts\n'
                   'replay_rep:\nreplay_enter:\nreplay_return:\nreplay_next: moveq #0,d0\n rts\n'
-                  'rt_irq: move.l #$1234,d5\n rts\nreplay_cs: dc.l 0\nreplay_ip: dc.l 0\n')
+                  'rt_irq: move.l #$1234,d5\n rts\nrt_video_flush: rts\n'
+                  'replay_cs: dc.l 0\nreplay_ip: dc.l 0\n')
         with tempfile.TemporaryDirectory(prefix='swotl-replay-copy-') as tmp:
             code = D.assemble(source, Path(tmp) / 'copy.bin')
         e = U.Engine(U.ARCH_M68K, U.MODE_BIG_ENDIAN, U.CPU_M68K_M68020)

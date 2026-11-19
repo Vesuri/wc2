@@ -353,7 +353,9 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   changed columns; a store with no driver call in progress stops. The `jmp
   far` of each PLINK thunk into the driver is a `jsr` counted in
   `rt_vdrv_depth` (WC2: each `call far [mem]` whose traced targets are in
-  `TM.DRV` or `SUPERTM.DRV`, `emit.driver_calls`; a dispatch into a driver from
+  `TM.DRV` or `SUPERTM.DRV`, every `call far [V]` through a pointer slot such a
+  call reads, and every one through a slot the game's driver loader fills
+  (`annotations/driver-slots.csv`), `emit.driver_calls`: 323 brackets in the output, 179 by traced targets alone, MEASURED; a dispatch into a driver from
   another site stops at its first VRAM store); the outermost return publishes the frame
   (`rt_vdrv_return`). The game's mouse poll (INT 33h AX=3, after all of a
   frame's drawing) ends a frame (`rt_video_frame`): its changed rows go to
