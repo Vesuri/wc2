@@ -3,7 +3,7 @@
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
-	github-release test-release-installer gates-audio sound-fm clean
+	github-release test-release-installer gates-audio sound-fm sfx-price clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -46,6 +46,7 @@ help:
 	@echo "  make gates-audio        the FM re-hoster against Nuked OPL on the host references' OPL logs,"
 	@echo "                          the FM unit checks and every plant (docs/sound-plan.md)"
 	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
+	@echo "  make sfx-price          every FM effect captured from the original, played by the re-hoster"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
@@ -288,6 +289,16 @@ t-sab-fm-paula: build/tools/fm_check
 FM_UNITS = quality render phase envelope allocation cache
 t-sab-fm-%:
 	$(call RUN,sabotage-fm-$*,$(PYTHON) tests/test_fm_$*.py --sabotage)
+# The FM effects priced on the live re-hoster (open-work 19): each FX.000 effect's OPL
+# writes from the original game code and STRAX.DRV under Unicorn (tools/sfx_capture.py,
+# the m4 host reference's flight snapshot), each through fm_check; a report, no gate
+# (fm_check's pitch needs steady notes, and the driver moves every effect's pitch a tick).
+sfx-price: build/tools/fm_check
+	mkdir -p tmp/sound/sfx-paula
+	nice -n $(NICE) $(PYTHON) tools/sfx_capture.py > tmp/sound/sfx-capture.txt
+	for f in tmp/sound/sfx/*.csv; do n=$$(basename $$f .csv); \
+		nice -n $(NICE) build/tools/fm_check $$f tmp/sound/sfx-paula/$$n.wav | sed "s|^|$$n |"; \
+	done | sort -n > tmp/sound/sfx-price.txt; cat tmp/sound/sfx-price.txt
 # Isolated audio changes (AGENTS.md "Validation scope"): the sound checks and their plants.
 gates-audio:
 	@$(MAKE) -s -k -j$(JOBS) $(FM_MILESTONES:%=t-fm-paula-%) t-sab-fm-paula \

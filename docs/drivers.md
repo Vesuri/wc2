@@ -86,3 +86,30 @@ two-entry direction tables and four 32-entry tables) and `annotations/code-vars.
 code-pointer words `cs:[6C2h]`, 32 targets, and `cs:[6C4h]`, 16, called from 32 sites;
 every decoded write to them must store a listed target, `check_code_vars`). Flight runs
 targets no trace reached (`+4CFA` through `cs:[6C4h]`, MEASURED on the Amiga build).
+
+## FM effects (STRAX.DRV, open-work 19)
+
+`STRAX.DRV` is a MIDI-style driver: entry 5 (`+074D`) note on/off (channel, note, velocity),
+entry 6 (`+0B61`) controller (channel, controller, value: 1, 7 volume, 0Ah pan, 79h reset,
+7Bh all notes off), entry 8 (`+0CAC`) program change, entry 4 (`+0DDD`) the tick on every
+INT 08h (60 Hz), which steps each voice's software pitch envelope and vibrato and rewrites
+its A0h/B0h, then calls the game's callback (`[1Ch]` → `WC2.EXE+132CC`: music fades, the
+song sequencer, then the effect tick). DERIVED by reading.
+
+An effect is a chain of 8-byte `FX.000` records: flags, program, note, velocity, duration
+in ticks (word), target note. The game keeps the file at DS:0540h (id k at + 8k; ids
+1-55 after the container header). `WC2.EXE+06B48` (sound on: DS:070Eh) passes a request to
+`+1254D`, which takes one of 32 slots (DS:A54Ch, 14 bytes) and one or two MIDI channels
+(`+1219E`) and starts it in `+121E9` (all notes off, program, volume, pan, note on). The
+effect tick `+123F4` counts the duration down; at 0, the note ends and flag bit 1 slides
+the note a step toward the target note and restarts it, bit 3 restarts it, bit 0 moves
+to the next record, none releases the channel; bit 2 holds the note without a duration.
+Callers push flags 0, volume 7Fh and a pan (`+0AB40`, `+0BC59`, `+2917B`, `+375C0`).
+DERIVED by reading.
+
+`tools/sfx_capture.py` runs that code and the driver under Unicorn from the m4 flight
+snapshot, one effect alone (`make sfx-price`): 44 effects end (2,551 ticks, 42.5 s to
+their release), 11 are held (11, 12, 14, 15, 17, 32, 38, 45, 48, 53, 54); no record chains;
+36 use feedback 7. Control: a captured effect's per-tick pitch writes after its key-on
+equal the reference's for the same patch (ids 1 and 37 against `host-m6`); 23 of the 55
+patches occur at key-ons of the m6 and mx2 references (MEASURED 2026-11-20).

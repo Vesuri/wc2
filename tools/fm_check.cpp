@@ -260,6 +260,16 @@ int main(int argc, char **argv)
             if (best <= LEVEL_DB) level_ok++;
         }
     }
+    // coverage (reported, not gated: the voice policy decides it): channel fields
+    // Nuked renders above the floor, and how many of them a Paula voice plays
+    unsigned audible = 0, covered = 0;
+    for (size_t k = 0; k < fields.size(); k++)
+        for (int c = 0; c < 9; c++) {
+            if (nuked[k][c] < FLOOR_DB) continue;
+            audible++;
+            for (int i = 0; i < FM_VOICES; i++)
+                if (fields[k][i].ch == c) { covered++; break; }
+        }
 
     FILE *f = fopen(argv[2], "wb");
     if (!f) { perror(argv[2]); return 1; }
@@ -274,9 +284,10 @@ int main(int argc, char **argv)
     double pf = pitch_checked ? (double)pitch_ok / pitch_checked : 0;
     bool ok = lf >= LEVEL_MIN && pf >= PITCH_MIN;
     printf("%s: %.1f s, %zu fields, %u voiced; level %u/%u (%.1f%%); pitch %u/%u (%.1f%%, worst %+.1f cents); "
-           "renders %u (most %u in a field) %s\n",
+           "audible %u, voiced %u (%.1f%%); renders %u (most %u in a field) %s\n",
            argv[2], samples / (double)RATE, fields.size(), voiced, level_ok, level_checked, 100 * lf,
-           pitch_ok, pitch_checked, 100 * pf, worst_cents, (unsigned)fm_renders, (unsigned)most_renders,
+           pitch_ok, pitch_checked, 100 * pf, worst_cents, audible, covered,
+           audible ? 100.0 * covered / audible : 0.0, (unsigned)fm_renders, (unsigned)most_renders,
            ok ? "ok" : "FAIL");
     return ok ? 0 : 1;
 }
