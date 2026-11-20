@@ -2,7 +2,8 @@
 
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
-	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload clean
+	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
+	github-release test-release-installer clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -45,6 +46,13 @@ help:
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
+	@echo "  Package (docs/whdload.md, docs/release.md):"
+	@echo "  make amiga-release      the stripped release image amiga/out/Wc2-release.exe"
+	@echo "  make whdload            the slave and its test variants"
+	@echo "  make test-whdload       the slave's smoke, boot, load and run checks in FS-UAE"
+	@echo "  make test-release-installer  Installer 43 and the helper in FS-UAE, every mode"
+	@echo "  make release            from a clean tree: the archives in dist/ and their check"
+	@echo "  make github-release     publish the tagged HEAD (the owner's step)"
 	@echo "  make clean              remove Amiga build output"
 
 extract:
@@ -296,6 +304,36 @@ install-data:
 test-install-data: install-data
 	$(MAKE) -C tools/install-data test
 	. amiga/env.sh && $(PYTHON) tools/install-data/test_amiga.py build/install-data/WC2InstallData.exe
+
+# Release (docs/release.md): committed sources only, never a diagnostic build. A clean
+# release image, slave and helper, the allowlisted package and its independent check:
+# $(RELEASE_DIR)/WC2-<version>.lha, WC2-<version>-whdload.lha (no Wc2) and Wc2.
+# The tag is the owner's; github-release publishes the tagged HEAD as a prerelease.
+RELEASE_DIR ?= dist
+RELEASE_VERSION = $$(cat VERSION)
+release:
+	@git diff --quiet HEAD && test -z "$$(git status --porcelain --untracked-files=no)" || \
+		{ echo "release needs a clean tree: commit or stash first"; exit 1; }
+	rm -rf build/amiga-release build/install-data
+	$(MAKE) amiga-release whdload install-data
+	$(PYTHON) tools/package_release.py amiga/out/Wc2-release.exe $(RELEASE_DIR)
+	$(PYTHON) tools/check_release.py $(RELEASE_DIR)
+
+release-check:
+	$(PYTHON) tools/check_release.py $(RELEASE_DIR)
+
+github-release: release-check
+	@git rev-parse -q --verify "refs/tags/$(RELEASE_VERSION)" >/dev/null || \
+		{ echo "tag the release commit first"; exit 1; }
+	@[ "$$(git rev-parse "$(RELEASE_VERSION)^{commit}")" = "$$(git rev-parse HEAD)" ] || \
+		{ echo "HEAD is not the commit tagged $(RELEASE_VERSION)"; exit 1; }
+	@mkdir -p build
+	$(PYTHON) tools/check_release.py --notes > build/release-notes.md
+	gh release create $(RELEASE_VERSION) $(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha $(RELEASE_DIR)/Wc2 \
+		--title $(RELEASE_VERSION) --prerelease --notes-file build/release-notes.md --verify-tag
+
+test-release-installer: whdload amiga-release install-data
+	. amiga/env.sh && $(PYTHON) tools/test_release_installer.py
 
 clean:
 	$(MAKE) -C amiga clean
