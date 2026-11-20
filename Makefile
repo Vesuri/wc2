@@ -335,7 +335,7 @@ github-release: release-check
 		{ echo "HEAD is not the commit tagged $(RELEASE_VERSION)"; exit 1; }
 	@mkdir -p build
 	$(PYTHON) tools/check_release.py --notes > build/release-notes.md
-	cd $(RELEASE_DIR) && shasum -a 256 WC2-$(RELEASE_VERSION).lha > WC2-$(RELEASE_VERSION).lha.sha256
+	v=$(RELEASE_VERSION) && cd $(RELEASE_DIR) && shasum -a 256 WC2-$$v.lha > WC2-$$v.lha.sha256
 	gh release create $(RELEASE_VERSION) $(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha \
 		$(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha.sha256 $(RELEASE_DIR)/Wc2 \
 		--title "Wing Commander II $(RELEASE_VERSION) ($(RELEASE_DATE))" --latest \
