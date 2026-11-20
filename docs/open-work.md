@@ -23,11 +23,12 @@ Items are in work order; numbers are identifiers and are not reused.
     modulator about 3 dB quiet (the noise tables' level); the slides 18 and 20 keep 3-5 OPL
     channels sounding, a voice on 62-65% of theirs; pitch is not measurable by fm_check (the
     driver moves every effect's F-number each tick). Prerendering as X-Wing (`0eda68f`,
-    `269828b`) needs two owner-authorized HLE rows (the effect start `WC2.EXE+1254D` or
-    `+121E9`, a capture point) and Chip for 42.5 s of one-shots before their release tails
-    (INFERRED: about 700 KB at X-Wing's 16.6 KB/s; the largest Chip block free in flight is
-    535,248 bytes, [whdload.md](whdload.md) "Memory"); the
-    owner decides from these numbers. Acceptance: the FM checks and their sabotage pass; the
+    `269828b`) needs two HLE rows (the effect start `WC2.EXE+1254D` or `+121E9`, a capture
+    point) and Chip for 42.5 s of one-shots before their release tails (INFERRED: about
+    700 KB at X-Wing's 16.6 KB/s; the largest Chip block free in flight is 535,248 bytes,
+    [whdload.md](whdload.md) "Memory"). Owner decision D13 (2026-11-20): prerender, with
+    those rows, and raise the slave's `CHIPMEMSIZE` to what the samples need, MemFree
+    measured. Acceptance: the FM checks and their sabotage pass; the
     intro's speech plays on the Amiga build; the Chip cost MEASURED.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
