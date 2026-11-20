@@ -60,9 +60,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 26. Release tests (port-plan P8.3, C7): the full matrix. Acceptance: each row run and
     recorded in `docs/whdload.md` with its result.
-27. `make release` (port-plan P8.4): a clean build, an allowlisted package that refuses
-    originals, an independent check, version 0.1 (19.11.2026). Acceptance: `make release`
-    and its check pass from a clean tree; the tag is the owner's.
 
 ## Deferred (owner, D10)
 
