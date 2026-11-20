@@ -69,5 +69,24 @@ from the core dump): 68030 without the MMU option `2011` (2026-11-19).
 | `boot` | Kickstart 3.1 kickemu boots, `TDREASON_OK` | PASS |
 | `load` | the relocated block equals the executable relocated independently | PASS (6 hunks, 2,144,728 bytes) |
 | `run` | TIMEOUT reason (not a fault), most `WC2.EXE` load-image blocks in guest RAM (reversed), CACR as the cache policy says | PASS (1,013 of 1,889 blocks, CACR `2011`) |
+| `script` | `KeysTest.slave` (`-DKEYS`: `data/keys` appended to the argument line) runs the diagnostic image `Wc2-diag.exe` (`make amiga-diag`) under a key script; `--expect exit`: the core dump says `Return OK.` (the slave quits with `TDREASON_OK` only when the program returned 0) with no TIMEOUT, and the boot script passed; `--expect timeout`: the TIMEOUT reason; `--expect-file`, `--expect-read` (FILELOG) for saves | see the matrix |
 
-`make test-whdload` runs all four.
+`make test-whdload` runs the first four.
+
+## Release matrix (C7, open-work 26)
+
+The release slave and image unless the row says otherwise; FS-UAE `a1200` (68030, 8 MiB
+Zorro III) by default. MEASURED 2026-11-19 and 2026-11-20.
+
+| Row | Run | Result |
+|---|---|---|
+| 68030, PreLoad / no PreLoad / NTSC / analog joystick (Custom1) | `--mode run [--no-preload] [--ntsc] [--analog]` | PASS: CACR `2011` each |
+| 68030 with MMU emulation, WHDLoad's MMU unused / used | `--setup a1200-030 [--whdload-mmu]` | PASS: CACR `2011` / `2111` |
+| 68040, 68060 | `--setup a1200-040`, `a1200-060` | PASS: CACR `80008000`, `A0808000` |
+| Exit: Alt+X on the title menu | `--mode script --keys 'uBUTTONS.V00:esc*10,d300:alt+x' --expect exit --max-speed` | PASS (host lockstep to the original's INT 21h AX=4C00, milestone `mx1`) |
+| Exit: the quarters window (Exit to DOS) | `--mode script --expect exit --max-speed --ticks 6000`, the `play_walk.sh` route to the quarters, then `mx-2000,my-2000,mx+156,my+101,lmb` | PASS (host lockstep, milestone `mx2`) |
+| Control: Esc on the title menu does not exit | the Alt+X route with `esc`, `--expect exit` | FAIL as required: TIMEOUT (`DEBUG caused`) |
+| Exit: WHDLoad's QuitKey (Help) | real keyboard only | not run: the owner's manual pass |
+| Save and load | a save from the quarters terminal, read back (`--expect-read`) | not run: needs the save route recorded in DOSBox-X first |
+| Input devices (mouse, joystick, analog stick on hardware ports) | the KEYS paths are covered by `amiga/play_walk.sh` | hardware pass not run: the owner's manual pass |
+| Standalone (no WHDLoad) start | `make test-amiga-workbench` | not run in this pass |

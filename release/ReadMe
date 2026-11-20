@@ -76,8 +76,9 @@
  the cinematics. A joystick in port 2 works as the cursor keys; its two
  buttons work as the left and right mouse buttons. Set the Custom1 tooltype
  to 1 for a proportional (analog) joystick in port 2 instead, and calibrate
- it with Ctrl+J in flight, as in the original. Quit from the game's menus.
- The WHDLoad QuitKey (Help) quits immediately.
+ it with Ctrl+J in flight, as in the original. Quit with Alt+X on the
+ title menu, or click the window in your quarters (Exit to DOS). The
+ WHDLoad QuitKey (Help) quits immediately.
 
 
  History:

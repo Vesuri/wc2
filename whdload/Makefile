@@ -7,25 +7,28 @@ AMIGA_SHARE ?= $(HOME)/.local/share/amiga
 OUT := ../build/whdload
 
 # all: the release slave. The others are tools/test_whdload.py scaffolding:
-# --mode smoke|boot|load, the TEST slave's PASS markers, and MemFree, which
+# --mode smoke|boot|load, the TEST slave's PASS markers, KeysTest (--mode script: the
+# diagnostic image with data/keys as its KEYS argument), and MemFree, which
 # records kickemu's free-memory low-water marks for sizing the slave's memory
 # reservation (docs/whdload.md, Memory). A sizing variant escapes the $ for make
 # and the shell: make -C whdload memfree 'FASTSIZE=\$$600000'.
-.PHONY: all test smoke boot-test load-test memfree FORCE
+.PHONY: all test smoke boot-test load-test memfree keys-test FORCE
 all: $(OUT)/Wc2.slave
 test: $(OUT)/Wc2Test.slave
 smoke: $(OUT)/Smoke.slave
 boot-test: $(OUT)/BootTest.slave
 load-test: $(OUT)/LoadTest.slave
 memfree: $(OUT)/MemFree.slave
+keys-test: $(OUT)/KeysTest.slave
 $(OUT)/Wc2Test.slave: VASMFLAGS += -DTEST=1
 $(OUT)/BootTest.slave: VASMFLAGS += -DBOOTONLY=1
 $(OUT)/LoadTest.slave: VASMFLAGS += -DLOADONLY=1
+$(OUT)/KeysTest.slave: VASMFLAGS += -DKEYS=1
 $(OUT)/MemFree.slave: VASMFLAGS += -DMEMFREE=\$$100 $(if $(FASTSIZE),-DFASTSIZE=$(FASTSIZE))
 
 # Reassemble the small slave on every invocation: SDK includes and assembler
 # options must never leave an old diagnostic slave in a release package.
-$(OUT)/Wc2.slave $(OUT)/Wc2Test.slave $(OUT)/MemFree.slave $(OUT)/BootTest.slave $(OUT)/LoadTest.slave: Wc2Slave.s FORCE
+$(OUT)/Wc2.slave $(OUT)/Wc2Test.slave $(OUT)/MemFree.slave $(OUT)/BootTest.slave $(OUT)/LoadTest.slave $(OUT)/KeysTest.slave: Wc2Slave.s FORCE
 	@mkdir -p $(OUT)/include/lvo
 	@for lib in dos exec graphics expansion; do ln -sf "$(NDK)/lvo/$${lib}_lib.i" "$(OUT)/include/lvo/$$lib.i"; done
 	@# kick31.s leaves ws_DontCache 0; this copy, found first, points it at slv_DontCache.

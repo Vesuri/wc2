@@ -2,7 +2,7 @@
 
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
-	test-guards host amiga smoke size install-data test-install-data amiga-release whdload test-whdload clean
+	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -277,8 +277,13 @@ amiga-release: amiga
 	. amiga/env.sh && elf2hunk build/amiga-release/out/Wc2.elf amiga/out/Wc2-release.exe -s
 	$(PYTHON) tools/hunk_size.py --release-of build/amiga-release/out/Wc2.exe amiga/out/Wc2-release.exe
 
+# The diagnostic image stripped, for the scripted WHDLoad runs (KeysTest.slave, its KEYS
+# argument; never packaged).
+amiga-diag: amiga
+	. amiga/env.sh && elf2hunk amiga/out/Wc2.elf amiga/out/Wc2-diag.exe -s
+
 whdload:
-	$(MAKE) -C whdload all test smoke boot-test load-test memfree
+	$(MAKE) -C whdload all test smoke boot-test load-test keys-test memfree
 
 test-whdload: whdload amiga-release
 	. amiga/env.sh && for m in smoke boot load run; do $(PYTHON) tools/test_whdload.py --mode $$m || exit 1; done

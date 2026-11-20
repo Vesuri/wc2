@@ -8,6 +8,8 @@ From Secret Weapons of the Luftwaffe's tools/test_whdload.py (docs/upstream.md).
     python3 tools/test_whdload.py --mode run [--analog] [--slave build/whdload/MemFree.slave]
     python3 tools/test_whdload.py --mode run --installed DIR [--setup a1200-040]
     python3 tools/test_whdload.py --mode run --setup a1200-030 [--whdload-mmu]
+    python3 tools/test_whdload.py --mode script --keys SCRIPT [--expect exit|timeout]
+        [--expect-file NAME=TEXT] [--expect-read NAME]
 
 `run` starts the game under the release slave; WHDLoad TIMEOUT (needs the moved VBR of
 a 68020) ends it with COREDUMP and the dump is judged:
@@ -18,6 +20,11 @@ a 68020) ends it with COREDUMP and the dump is judged:
   - the dump's CACR matches the slave's cache policy (docs/whdload.md, Caches): data
     cache on where WHDLoad uses the MMU (68040/060, 68030 with MMU), otherwise the
     instruction cache alone.
+`script` runs the stripped diagnostic image (make amiga-diag) under KeysTest.slave, which
+passes data/keys as its KEYS argument (amiga_platform.c's key script; `*` doubled inside
+the ReadArgs quotes). --expect exit: the game ends by itself (the slave's TDREASON_OK, no
+core dump) before TIMEOUT; timeout: as run. --expect-file: data/NAME holds TEXT afterwards;
+--expect-read: WHDLoad's FILELOG (.whdl_log) shows NAME read after it was written.
 The MemFree slave's low-water marks (Chip, Fast) are read from its $100 slot.
 --installed runs an installed WC2 drawer as it is (slave, data/Wc2, data).
 --setup a1200-040: full 68040 with its MMU and FPU, JIT off, on $FSUAE_MMU; the report
@@ -46,7 +53,8 @@ WHDLOAD = Path(os.environ.get('WHDLOAD', AMIGA / 'WHDLoad')) / 'C/WHDLoad'
 WORKBENCH = Path(os.environ.get('WORKBENCH_ADF', AMIGA / 'Workbenchv2.04rev37.67Workbench.adf'))
 KICK31 = Path(os.environ.get('KICKSTART_A1200', KICKSTARTS / 'kick40068.A1200'))
 SETUPS = ('a1200', 'a1200-030', 'a1200-040', 'a1200-060')
-SLAVES = {'smoke': 'Smoke.slave', 'boot': 'BootTest.slave', 'load': 'LoadTest.slave', 'run': 'Wc2.slave'}
+SLAVES = {'smoke': 'Smoke.slave', 'boot': 'BootTest.slave', 'load': 'LoadTest.slave', 'run': 'Wc2.slave',
+          'script': 'KeysTest.slave'}
 DOS_ONLY = ('INSTALL.DAT', 'INSTALL.EXE', 'README.EXE')
 
 
@@ -130,13 +138,49 @@ def check_block(exe, data, base):
     print(f'relocated block: {len(hs)} hunks at {at:X}, {used:,} of {size:,} bytes, matches the executable')
 
 
+def judge_script(args, base, game, data, report, output):
+    if args.expect == 'exit':
+        # COREDUMP dumps on every quit: the slave quits with TDREASON_OK only when
+        # the program returned 0 (a runtime stop or a fault quits otherwise)
+        if 'Return OK.' not in report or 'DEBUG caused' in report or \
+                not (base / 'boot/passed').exists():
+            raise SystemExit(f'FAIL: the game did not end by itself ({base})\n{report[:2000]}{output}')
+        print('the game ended by itself; WHDLoad returned OK')
+    else:
+        event = re.search(r'event=([0-9A-F]+)', report)
+        if 'DEBUG caused' not in report or not event or int(event[1], 16) < args.ticks:
+            raise SystemExit(f'FAIL: the run did not end by TIMEOUT ({base})\n' + report[:2000] + output)
+        print('the run ended by TIMEOUT')
+    for want in args.expect_file:
+        name, text = want.split('=', 1)
+        path = data / name
+        if not path.exists() or text.encode() not in path.read_bytes():
+            raise SystemExit(f'FAIL: data/{name} does not hold {text!r} ({base})')
+        print(f'data/{name} holds {text!r}')
+    log = (game / '.whdl_log').read_text(errors='replace').splitlines() if (game / '.whdl_log').exists() else []
+    for name in args.expect_read:
+        lines = [l for l in log if name.lower() in l.lower()]
+        written = next((i for i, l in enumerate(lines) if re.search(r'Save|Write', l)), None)
+        read = written is not None and any(re.search(r'Load|Read', l) for l in lines[written + 1:])
+        print(f'FILELOG {name}:', *lines[-6:], sep='\n  ')
+        if not read:
+            raise SystemExit(f'FAIL: FILELOG shows no read of {name} after its write ({base})')
+    print(f'PASS: script on {args.setup}')
+    shutil.rmtree(base)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--mode', choices=tuple(SLAVES), default='run')
     p.add_argument('--analog', action='store_true', help='set Custom1 (analog joystick)')
     p.add_argument('--slave', type=Path, help='slave override (default: build/whdload/ per mode)')
-    p.add_argument('--exe', type=Path, default=ROOT / 'amiga/out/Wc2-release.exe',
-                   help='stripped (make amiga-release): LoadSeg reads symbol hunks in small pieces')
+    p.add_argument('--exe', type=Path,
+                   help='stripped: LoadSeg reads symbol hunks in small pieces (default: make amiga-release, '
+                        'for --mode script make amiga-diag)')
+    p.add_argument('--keys', help='script mode: the KEYS script')
+    p.add_argument('--expect', choices=('exit', 'timeout'), default='exit', help='script mode: how the run ends')
+    p.add_argument('--expect-file', action='append', default=[], metavar='NAME=TEXT')
+    p.add_argument('--expect-read', action='append', default=[], metavar='NAME')
     p.add_argument('--data', type=Path, default=ROOT / 'ref/WING2')
     p.add_argument('--installed', type=Path, help='installed WC2 drawer, used unchanged')
     p.add_argument('--setup', choices=SETUPS, default='a1200')
@@ -145,10 +189,16 @@ def main():
     p.add_argument('--cpu', default='68030', help='D1: 68030 minimum (a 68EC020 has no room for Zorro III)')
     p.add_argument('--ticks', type=int, default=3000, help='WHDLoad TIMEOUT in PAL fields (run)')
     p.add_argument('--no-preload', action='store_true')
+    p.add_argument('--max-speed', action='store_true',
+                   help="the emulator's fastest CPU, not cycle-exact (amiga/play_walk.sh): scripts that need the game to get far")
     p.add_argument('--ntsc', action='store_true', help='NTSC machine (--ticks stays in CIA-A events)')
     p.add_argument('--option', action='append', default=[], help='extra WHDLoad option, e.g. FILELOG')
     p.add_argument('--seconds', type=int, default=900, help='host safety ceiling')
     args = p.parse_args()
+    args.exe = args.exe or ROOT / ('amiga/out/Wc2-diag.exe' if args.mode == 'script' else 'amiga/out/Wc2-release.exe')
+    assert (args.mode == 'script') == bool(args.keys), '--keys goes with --mode script'
+    if args.expect_read:
+        args.option.append('FILELOG')
     if args.installed:
         assert args.mode == 'run' and not args.slave, '--installed runs its own slave'
         args.data = args.installed / 'data'
@@ -173,17 +223,22 @@ def main():
     if args.mode != 'smoke':
         shutil.copyfile(KICK31, boot / 'devs/Kickstarts' / KICK31.name)
         shutil.copyfile(KICK31.with_name(KICK31.name + '.RTB'), boot / 'devs/Kickstarts' / (KICK31.name + '.RTB'))
-    if args.mode in ('load', 'run') and not args.installed:
+    if args.mode in ('load', 'run', 'script') and not args.installed:
         shutil.copyfile(args.exe, data / 'Wc2')
-    if args.mode == 'run' and not args.installed:
+    if args.mode in ('run', 'script') and not args.installed:
         shutil.copytree(args.data, data, dirs_exist_ok=True, ignore=shutil.ignore_patterns('*.pdf', *DOS_ONLY))
         # copytree copies the read-only modes of ref/ to the drawer itself too.
         for f in (data, *data.rglob('*')):
             f.chmod(0o644 if f.is_file() else 0o755)
+    if args.mode == 'script':
+        # ReadArgs ends an unquoted item at '=' (ax=, ay=); inside quotes '*' escapes.
+        quoted = '=' in args.keys
+        keys = '"' + args.keys.replace('*', '**') + '"' if quoted else args.keys
+        (data / 'keys').write_bytes(b'KEYS=' + keys.encode())
     options = ['SPLASHDELAY=0', 'NOREQ']
     if not args.no_preload:
         options.append('PRELOAD')
-    if args.mode == 'run':
+    if args.mode in ('run', 'script'):
         # The game creates files (TEMPGLOB.000, ...): with PreLoad on 8 MiB, WHDLoad
         # 20.1's write cache hangs at exit (SWOTL docs/whdload.md, Common failures).
         options += ['COREDUMP', f'TIMEOUT={args.ticks}', 'NOWRITECACHE']
@@ -213,6 +268,9 @@ def main():
         cpu += ['--uae_cpu_compatible=true', '--uae_cpu_data_cache=true', '--uae_uaeboard=full+indirect']
     if mmu or args.fast > 8192:
         cpu += ['--uae_cpu_24bit_addressing=false']
+    if args.max_speed:
+        cpu += ['--uae_cpu_speed=max', '--uae_cpu_cycle_exact=false', '--uae_cpu_memory_cycle_exact=false',
+                '--uae_blitter_cycle_exact=false']
     with (base / 'emulator.log').open('w') as log:
         emu = subprocess.Popen([fsuae, '--amiga_model=A1200', '--uae_chipset=aga', '--cpu=' + args.cpu,
             '--uae_cpu_model=' + args.cpu, *cpu, '--jit_compiler=0',
@@ -248,6 +306,9 @@ def main():
     report = (game / '.whdl_register').read_text(encoding='latin1') if (game / '.whdl_register').exists() else ''
     if not any((boot / n).exists() for n in ('passed', 'failed')):
         raise SystemExit(f'FAIL: WHDLoad did not return within {args.seconds} s ({base})\n{output}')
+    if args.mode == 'script':
+        judge_script(args, base, game, data, report, output)
+        return
     if args.mode != 'run':
         if not (boot / 'passed').exists():
             raise SystemExit(f'FAIL: {args.mode} ({base})\n{report[:2000]}{output}')

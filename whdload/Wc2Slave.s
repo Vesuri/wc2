@@ -53,7 +53,17 @@ slv_config dc.b "C1:B:Analog joystick in port 2;",0
 _program dc.b "Wc2",0
 _args_tail dc.b 10,0
 _args_analog dc.b "ANALOGJOYSTICK ",0
+        IFD KEYS
+; Test only (tools/test_whdload.py --mode script): data/keys, the diagnostic
+; image's KEYS="..." argument, too long for a fixed line, goes before the tail.
+KEYSBYTES = 2048
+_keysname dc.b "keys",0
+_keysbad dc.b "data/keys is missing or too long",0
+_line   ds.b 160+KEYSBYTES
+_keysbuf ds.b KEYSBYTES
+        ELSE
 _line   ds.b 160                  ; the argument line, built at start
+        ENDC
         EVEN
 
 _bootdos
@@ -88,6 +98,29 @@ _bootdos
         beq .noanalog
         bsr _append
 .noanalog
+        IFD KEYS
+        move.l a1,-(sp)
+        lea (_keysname,pc),a0
+        jsr (resload_GetFileSize,a2)
+        tst.l d0
+        beq .nokeys
+        cmp.l #KEYSBYTES-1,d0
+        bcc .nokeys
+        move.l d0,-(sp)
+        lea (_keysname,pc),a0
+        lea (_keysbuf,pc),a1
+        jsr (resload_LoadFile,a2)
+        move.l (sp)+,d0
+        lea (_keysbuf,pc),a0
+        clr.b (a0,d0.l)
+        move.l (sp)+,a1
+        bsr _append
+        bra .keysdone
+.nokeys pea (_keysbad,pc)
+        pea TDREASON_FAILMSG
+        jmp (resload_Abort,a2)
+.keysdone
+        ENDC
         lea (_args_tail,pc),a0
         bsr _append
         clr.b (a1)
