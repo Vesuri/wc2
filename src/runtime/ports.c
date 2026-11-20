@@ -95,8 +95,11 @@ static void pit_data(uint8_t ch, uint8_t v)
  * constant) and D1h (speaker on). The speech plays blocks: DMA channel 1
  * programmed (mask, flip-flop, mode, address, page, count, unmask), then 14h
  * with the length; the DSP raises IRQ 7 when the block has played, and the
- * game's INT 0Fh handler (WC2.EXE +6F3F) programs the next. Status reads
- * answer as the model stands; plat_dsp_status adds the device's timing. */
+ * game's INT 0Fh handler (WC2.EXE +6F3F) programs the next. The exit (milestones
+ * mx1, mx2, MEASURED) sends D0h (halt DMA) and D3h (speaker off) through the
+ * same helper; a halt while a block plays would cancel its IRQ 7, which no
+ * reference shows, so it stops. Status reads answer as the model stands;
+ * plat_dsp_status adds the device's timing. */
 static uint8_t dsp_reset, dsp_ready;
 static uint8_t dsp_command, dsp_args, dsp_arg[2];   /* a command awaiting argument bytes */
 static uint8_t dsp_time_constant;
@@ -174,6 +177,12 @@ static void dsp_out(uint16_t port, uint8_t v)
     case 0x40: dsp_command = v; dsp_args = 1; return;    /* time constant */
     case 0x14: dsp_command = v; dsp_args = 2; return;    /* 8-bit single-cycle DMA output */
     case 0xd1: return;                                   /* speaker on */
+    case 0xd3: return;                                   /* speaker off */
+    case 0xd0:                                           /* halt DMA */
+        if (!rt_sb_playing) {
+            return;
+        }
+        rt_stop("DSP halt while a block plays", v, 0);
     }
     rt_stop("unsupported DSP command", v, 0);
 }

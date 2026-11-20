@@ -8,6 +8,11 @@
 #define FILES 16
 #define FIRST_FILE_SFT 3        /* reference: SFT 0-2 are AUX, CON, PRN */
 #define CON_SFT 1
+/* The device SFTs' reference counts (AUX, CON, PRN): COMMAND.COM's handles and
+ * the game's inherited ones; the exit's closes of handles 0-4 answer AL = 6, 5,
+ * 4 (CON), 2 (AUX), 2 (PRN), the count before each (MEASURED, mx1). */
+static const uint8_t device_refs_at_start[FIRST_FILE_SFT] = {2, 6, 2};
+static uint8_t device_refs[FIRST_FILE_SFT];
 
 static int32_t file_of_sft[FILES];   /* platform handle per SFT entry, -1 free */
 enum file_action { FILE_NONE, FILE_READ, FILE_WRITE };
@@ -127,6 +132,9 @@ void rt_dos_init(void)
     for (int k = 0; k < FILES; ++k) {
         file_of_sft[k] = -1;
     }
+    for (int k = 0; k < FIRST_FILE_SFT; ++k) {
+        device_refs[k] = device_refs_at_start[k];
+    }
 }
 
 static uint32_t jft(uint16_t handle)
@@ -152,8 +160,10 @@ static void fail(uint16_t code)
 /* The platform's file root is the game directory C:\WING2, the guest's
  * directory at the launch; AH=3Bh changes the current one (WC2: GAMEDAT).
  * "C:\WING2\DIR\NAME.EXT" -> "DIR/NAME.EXT" and "NAME.EXT" -> the current
- * directory's, upper case. Another drive, an absolute path outside WING2 and
- * "." or ".." components stop. */
+ * directory's, upper case. A "." component is dropped and ".." drops the one
+ * before it (WC2 leaves GAMEDAT with ".." at its exit, milestones mx1 and mx2);
+ * another drive, a path outside WING2 (".." above it too) and a name that
+ * starts with "." stop. */
 static char current_dir[64];    /* "" (the game directory) or "DIR" */
 
 static void path_of(uint32_t a, char *out, int size)
@@ -187,12 +197,27 @@ static void path_of(uint32_t a, char *out, int size)
             out[n++] = '/';
         }
     }
-    int start = n;
     for (uint8_t c; (c = rd8(a)) != 0 && n < size - 1; ++a) {
-        if (c == '.' && (n == start || out[n - 1] == '/')) {
-            rt_stop("path component . or ..", rd8(a + 1), 0);
+        if (c == '.' && (n == 0 || out[n - 1] == '/')) {
+            uint8_t up = rd8(a + 1) == '.';
+            uint8_t end = rd8(a + 1 + up);
+            if (end != 0 && end != '\\' && end != '/') {
+                rt_stop("path component starting with .", rd8(a + 1), 0);
+            }
+            if (up) {
+                if (n == 0) {
+                    rt_stop("absolute path outside C:\\WING2", '.', 0);
+                }
+                for (--n; n && out[n - 1] != '/'; --n) {
+                }
+            }
+            a += up + (end != 0);
+            continue;
         }
         out[n++] = c == '\\' ? '/' : (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
+    }
+    if (n && out[n - 1] == '/') {
+        --n;
     }
     out[n] = 0;
 }
@@ -320,6 +345,16 @@ static void write_file(uint16_t cs, uint16_t ip)
 
 static void close_file(void)
 {
+    if (rt_r.bx < HANDLES && rd8(jft(rt_r.bx)) < FIRST_FILE_SFT) {
+        uint8_t sft = rd8(jft(rt_r.bx));
+        if (device_refs[sft] == 0) {
+            rt_stop("device close below its reference count", sft, rt_r.bx);
+        }
+        SET_AL(rt_r.ax, device_refs[sft]--);    /* the count before the close */
+        wr8(jft(rt_r.bx), 0xff);
+        set_cf(0);
+        return;
+    }
     int32_t f = file_of(rt_r.bx);
     if (f < 0) {
         fail(6);
@@ -515,9 +550,8 @@ static void resize(uint16_t cs, uint16_t ip)
         wr8(m, 'Z');
     }
     wr16(m + 3, rt_r.bx);
-    if (seg == rt_psp()) {
-        wr16(lin(seg, 2), seg + rt_r.bx);   /* reference: PSP memory top follows */
-    }
+    /* PSP:2 (memory top) stays: DOSBox-X's resize leaves it, and WC2's exit
+     * shrink to 3D00h ends with 9FFFh there (MEASURED, mx1 and mx2) */
     rt_r.ax = seg;
     set_cf(0);
 }

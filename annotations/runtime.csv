@@ -66,3 +66,4 @@ WC2.EXE,0x0f7c3,0F12:06A3,__ovr_disarm,overlay manager,1,INFERRED name; DERIVED 
 WC2.EXE,0x0f7f6,0F12:06D6,__ovr_move,overlay manager,1,INFERRED name; DERIVED body: moves an overlay's code (rep movsw at +F81F) and fixes its jumps and frames
 WC2.EXE,0x0f9fd,0F12:08DD,__ovr_init,overlay manager,1,INFERRED name; DERIVED body: _INIT_ record: runs the start-up steps
 WC2.EXE,0x0fa58,0F12:0938,__ovr_evict_hook,overlay manager,1,"INFERRED name; DERIVED body: the eviction hook [10]: a RET, so no EMS cache"
+WC2.EXE,0x0fa59,0F12:0939,__ovr_exit_hook,overlay manager,1,"INFERRED name; DERIVED body: the exit hooks [12] and [14]: a RETF, which the exit routine (+0F2AC) calls as push cs; call [hook] (+0F2C1, +0F2C6); MEASURED: traced in mx1 and mx2"

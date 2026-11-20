@@ -186,8 +186,10 @@ button repeats clicks every 5 fields; an Enter there acts as a click and, on no 
 exits to the OS. The menu puts the pointer at (400,54) on entry (MEASURED). The name
 prompt reads keys through DOS, and its first poll comes before it takes them (a `k1:a`
 lost the first key, MEASURED), so the smoke types the names 150 ticks after Shift+C. Esc held for 10 fields skips each
-cinematic scene; a repeated Esc must stop at the title's own BUTTONS.V00, since Esc on the
-title menu quits to the OS (MEASURED: hand-back at field 1,953).
+cinematic scene; a repeated Esc must stop at the title's own BUTTONS.V00. In the original
+Esc on the title menu does not quit, and Alt+X does: it frees its EMS handles, sets mode 3 and
+ends with INT 21h AX=4C00 at WC2.EXE+00160 (MEASURED, milestone `mx1`). The hand-back seen at
+field 1,953 after a repeated Esc on the Amiga is therefore not the original's quit.
 
 ## Files
 
