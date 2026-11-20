@@ -13,7 +13,8 @@ Items are in work order; numbers are identifiers and are not reused.
     3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)); production delivers
     INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8), up to 57 retries of about 1 ms
     late for one block (MEASURED over the intro's blocks). Playing it keeps that timing. Take X-Wing's two fixes to the
-    SWOTL FM code first (not committed there as of 2026-11-16): `fm_paula.c` renders
+    SWOTL FM code first (X-Wing `ba28410`; its effect capture and play, `0eda68f`, `269828b`, are the
+    model for the effects, [port-plan.md](port-plan.md) "Sibling: X-Wing"): `fm_paula.c` renders
     additive patches (C0h bit 0) with both operators at their relative levels (WC2: 7
     patch writes, 49 key-ons by m6), and `fm_check` measures vibrato notes (about half of
     WC2's key-ons by m6, 87% in m1b; MEASURED from the host references' `opl.csv`), skips

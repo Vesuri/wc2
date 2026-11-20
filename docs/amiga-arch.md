@@ -129,12 +129,16 @@ per period (L44). Publication never feeds back into simulation; missed slots are
 
 ## Audio
 
-- No digital path: SPAZ plays music and effects (`ADLIB.SFX`) on the OPL only
-  (ports `388h/389h`; no SB DSP access traced).
-- **Music and effects**: SPAZ runs translated into the runtime's OPL register shadow; a
-  Paula-only re-hoster (`fm_paula.c`, `Audio.cpp`) never decides what sounds (L71);
-  effects prerendered at SPAZ init into Chip samples (`sfx.c`, `fm_effect` with
-  its loop in `fm_effect_run.s`, `tfh_paula.c`), kept in `sfx.cache`; optional TFH samples. Facts and decisions: [sound-plan.md](sound-plan.md).
+- **Sources (MEASURED, m6 and the exit traces):** STRAX.DRV plays music and effects on the
+  OPL (ports 388h/389h); WC2.EXE drives the Sound Blaster DSP itself for the digitised
+  speech (single-cycle DMA blocks, IRQ 7; the commands in `src/runtime/ports.c`).
+- **Music and effects**: STRAX.DRV runs translated into the runtime's OPL register shadow
+  (`rt_opl`); a Paula-only re-hoster (`fm_paula.c`, `Audio.cpp`, fed each field by
+  `amiga_audio_service`) never decides what sounds (L71). Effect pricing and any prerender
+  are open-work 19; SWOTL's effect capture and cache were removed ([upstream.md](upstream.md)).
+- **Speech**: `plat_sb_block` times each block silently and posts IRQ 7 at its end; playing
+  it on Paula is open-work 19. Facts and methods: [sound-plan.md](sound-plan.md) (SWOTL's
+  until re-derived).
 - **Shared rules.** Channel ownership between music and effects is an explicit policy
   (L59); stereo placement deliberate (L68); the LED filter is off from the takeover and restored as found at the hand-back (L69).
 
