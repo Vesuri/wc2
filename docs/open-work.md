@@ -12,14 +12,15 @@ Items are in work order; numbers are identifiers and are not reused.
     and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
     3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)); production delivers
     INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8), up to 57 retries of about 1 ms
-    late for one block (MEASURED over the intro's blocks). Playing it keeps that timing. Take X-Wing's two fixes to the
-    SWOTL FM code first (X-Wing `ba28410`; its effect capture and play, `0eda68f`, `269828b`, are the
-    model for the effects, [port-plan.md](port-plan.md) "Sibling: X-Wing"): `fm_paula.c` renders
-    additive patches (C0h bit 0) with both operators at their relative levels (WC2: 7
-    patch writes, 49 key-ons by m6), and `fm_check` measures vibrato notes (about half of
-    WC2's key-ons by m6, 87% in m1b; MEASURED from the host references' `opl.csv`), skips
-    fields whose registers change mid-field and released notes. Acceptance: the FM checks and
-    their sabotage pass; the intro's speech plays on the Amiga build; the Chip cost MEASURED.
+    late for one block (MEASURED over the intro's blocks). Playing it keeps that timing.
+    Music: `make gates-audio` passes on the host references' OPL logs (m6, mx1, mx2: level
+    97.5-98.8%, pitch 99.7-100%, MEASURED 2026-11-20). Effects: X-Wing's capture and play
+    (`0eda68f`, `269828b`, [port-plan.md](port-plan.md) "Sibling: X-Wing") are the model, but
+    WC2's are driver notes, not scripts: the game's effect player (`WC2.EXE+122xx`) sends
+    `STRAX.DRV` a program change (entry 8), volume and pan (entry 6, controllers 7 and 10)
+    and a note-on (entry 5) on one or two channels (DERIVED by reading). Acceptance: the FM
+    checks and their sabotage pass; the intro's speech plays on the Amiga build; the Chip
+    cost MEASURED.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).

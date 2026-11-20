@@ -5,7 +5,26 @@
 //   level: voice RMS vs the channel's within 3 dB at the field or a neighbour;
 //   pitch: the channel periodic at the commanded loop period within 10 cents
 //   (autocorrelation peak >= 0.9 over three periods: periodic patches
-//   without vibrato or tremolo, registers and level steady).
+//   without deep vibrato or tremolo, keyed on, registers and level steady):
+//   - shallow vibrato and tremolo (BD bits 6, 7 clear) do not exclude a
+//     channel: shallow vibrato moves the F-number by at most
+//     (fnum >> 7 & 7) >> 2, 1/256 of it or 6.8 cents (Nuked's OPL3_PhaseGenerate);
+//   - steady takes in the measured field: a register change within it put the
+//     field's first command beside its last registers (a trill between
+//     F-numbers 8Eh and 8Fh failed so);
+//   - a released note is not steady: its operators decay at their own release
+//     rates, so its waveform changes within the window (MEASURED: a failing
+//     patch held keyed on is periodic at the commanded period, r 0.9995).
+// WC2 (docs/upstream.md), for STRAX.DRV's music:
+//   - the pitch oracle is a second Nuked chip per channel with the vibrato bits
+//     (20h-35h bit 6) clear, as the re-hoster's loops have no vibrato: low notes
+//     with vibrato missed by 10-12 cents, its excursion on the period's rounding;
+//   - a key-on or key-off is a change: a window that held a release and a
+//     retrigger (the driver rewrites B0h every 0.83 field) was judged steady;
+//   - the oracle is low-passed (two poles at 2 kHz) before the autocorrelation:
+//     bright patches (feedback 5 with waveform 3, a x3 modulator with feedback)
+//     correlate at most 0.65-0.88 at integer lags of a non-integer period even
+//     alone in Nuked, 0.97-0.99 low-passed (MEASURED, tmp patch renders).
 // Writes the Paula mix as mono 16-bit WAV at the OPL rate (pairs with
 // opl_render's). --sabotage pitch|level plants a fault the check must catch.
 // Build: make build/tools/fm_check. Usage: fm_check opl.csv out.wav [--sabotage X]
@@ -26,6 +45,7 @@ static const double LEVEL_DB = 3.0, FLOOR_DB = -30.0, PITCH_CENTS = 10.0;
 static const double LEVEL_MIN = 0.95, PITCH_MIN = 0.99;
 static const int WINDOW = 8192;  // pitch: the channel's last samples (8 fields)
 static const int PITCH_EVERY = 5;  // fields between a voice's pitch checks
+static const double PITCH_LP_HZ = 2000;  // the pitch oracle's two-pole low-pass
 static const uint8_t op_off[9] = {0, 1, 2, 8, 9, 10, 16, 17, 18};
 
 struct Row { double ms; unsigned reg, value; };
@@ -91,15 +111,19 @@ int main(int argc, char **argv)
     }
     if (rows.empty()) { fprintf(stderr, "%s: no rows\n", argv[1]); return 1; }
 
-    static opl3_chip chip[9];
+    // chip: each channel alone; pitch: the same without vibrato (the re-hoster's
+    // loops have none), the pitch oracle
+    static opl3_chip chip[9], pitch[9];
     for (auto &c : chip) OPL3_Reset(&c, RATE);
+    for (auto &c : pitch) OPL3_Reset(&c, RATE);
     static int8_t pool[FM_POOL_BYTES];
     fm_init(pool, sizeof pool);
     uint8_t shadow[256] = {}, keyon[9] = {};
     bool moved[9] = {};
     unsigned steady[9] = {};  // fields without a register change or a 1 dB level step
     Voice voice[FM_VOICES];
-    static short hist[9][WINDOW];
+    static double hist[9][WINDOW], lp[9][2];
+    const double lp_k = 1 - exp(-2 * M_PI * PITCH_LP_HZ / RATE);
     unsigned pitch_due[FM_VOICES] = {};
     std::vector<short> out;
     std::vector<std::array<double, 9>> nuked;      // per field, channel RMS dB
@@ -119,11 +143,15 @@ int main(int argc, char **argv)
             const Row &r = rows[at++];
             int c = channel_of(r.reg);
             if (r.reg >= 0xb0 && r.reg <= 0xb8 && (r.value & 0x20) && !(shadow[r.reg] & 0x20)) keyon[r.reg - 0xb0]++;
-            // any change but a key-on/off of the channel's registers
-            if (c >= 0 && ((r.value ^ shadow[r.reg]) & (r.reg >= 0xb0 && r.reg <= 0xb8 ? 0x1f : 0xff))) moved[c] = true;
+            // any change of the channel's registers, a key-on or key-off included
+            if (c >= 0 && (r.value ^ shadow[r.reg])) moved[c] = true;
             shadow[r.reg] = (uint8_t)r.value;
+            bool vib = r.reg >= 0x20 && r.reg <= 0x35;
             for (int k = 0; k < 9; k++)
-                if (c < 0 || c == k) OPL3_WriteReg(&chip[k], (unsigned short)r.reg, (unsigned char)r.value);
+                if (c < 0 || c == k) {
+                    OPL3_WriteReg(&chip[k], (unsigned short)r.reg, (unsigned char)r.value);
+                    OPL3_WriteReg(&pitch[k], (unsigned short)r.reg, (unsigned char)(vib ? r.value & ~0x40 : r.value));
+                }
         }
         if (n >= next_field) {
             if (field_samples) {
@@ -137,7 +165,8 @@ int main(int argc, char **argv)
                     int c = cur[i].ch;
                     if (c < 0 || fields.size() < pitch_due[i] || lv[c] < FLOOR_DB ||
                         ((shadow[0xc0 + c] >> 1) & 7) >= 6 ||                            // noise
-                        ((shadow[0x20 + op_off[c]] | shadow[0x23 + op_off[c]]) & 0xc0))  // AM/VIB
+                        ((shadow[0x20 + op_off[c]] | shadow[0x23 + op_off[c]]) & shadow[0xbd] & 0xc0) ||  // deep AM/VIB
+                        moved[c] || !(shadow[0xb0 + c] & 0x20))                           // changed now, released
                         continue;
                     double tc = RATE / cur[i].freq;
                     int len = (int)(3 * tc) + 64;
@@ -192,7 +221,10 @@ int main(int argc, char **argv)
             short s[2];
             OPL3_Generate(&chip[k], s);
             sq[k] += (double)s[0] * s[0];
-            hist[k][samples % WINDOW] = s[0];
+            OPL3_Generate(&pitch[k], s);
+            lp[k][0] += lp_k * (s[0] - lp[k][0]);
+            lp[k][1] += lp_k * (lp[k][0] - lp[k][1]);
+            hist[k][samples % WINDOW] = lp[k][1];
         }
         for (int i = 0; i < FM_VOICES; i++) {
             Voice &p = voice[i];

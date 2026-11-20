@@ -4,6 +4,12 @@
 The reference constructs the OPL ROMs from their closed forms, independently
 of the production tables and staging implementation. Nuked whole-sound
 level/pitch checks remain mandatory; this checks the loop representation.
+
+An additive loop's operators are output at their levels relative to the louder
+(key bits 32-40, the modulator; 41-49, the carrier; fm_paula.c ADD_MOD), the
+modulator's feedback still at its own level. The cases without those levels
+keep the samples of the former additive loop (modulator at its own level,
+carrier at 0 dB).
 """
 import ctypes as C
 import math
@@ -34,9 +40,11 @@ def sample(wave, phase, attenuation):
     return ~value if negative else value
 
 
-def reference(wc, wm, mc, mm, fb, additive, mq, lg, step=16):
+def reference(wc, wm, mc, mm, fb, additive, mq, lg, step=16, mo=None, co=0):
+    if mo is None:
+        mo = min(mq * step, 384)
     a, b = MULT[mc] << (wc >= 2), MULT[mm] << (wm >= 2)
-    g = a if mq * step >= 384 else math.gcd(a, b)
+    g = a if (mo if additive else mq * step) >= 384 else math.gcd(a, b)
     size = 1 << lg
     ic, im = (MULT[mc] << 16) // g // size, (MULT[mm] << 16) // g // size
     pc = pm = prev1 = prev2 = 0
@@ -45,9 +53,9 @@ def reference(wc, wm, mc, mm, fb, additive, mq, lg, step=16):
     for i in range(settle + size):
         feedback = (prev1 + prev2) >> (9 - fb) if fb else 0
         mod = sample(wm, (pm >> 6) + feedback, mq * step)
-        carrier = sample(wc, (pc >> 6) + (0 if additive else mod), 0)
+        carrier = sample(wc, (pc >> 6) + (0 if additive else mod), co if additive else 0)
         if additive:
-            carrier = (carrier + mod) >> 1
+            carrier = (carrier + sample(wm, (pm >> 6) + feedback, mo)) >> 1
         pc = (pc + ic) & 0xffffffff
         pm = (pm + im) & 0xffffffff
         prev2, prev1 = prev1, mod
@@ -61,7 +69,7 @@ def checks(source):
     with tempfile.TemporaryDirectory(prefix='fm-render-', dir=ROOT/'tmp') as td:
         p = Path(td)
         (p/'render.c').write_text(source + '''
-void check_render(int8_t *dst, uint32_t key, uint16_t bytes) {
+void check_render(int8_t *dst, uint64_t key, uint16_t bytes) {
     build_wave(); render(dst, key, bytes);
 }
 int check_operator(unsigned wf, unsigned phase, unsigned attenuation) {
@@ -72,7 +80,7 @@ int check_operator(unsigned wf, unsigned phase, unsigned attenuation) {
                         '-Wextra', '-Werror', '-I'+str(SRC), str(p/'render.c'),
                         '-o', str(p/'render.so')], check=True)
         lib = C.CDLL(str(p/'render.so'))
-        lib.check_render.argtypes = [C.c_void_p, C.c_uint32, C.c_uint16]
+        lib.check_render.argtypes = [C.c_void_p, C.c_uint64, C.c_uint16]
         lib.check_operator.argtypes = [C.c_uint, C.c_uint, C.c_uint]
         lib.check_operator.restype = C.c_int
         cases = [(wc, wm, 1, 1, fb, add, mq, lg)
@@ -93,15 +101,25 @@ int check_operator(unsigned wf, unsigned phase, unsigned attenuation) {
         cases += [((wc, wm, 1, 3, 5, 0, q, 9), 1)
                   for wc in range(4) for wm in range(4)
                   for q in (1, 2, 3, 127, 128, 255, 256, 383, 384)]
-        for case, step in cases:
+        cases = [(case, step, None, 0) for case, step in cases]
+        # additive levels: either operator the louder, both levels and feedback
+        cases += [((wc, wm, mc, mm, fb, 1, mq, lg), 4, mo, co)
+                  for wc, wm, mc, mm in ((0, 0, 1, 1), (2, 3, 2, 1), (1, 2, 1, 3), (3, 0, 4, 2))
+                  for fb in (0, 3, 7)
+                  for mq, mo, co in ((0, 0, 0), (12, 0, 48), (40, 0, 384), (5, 20, 0),
+                                     (30, 96, 0), (2, 384, 0))
+                  for lg in (5, 9)]
+        for case, step, mo, co in cases:
             wc, wm, mc, mm, fb, add, mq, lg = case
             n = 1 << lg
             encoded = min(mq * step, 384)
-            key = wc | wm << 2 | mc << 4 | mm << 8 | fb << 12 | add << 15 | encoded << 16 | lg << 25
+            mo_key = encoded if mo is None else mo
+            key = (wc | wm << 2 | mc << 4 | mm << 8 | fb << 12 | add << 15 | encoded << 16 | lg << 25 |
+                   (mo_key << 32 | co << 41 if add else 0))
             memory = (C.c_int8 * (n+32))(*([85]*(n+32)))
             lib.check_render(C.byref(memory, 16), key, n)
             assert list(memory[:16]) == [85]*16 and list(memory[-16:]) == [85]*16, 'output bounds'
-            assert list(memory[16:-16]) == reference(*case, step), f'sample mismatch {case}, step {step}'
+            assert list(memory[16:-16]) == reference(*case, step, mo, co), f'sample mismatch {case}, step {step}, levels {mo} {co}'
         for wf in range(4):
             for att in (*range(385), 385, 386, 511, 1023, 65535):
                 for phase in (*range(0, 1024, 37), 255, 256, 511, 512, 767, 768, 1023, 65535):
@@ -123,8 +141,12 @@ def main():
                 ('modulator level', 'linear_exp + ((uint32_t)matt << 3)', 'linear_exp + ((uint32_t)matt << 2)'),
                 ('feedback settle', 'render_run(dst, FB_SETTLE, bytes, wm, lm, cw, ic, im, fb, 0);',
                  'render_run(dst, 0, bytes, wm, lm, cw, ic, im, fb, 0);'),
-                ('additive feedback', 'render_run(dst, FB_SETTLE, bytes, wm, lm, cw, ic, im, fb, 1);',
-                 'render_run(dst, FB_SETTLE, bytes, wm, lm, cw, ic, im, fb, 0);')):
+                ('additive feedback', 'render_add_run(dst, fb ? FB_SETTLE : 0,', 'render_add_run(dst, 0,'),
+                ('additive modulator output', 'o = (int16_t)(lo[w & 0x7fff] ^ sign);',
+                 'o = (int16_t)lo[w & 0x7fff];'),
+                ('additive carrier sign', 'carrier_sign = w & 0x8000 ? 0xffff : 0;', 'carrier_sign = 0;'),
+                ('additive carrier level', 'linear_exp + ((uint32_t)co << 3), ic, im, fb);',
+                 'linear_exp + ((uint32_t)co << 2), ic, im, fb);')):
             assert source.count(old) == 1, f'missing {name} plant'
             try:
                 checks(source.replace(old, new))

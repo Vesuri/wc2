@@ -3,7 +3,7 @@
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
-	github-release test-release-installer clean
+	github-release test-release-installer gates-audio sound-fm clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -43,6 +43,9 @@ help:
 	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/wc2.elf"
 	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1, m1b, m2, m3, m4, m5 and m6 (tests/host_run.py)"
 	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
+	@echo "  make gates-audio        the FM re-hoster against Nuked OPL on the host references' OPL logs,"
+	@echo "                          the FM unit checks and every plant (docs/sound-plan.md)"
+	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
@@ -261,6 +264,34 @@ t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 20000)
 test-host: host
 	@$(MAKE) -s -k -j$(JOBS) $(HOST_MILESTONES:%=t-host-%)
+
+# AdLib FM on Paula (P6b.2), from X-Wing's Makefile (ba28410): the re-hoster
+# (src/platform/amiga/fm_paula.c) on the host references' OPL logs, checked against
+# Nuked OPL from the DOSBox-X tree (tools/build_dosbox_x.sh links tools/vendor/dosbox-x).
+# m6's log holds m1b-m5's (one route); mx1 and mx2 are the exit routes.
+NUKED = tools/vendor/dosbox-x/src/hardware
+FM_MILESTONES = m6 mx1 mx2
+FM_OPL = tmp/pc-runs/host-$(1)/trace/opl.csv
+build/tools/fm_check: tools/fm_check.cpp src/platform/amiga/fm_paula.c src/platform/amiga/fm_paula.h
+	mkdir -p build/tools
+	cc -O2 -std=c99 -Wall -Wextra -Werror -c -o build/tools/fm_paula.o src/platform/amiga/fm_paula.c
+	c++ -O2 -std=c++17 -Isrc/platform/amiga -I$(NUKED) -o $@ $< build/tools/fm_paula.o $(NUKED)/nukedopl.cpp
+sound-fm: build/tools/fm_check
+	mkdir -p tmp/sound
+	-for m in $(FM_MILESTONES); do build/tools/fm_check $(call FM_OPL,$$m) tmp/sound/$$m-paula.wav; done
+t-fm-paula-%: build/tools/fm_check
+	@mkdir -p tmp/sound
+	$(call RUN,fm-paula-$*,build/tools/fm_check $(call FM_OPL,$*) tmp/sound/$*-paula.wav)
+t-sab-fm-paula: build/tools/fm_check
+	$(call RUN,sabotage-fm-paula,sh -c 'for s in pitch level; do \
+		! build/tools/fm_check $(call FM_OPL,m2) tmp/test/fm-sabotage.wav --sabotage $$s || exit 1; done')
+FM_UNITS = quality render phase envelope allocation cache
+t-sab-fm-%:
+	$(call RUN,sabotage-fm-$*,$(PYTHON) tests/test_fm_$*.py --sabotage)
+# Isolated audio changes (AGENTS.md "Validation scope"): the sound checks and their plants.
+gates-audio:
+	@$(MAKE) -s -k -j$(JOBS) $(FM_MILESTONES:%=t-fm-paula-%) t-sab-fm-paula \
+		$(FM_UNITS:%=t-unit-test_fm_%) $(FM_UNITS:%=t-sab-fm-%)
 
 # test-amiga (gate 5): the diagnostic replay image (tests/amiga_replay.py) replays
 # the host reference's interrupts, REP slices, 3DAh and PIT reads and clocks on the

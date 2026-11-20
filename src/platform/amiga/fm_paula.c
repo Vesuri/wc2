@@ -107,6 +107,15 @@ static const uint8_t op_off[9] = {0, 1, 2, 8, 9, 10, 16, 17, 18};
 #define LOOP_LOG 12                  /* longest period loop, 4096 bytes */
 #define RENDER_BUDGET FM_VOICES     /* every selected voice can follow its envelope */
 #define NOISE_KEY 0x80000000u
+/* An additive channel (C0 bit 0) outputs both operators; its key's high word
+ * holds each one's level relative to the louder (0.1875 dB units, MOD_STEP
+ * steps, MOD_SILENT at most): the modulator's in bits 32-40, the carrier's in
+ * 41-49. The modulator's absolute level (bits 16-24) still sets its feedback;
+ * the high word is 0 for FM. */
+#define ADD_MOD 32
+#define ADD_CAR 41
+#define ADD_LEVELS ((uint64_t)0x3ffff << ADD_MOD)
+#define ADD_HEADROOM 32             /* the halved sum's 6 dB, back in the volume */
 #define FB_SETTLE 32                /* samples before a feedback loop's period */
 
 enum { ATTACK, DECAY, SUSTAIN, RELEASE };
@@ -134,14 +143,16 @@ static uint16_t pool_pages;
 static uint8_t page_used[256];
 static uint16_t first_free;         /* lowest free page, pool_pages if none */
 /* cache slots: keys and field stamps apart for short scans */
-static uint32_t cache_key[CACHE], cache_used[CACHE];
+static uint64_t cache_key[CACHE];
+static uint32_t cache_used[CACHE];
 static struct entry cache[CACHE];
 static uint32_t stamp;
 static const int8_t *noise[2];
 /* per voice: the last command and what it was made from */
 struct memo {
-    uint32_t key;                   /* the loop's (NOISE_KEY | fb: a noise table), 0 none */
-    uint32_t base, x;               /* render key without loop length; fnum << block */
+    uint64_t key;                   /* the loop's (NOISE_KEY | fb: a noise table), 0 none */
+    uint64_t base;                  /* render key without loop length */
+    uint32_t x;                     /* fnum << block */
     uint16_t mq;                    /* its modulator step */
     uint8_t g;                      /* repeats() of a period loop */
     uint32_t stamp;
@@ -363,15 +374,47 @@ static inline __attribute__((always_inline)) void render_run(int8_t *dst, uint16
     }
 }
 
+/* An additive loop: the modulator with its feedback at its own level through
+ * `lm`, output through `lo` (its level relative to the louder operator), plus
+ * the unmodulated carrier through `lc`; the sum halved. */
+static void render_add_run(int8_t *dst, uint16_t settle, uint16_t bytes, const uint16_t *wm,
+    const uint16_t *lm, const uint16_t *lo, const uint16_t *wc, const uint16_t *lc,
+    uint32_t ic, uint32_t im, uint8_t fb)
+{
+    uint32_t pc = 0, pm = 0;
+    int16_t prev1 = 0, prev2 = 0, fbmod = 0, m, o, c;
+    uint16_t i, w, sign, carrier_sign;
+    for (i = 0; i < settle + bytes; ++i) {
+        if (fb) {
+            fbmod = (int16_t)((prev1 + prev2) >> (9 - fb));
+        }
+        w = wm[(uint16_t)((pm >> 6) + fbmod) & 0x3ff];
+        sign = (uint16_t)((int16_t)w >> 15);
+        m = (int16_t)(lm[w & 0x7fff] ^ sign);
+        o = (int16_t)(lo[w & 0x7fff] ^ sign);
+        prev2 = prev1;
+        prev1 = m;
+        w = wc[(uint16_t)(pc >> 6) & 0x3ff];
+        carrier_sign = w & 0x8000 ? 0xffff : 0;
+        c = (int16_t)(lc[w & 0x7fff] ^ carrier_sign);
+        pc += ic;
+        pm += im;
+        if (i >= settle) {
+            *dst++ = (int8_t)(((c + o) >> 1) >> 5);
+        }
+    }
+}
+
 /* Render key fields: wf_c 0-1, wf_m 2-3, mult_c 4-7, mult_m 8-11, fb 12-14,
- * cnt 15, modulator level 16-24 (0.1875 dB units), log2 samples per period 25-28.
+ * cnt 15, modulator level 16-24 (0.1875 dB units), log2 samples per period 25-28;
+ * an additive loop's relative levels 32-49 (ADD_MOD, ADD_CAR).
  * The phase steps by the loop's fraction of a period. */
-static __attribute__((noinline)) void render(int8_t *dst, uint32_t key, uint16_t bytes)
+static __attribute__((noinline)) void render(int8_t *dst, uint64_t key, uint16_t bytes)
 {
     uint8_t wfc = key & 3, wfm = (key >> 2) & 3, fb = (key >> 12) & 7, cnt = (key >> 15) & 1;
     uint8_t mc = (key >> 4) & 15, mm = (key >> 8) & 15;
     uint16_t mq = (key >> 16) & 511;
-    uint8_t g = repeats(wfc, wfm, mc, mm, mq >= MOD_SILENT);
+    uint8_t g = repeats(wfc, wfm, mc, mm, (cnt ? (key >> ADD_MOD) & 511 : mq) >= MOD_SILENT);
     uint16_t matt = mq, spp = (uint16_t)(1u << ((key >> 25) & 15));
     /* phase in cycles, 16.16; >> 6 the chip's 10 bits */
     uint32_t ic = ((uint32_t)mt[mc] << 16) / g / spp, im = ((uint32_t)mt[mm] << 16) / g / spp;
@@ -380,11 +423,9 @@ static __attribute__((noinline)) void render(int8_t *dst, uint32_t key, uint16_t
     /* Keep synthesis phase across timbre changes; do not rotate each loop. */
     ++fm_renders;
     if (cnt) {
-        if (fb) {
-            render_run(dst, FB_SETTLE, bytes, wm, lm, cw, ic, im, fb, 1);
-        } else {
-            render_run(dst, 0, bytes, wm, lm, cw, ic, im, 0, 1);
-        }
+        uint16_t mo = (uint16_t)((key >> ADD_MOD) & 511), co = (uint16_t)((key >> ADD_CAR) & 511);
+        render_add_run(dst, fb ? FB_SETTLE : 0, bytes, wm, lm, linear_exp + ((uint32_t)mo << 3),
+                       wave[wfc], linear_exp + ((uint32_t)co << 3), ic, im, fb);
     } else if (fb) {
         render_run(dst, FB_SETTLE, bytes, wm, lm, cw, ic, im, fb, 0);
     } else {
@@ -477,7 +518,7 @@ static uint16_t fit_from(uint16_t from, uint16_t to, uint16_t pages)
  * first free run on the `pages` grid; until a run and a slot are free, the
  * least recently used loop of an earlier field goes (lowest slot on a tie).
  * The first empty slot holds it, else the first evicted. */
-static int16_t loop_for(uint32_t key, uint16_t bytes, int render_ok)
+static int16_t loop_for(uint64_t key, uint16_t bytes, int render_ok)
 {
     uint16_t pages = (uint16_t)((bytes + FM_POOL_PAGE - 1) / FM_POOL_PAGE), i, p, q, k, a, n;
     uint32_t oldest;
@@ -549,13 +590,16 @@ static int16_t loop_for(uint32_t key, uint16_t bytes, int render_ok)
  * modulator level and pitch: the last field's loop and period. Past the
  * field's render budget only a restart renders; a continuing note whose loop
  * differs in modulator level alone keeps its loop a field longer. */
-static void voice_cmd(struct fm_voice *v, uint8_t i, const uint8_t *opl, int8_t ch, uint16_t att)
+static void voice_cmd(struct fm_voice *v, uint8_t i, const uint8_t *opl, int8_t ch, uint16_t att,
+                      const uint16_t *opatt)
 {
     uint8_t c = (uint8_t)ch, mo = op_off[c], co = (uint8_t)(mo + 3), b0 = opl[0xb0 + c], c0 = opl[0xc0 + c];
     uint16_t fnum = (uint16_t)(opl[0xa0 + c] | (b0 & 3) << 8), bytes, raw, matt; /* matt: 0.1875 dB units */
     uint8_t block = (b0 >> 2) & 7, ws = (opl[1] & 0x20) != 0, fb = (c0 >> 1) & 7, lg, g;
     uint8_t wfc = ws ? opl[0xe0 + co] & 3 : 0, wfm = ws ? opl[0xe0 + mo] & 3 : 0;
-    uint32_t key, d, x = (uint32_t)fnum << block, period = 0, renders = fm_renders;
+    uint64_t key;
+    uint32_t d, x = (uint32_t)fnum << block, period = 0, renders = fm_renders;
+    uint16_t ml = 0;                /* additive: the modulator's relative level */
     struct memo *m = &memo[i];
     int16_t slot;
     raw = op_att(&ops[2 * c], opl, mo, fnum, block);
@@ -577,6 +621,17 @@ static void voice_cmd(struct fm_voice *v, uint8_t i, const uint8_t *opl, int8_t 
     key = (uint32_t)wfc | (uint32_t)wfm << 2 |
           (uint32_t)(opl[0x20 + co] & 15) << 4 | (uint32_t)(opl[0x20 + mo] & 15) << 8 |
           (uint32_t)fb << 12 | (uint32_t)(c0 & 1) << 15 | (uint32_t)matt << 16;
+    if (c0 & 1) {
+        /* additive: each operator's level relative to the louder, and the
+         * volume of the louder with the halved sum's headroom */
+        uint16_t lo = opatt[0] < opatt[1] ? opatt[0] : opatt[1], cl;
+        ml = (uint16_t)(opatt[0] - lo);
+        cl = (uint16_t)(opatt[1] - lo);
+        ml = ml >= MOD_SILENT ? MOD_SILENT : (uint16_t)(((ml + MOD_STEP / 2) / MOD_STEP) * MOD_STEP);
+        cl = cl >= MOD_SILENT ? MOD_SILENT : (uint16_t)(((cl + MOD_STEP / 2) / MOD_STEP) * MOD_STEP);
+        key |= (uint64_t)ml << ADD_MOD | (uint64_t)cl << ADD_CAR;
+        att = att > ADD_HEADROOM ? (uint16_t)(att - ADD_HEADROOM) : 0;
+    }
     if (m->key && m->stamp + 1 == stamp && m->base == key) {
         /* the same loop; a new pitch only a new period, while the loop's
          * length stays the longest that keeps it at PERIOD_MIN or above */
@@ -637,7 +692,7 @@ static void voice_cmd(struct fm_voice *v, uint8_t i, const uint8_t *opl, int8_t 
         v->volume = voltab[att];
         return;
     }
-    g = repeats(wfc, wfm, opl[0x20 + co] & 15, opl[0x20 + mo] & 15, matt >= MOD_SILENT);
+    g = repeats(wfc, wfm, opl[0x20 + co] & 15, opl[0x20 + mo] & 15, ((c0 & 1) ? ml : matt) >= MOD_SILENT);
     m->g = g;
     for (lg = LOOP_LOG; lg >= 3; --lg) {
         d = x * g;
@@ -658,7 +713,7 @@ static void voice_cmd(struct fm_voice *v, uint8_t i, const uint8_t *opl, int8_t 
     key |= (uint32_t)lg << 25;
     bytes = (uint16_t)(1u << lg);
     slot = loop_for(key, bytes, v->restart || budget);
-    if (slot < 0 && m->key && !(m->key & NOISE_KEY) && ((key ^ m->key) & ~(511u << 16)) == 0) {
+    if (slot < 0 && m->key && !(m->key & NOISE_KEY) && ((key ^ m->key) & ~((uint64_t)511 << 16 | ADD_LEVELS)) == 0) {
         slot = loop_for(m->key, bytes, 0);
         if (slot >= 0) {
             key = m->key;
@@ -693,7 +748,7 @@ static int8_t choose_channel(int16_t *score, uint8_t first, uint8_t last)
 
 void fm_field(const uint8_t *opl, const uint8_t *keyon, uint16_t mute_mask, struct fm_voice *voice)
 {
-    uint16_t att[9];
+    uint16_t att[9], opatt[9][2];
     int16_t score[9];
     uint8_t c, i, j, newkey[9], reserved = 0;
     int8_t choice[FM_VOICES], assigned[FM_VOICES];
@@ -707,7 +762,7 @@ void fm_field(const uint8_t *opl, const uint8_t *keyon, uint16_t mute_mask, stru
         uint8_t ksv = (uint8_t)(block << 1 | ((fnum >> 9) & 1));
         newkey[c] = keyon[c] != last_keyon[c];
         last_keyon[c] = keyon[c];
-        att[c] = 0xffff;
+        att[c] = opatt[c][0] = opatt[c][1] = 0xffff;
         if (!newkey[c] && ops[2 * c].gen == RELEASE && ops[2 * c + 1].gen == RELEASE &&
             (ops[2 * c].rout & ops[2 * c + 1].rout) == 0x1ffu << 8) {
             continue;   /* silent until its next key-on */
@@ -747,6 +802,7 @@ void fm_field(const uint8_t *opl, const uint8_t *keyon, uint16_t mute_mask, stru
             o.rout = eg_mid(&o, opl, off, (opl[0x20 + off] & 0x10) ? ksv : ksv >> 2);
             a = op_att(&o, opl, off, fnum, block);
             a = (uint16_t)(o.slope < 0 && a < (uint16_t)(-2 * o.slope) ? 0 : a + 2 * o.slope);
+            opatt[c][k] = a;
             if (a < att[c]) {
                 att[c] = a;
             }
@@ -826,7 +882,7 @@ publish_voices:
             voice[i].volume = 0;
             continue;
         }
-        voice_cmd(&voice[i], i, opl, best, att[best]);
+        voice_cmd(&voice[i], i, opl, best, att[best], opatt[best]);
     }
 }
 

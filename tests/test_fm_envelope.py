@@ -35,7 +35,8 @@ void envelope_frame(unsigned raw, unsigned restart, unsigned *effective) {
         struct fm_voice v = {0};
         v.restart = restart;
         ops[2*c].rout = raw << 8;
-        voice_cmd(&v, i, test_opl, c, 0);
+        static const uint16_t fm_levels[2];    /* FM patches: unused */
+        voice_cmd(&v, i, test_opl, c, 0, fm_levels);
         effective[i] = v.loop ? ((memo[i].key >> 16) & 511) : 0xffff;
     }
 }
