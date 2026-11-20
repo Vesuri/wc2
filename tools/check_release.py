@@ -89,7 +89,7 @@ def check_archive(archive, expected, blocks):
     for field, value in (('exe-version', major), ('exe-revision', minor)):
         assert re.search(rf'^\(set #{field} {value}\)'.encode(), payloads['Install'], re.M), 'Install #' + field
     assert b'version ' + version + b' (' + DATE.encode() + b'):' in payloads['ReadMe']
-    for heading in (b'Requirements:', b'Installation:', b'Playing:', b'History:', b'Contact:', b'Credits:',
+    for heading in (b'EARLY ALPHA', b'What to expect:', b'Requirements:', b'Installation:', b'Playing:', b'History:', b'Contact:', b'Credits:',
                     b'https://github.com/Vesuri/wc2'):
         assert heading in payloads['ReadMe'], heading
     assert b'TODO' not in payloads['ReadMe'], 'ReadMe placeholder left'

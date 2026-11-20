@@ -20,6 +20,7 @@ Workbench (amiga-arch.md "Entry"). The program opens `WC2.EXE` itself (`machine.
 | `ws_DontCache` | `(Wc2)` | `_load` reads `Wc2` in two reads (hunk header, then the file into one block for `resload_Relocate`); `WC2.EXE` stays cached, as its relocations are read 4 bytes at a time and overlays during play, each uncached read an OS switch |
 | `slv_config` | `C1:B:Analog joystick in port 2;` | Custom1 passes `ANALOGJOYSTICK` |
 | `$VER` | `Wc2.slave 0.1 (19.11.2026)` | checked by `tools/check_release.py` |
+| Failure | a nonzero result from the program, a failed start or a runtime stop (`WC2_STOP`, result 2): `TDREASON_FAILMSG` "Wing Commander II stopped" with the issues address; a relocation overrun: "could not start"; a missing executable: `TDREASON_DOSREAD` | the requester names a stop as a stop, as X-Wing's (`1dfb2a5`) |
 
 Variants (`whdload/Makefile`, test scaffolding, never packaged): `Smoke.slave` (harness),
 `BootTest.slave` (Kickstart boots), `LoadTest.slave` (`_load` and PROGDIR; its relocated

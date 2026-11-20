@@ -224,7 +224,8 @@ _bootdos
         pea TDREASON_OSEMUFAIL
         bra .abort
 .gameerror
-        pea (_failed,pc)
+        ; A nonzero result: a failed start or a runtime stop (WC2_STOP, result 2).
+        pea (_stopped,pc)
         pea TDREASON_FAILMSG
 .abort
         move.l (_resload,pc),a2
@@ -346,6 +347,7 @@ _append move.b (a0)+,(a1)+
         subq.l #1,a1
         rts
 _failed dc.b "Wing Commander II could not start. Check the installed original data files.",0
+_stopped dc.b "Wing Commander II stopped. Please report it with what you were doing: github.com/Vesuri/wc2/issues",0
         IFD MEMFREE
 _memfreename dc.b "memfree",0
         ENDC

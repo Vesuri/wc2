@@ -10,9 +10,49 @@
  This install applies to "Wing Commander II: Vengeance of the Kilrathi", an
  unofficial Amiga port of the 1991 PC game by Origin Systems.
 
- This is an early alpha release. The game runs from the start to flight,
- but it is silent: music, sound effects and the digitised speech are not in
- this version, and its speed has not been tuned yet.
+ THIS IS AN EARLY ALPHA. The game is translated from the PC original and
+ runs, but it is not optimized yet and has no digitised speech. Please
+ read "What to expect" before installing.
+
+
+ What to expect:
+ ---------------
+ What has been checked: the translated game code was run in a test build
+ and compared step by step against the PC original running under DOSBox-X,
+ along these routes: the start and the title, a new game with the intro,
+ the pilot's file, the first flight, a mission flown to its end (with the
+ game's debug keys and autopilot) and landed, saving and loading a game in
+ the quarters, and both ways out to DOS (Alt+X on the title menu, the
+ window in the quarters). At every step the screen, the memory and every
+ call the game made matched the original. The Amiga build itself was
+ compared the same way on an emulated A1200 with a 68030 at the title,
+ the intro and the first flight frame.
+
+ What to expect when playing:
+ - Sound: the AdLib music and sound effects play on Paula, resynthesised
+   from the FM chip the game drives. Their sound has not been measured
+   against the PC yet, and some instruments may not sound as on the PC.
+   The Sound Blaster's digitised speech is silent in this version.
+ - Speed: nothing has been optimized yet. In the one scene measured on an
+   emulated 50 MHz 68030, the opening animation, the Amiga draws one frame for
+   every eight the PC does. Flight is estimated, not measured, at about
+   half the PC's frame rate on that 68030 and close to it on a 40 MHz
+   68040. Expect it to be slow. Making it faster comes after the speech.
+ - Unsupported paths: the port stops rather than guessing when the game
+   does something it does not support yet. The tests cover the routes
+   above, not every mission, cinematic or menu choice, nor the ending.
+   Under WHDLoad a stop shows the requester "Wing Commander II stopped";
+   started from a Shell, a line beginning with WC2_STOP appears. Please
+   report it with that line and what you were doing (see Contact).
+ - Saving: saving and loading matched the original in the test build, but
+   have not been tested under WHDLoad yet. Keep copies of saved games you
+   care about, and see the NoWriteCache note under Requirements.
+ - Machines: tested only on emulated A1200s (68030, 68040 and 68060, with
+   and without WHDLoad's MMU option, PAL and NTSC), not yet on real
+   hardware. The start from a Shell without WHDLoad was not tested for
+   this release.
+ - Input: keyboard and mouse as in the PC original, and a joystick (see
+   Playing). The joystick ports have not been tested on real hardware.
 
 
  Requirements:
@@ -84,8 +124,9 @@
  History:
  --------
  version 0.1 (19.11.2026):
- - first alpha: the game from the start to flight, translated from the PC
-   original; no sound yet
+ - first alpha: the game translated from the PC original, checked against
+   it from the start through a mission, saving and loading; AdLib music
+   and effects on Paula; no speech yet, not optimized
 
 
  Contact:
