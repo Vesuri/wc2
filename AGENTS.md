@@ -40,6 +40,9 @@ running under DOSBox-X is the ground truth. Start with [docs/open-work.md](docs/
 - No performance claim without a measurement on matched workloads.
 - Never `pkill` fs-uae, gdb, dosbox-x or dosbox-staging: projects share the host. Scripts
   record and kill only their own pid.
+- Never take all the host's cores: parallelize, but within a quarter of them (the
+  Makefile's `JOBS`, exported as `WC2_JOBS` to the Python pools) and at nice 10 for long
+  runs; do not overlap heavy runs of your own.
 - No local paths in the repo (home directories, usernames, `/tmp`, other projects' paths).
   Name another project by name. DOSBox command paths are relative (the project path has
   spaces).

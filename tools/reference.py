@@ -162,7 +162,11 @@ def milestone(m: dict) -> tuple[list[str], list[dict]]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--table", default="reference/milestones.csv")
-    ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2),
+    # the host is shared (AGENTS.md): two emulators per milestone, within WC2_JOBS or
+    # a quarter of the cores
+    ap.add_argument("--jobs", type=int,
+                    default=max(1, (int(os.environ.get("WC2_JOBS", 0))
+                                    or max(2, (os.cpu_count() or 8) // 4)) // 2),
                     help="milestones in parallel (each runs two emulators)")
     ap.add_argument("--host", action="store_true",
                     help="host references (one run each, host-<name>; see the module text)")

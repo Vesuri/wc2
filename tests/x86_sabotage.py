@@ -147,7 +147,9 @@ def plant(k: int) -> int:
 
 def main() -> int:
     missed = []
-    with ProcessPoolExecutor(min(len(SABOTAGE), os.cpu_count() or 1)) as pool:
+    # the host is shared (AGENTS.md): WC2_JOBS from the Makefile, else a quarter of the cores
+    jobs = int(os.environ.get("WC2_JOBS", 0)) or max(2, (os.cpu_count() or 8) // 4)
+    with ProcessPoolExecutor(min(len(SABOTAGE), jobs)) as pool:
         for (name, _t, _f, corpus), caught in zip(SABOTAGE, pool.map(plant, range(len(SABOTAGE)))):
             print(f"{name:28} {corpus:15} mismatches {caught}", flush=True)
             if not caught:

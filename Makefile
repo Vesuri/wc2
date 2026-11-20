@@ -151,8 +151,12 @@ test-guards: gen
 
 # Checks run in parallel after the one writer of build/gen (gen-check); each logs
 # to tmp/test/<name>.log and prints one status line.
-JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc)
-RUN = @mkdir -p tmp/test; if $(2) > tmp/test/$(1).log 2>&1; then echo "ok    $(1)"; \
+# The host is shared (AGENTS.md): a quarter of the cores, at least 2, at nice 10. The
+# Python pools take WC2_JOBS too (tests/*_sabotage.py, tools/reference.py).
+JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || nproc); echo $$(( n / 4 > 2 ? n / 4 : 2 )))
+NICE ?= 10
+export WC2_JOBS = $(JOBS)
+RUN = @mkdir -p tmp/test; if nice -n $(NICE) $(2) > tmp/test/$(1).log 2>&1; then echo "ok    $(1)"; \
 	else echo "FAIL  $(1) (tmp/test/$(1).log)"; tail -n 15 tmp/test/$(1).log; exit 1; fi
 X86_SHARDS = forms.0/8 forms.1/8 forms.2/8 forms.3/8 forms.4/8 forms.5/8 forms.6/8 forms.7/8 \
 	blocks.0/2 blocks.1/2 space.0/1 boundary.0/1
@@ -175,7 +179,7 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 # The program block test in parts (tests/m68k_blocks.py --shard); BLOCK_JOBS bounds
 # the parts run at once when test-blocks runs alone.
 BLOCK_SHARDS ?= 8
-BLOCK_JOBS ?= $(BLOCK_SHARDS)
+BLOCK_JOBS ?= $(JOBS)
 BLOCK_TESTS = $(foreach k,$(shell seq 0 $$(($(BLOCK_SHARDS)-1))),t-blocks.$(k)-of-$(BLOCK_SHARDS))
 TESTS = t-lint t-decode t-guards $(BLOCK_TESTS) $(subst /,-of-,$(X86_SHARDS:%=t-x86-%)) $(subst /,-of-,$(SHARDS:%=t-m68k-%)) \
 	$(UNIT_TESTS:%=t-unit-%)

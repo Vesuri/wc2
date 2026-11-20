@@ -978,7 +978,10 @@ def main() -> int:
     replayed = cases = 0
     held = [k for k in range(len(SABOTAGE)) if deferred(k)]
     run = sorted(set(range(len(SABOTAGE))) - set(held), key=slow_first)
-    jobs = int(os.environ.get("SABOTAGE_JOBS", 0)) or os.cpu_count() or 1   # each holds a program
+    # each holds a program; the host is shared (AGENTS.md): WC2_JOBS from the Makefile,
+    # else a quarter of the cores
+    jobs = int(os.environ.get("SABOTAGE_JOBS", 0)) or int(os.environ.get("WC2_JOBS", 0)) \
+        or max(2, (os.cpu_count() or 8) // 4)
     with ProcessPoolExecutor(min(len(run), jobs)) as pool:
         futures = {k: pool.submit(plant, k) for k in run}
         for k, (name, _fn, corpus) in enumerate(SABOTAGE):
