@@ -76,13 +76,21 @@ ASM_DEFS = ("-DWC2_SYNC=1",)   # the sync build: poll checks host runs deliver a
 
 
 def assemble(src: str, out: Path) -> bytes:
-    s = out.with_suffix(".s")
+    """Assemble into this process's own files, then rename them into place: the
+    block test's parallel shards share the cache, and a shard that reads `out`
+    while another writes it gets a partial image (a successor in another
+    overlay, found after a regeneration emptied the cache)."""
+    tag = f".{os.getpid()}"
+    s, b = out.with_suffix(tag + ".s"), out.with_suffix(tag + ".bin")
     s.write_text(src)
-    r = subprocess.run([str(VASM), "-quiet", "-m68020", *ASM_DEFS, "-Fbin", "-o", str(out), str(s)],
+    r = subprocess.run([str(VASM), "-quiet", "-m68020", *ASM_DEFS, "-Fbin", "-o", str(b), str(s)],
                        capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(f"vasm failed:\n{r.stdout}{r.stderr}"[:4000])
-    return out.read_bytes()
+    data = b.read_bytes()
+    os.replace(s, out.with_suffix(".s"))
+    os.replace(b, out)
+    return data
 
 
 def ccr_image(flags: dict) -> int:

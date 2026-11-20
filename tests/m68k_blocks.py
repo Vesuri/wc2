@@ -911,6 +911,16 @@ def main(argv=None, on_batch=None) -> int:
                 skipped["writes its own code"] += 1
                 h.oracle.restore(uwrites | {a for a0, d in patches for a in range(a0, a0 + len(d))})
                 continue
+            # a random stack over the block's own stub record: its pushes overwrite
+            # the residency word that the far returns compare as CS (stub 17CF's at
+            # 1FF40 under SS:SP 14B2:B423, a callf block at WC2.EXE+39EC6); the game
+            # never puts a stack on a stub
+            if ovl is not None:
+                res = ((LOADSEG + (ovl.stub >> 4)) * 16 + 0x10) & 0xFFFFF
+                if {res, res + 1} & uwrites:
+                    skipped["stack over its stub's residency word"] += 1
+                    h.oracle.restore(uwrites | {a for a0, d in patches for a in range(a0, a0 + len(d))})
+                    continue
             if last.op in ("retf",) and regs["sp"] >= 0xFFF0:
                 skipped["oracle: retf SP wrap"] += 1
                 h.oracle.restore(uwrites | {a for a0, d in patches for a in range(a0, a0 + len(d))})
