@@ -312,9 +312,11 @@ test-install-data: install-data
 # Release (docs/release.md): committed sources only, never a diagnostic build. A clean
 # release image, slave and helper, the allowlisted package and its independent check:
 # $(RELEASE_DIR)/WC2-<version>.lha, WC2-<version>-whdload.lha (no Wc2) and Wc2.
-# The tag is the owner's; github-release publishes the tagged HEAD as a prerelease.
+# The tag (lightweight, the version, pushed) is the owner's; github-release publishes the
+# tagged HEAD as a normal release marked latest, as X-Wing's 0.1 and the WHDLoad project's.
 RELEASE_DIR ?= dist
 RELEASE_VERSION = $$(cat VERSION)
+RELEASE_DATE = $$(sed -n "s/^DATE = '\(.*\)'/\1/p" tools/check_release.py)
 release:
 	@git diff --quiet HEAD && test -z "$$(git status --porcelain --untracked-files=no)" || \
 		{ echo "release needs a clean tree: commit or stash first"; exit 1; }
@@ -333,8 +335,11 @@ github-release: release-check
 		{ echo "HEAD is not the commit tagged $(RELEASE_VERSION)"; exit 1; }
 	@mkdir -p build
 	$(PYTHON) tools/check_release.py --notes > build/release-notes.md
-	gh release create $(RELEASE_VERSION) $(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha $(RELEASE_DIR)/Wc2 \
-		--title $(RELEASE_VERSION) --prerelease --notes-file build/release-notes.md --verify-tag
+	cd $(RELEASE_DIR) && shasum -a 256 WC2-$(RELEASE_VERSION).lha > WC2-$(RELEASE_VERSION).lha.sha256
+	gh release create $(RELEASE_VERSION) $(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha \
+		$(RELEASE_DIR)/WC2-$(RELEASE_VERSION).lha.sha256 $(RELEASE_DIR)/Wc2 \
+		--title "Wing Commander II $(RELEASE_VERSION) ($(RELEASE_DATE))" --latest \
+		--notes-file build/release-notes.md --verify-tag
 
 test-release-installer: whdload amiga-release install-data
 	. amiga/env.sh && $(PYTHON) tools/test_release_installer.py

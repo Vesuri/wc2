@@ -114,8 +114,16 @@ def check_archive(archive, expected, blocks):
           'build identity, no original files or blocks, versions, slave header and icons')
 
 
+NOTICE = ('**Early alpha, unoptimized.** Expect it to be slow and to stop on paths the tests have '
+          'not reached; the digitised speech is not in this version. Read [what to expect]'
+          '(https://github.com/Vesuri/wc2#what-to-expect-from-01) before installing.\n\n')
+FOOTER = ('\nThe game files are not included: the installer installs them from your own seven '
+          'Wing Commander II PC floppies.\n')
+
+
 def release_notes(readme):
-    """The ReadMe's newest History entry as Markdown bullets."""
+    """The early-alpha notice, the ReadMe's newest History entry as Markdown bullets, and
+    the note that the game files are not included (as X-Wing's 0.1 release)."""
     entry = readme[readme.index('\n version ') + 1:].split('\n\n', 1)[0].splitlines()[1:]
     notes = []
     for line in entry:
@@ -123,7 +131,7 @@ def release_notes(readme):
             notes.append('- ' + line[3:])
         else:
             notes[-1] += ' ' + line.strip()
-    return '\n'.join(notes) + '\n'
+    return NOTICE + '\n'.join(notes) + '\n' + FOOTER
 
 
 def main():
