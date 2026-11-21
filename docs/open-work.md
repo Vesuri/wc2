@@ -15,11 +15,11 @@ Items are in work order; numbers are identifiers and are not reused.
     Music: `make gates-audio` passes on the host references' OPL logs (m6, mx1, mx2: level
     97.5-98.8%, pitch 99.7-100%, MEASURED 2026-11-20). Effects are prerendered (D13, D14,
     [drivers.md](drivers.md) "FM effects"): 39 one-shots, 573,963 bytes of Chip, the rest live;
-    the slave's `CHIPMEMSIZE` is `$150000` ([whdload.md](whdload.md) "Memory"). Not yet run on
-    the Amiga model: the capture, render, cache and player in one replay, as X-Wing's
-    `t-amiga-sfx` (`tests/amiga_replay.py --sfx`, `269828b`). Acceptance: the FM checks and
-    their sabotage pass; the effect replay shows every start of an effect with a sample
-    played and its channels muted; the intro's speech plays on the Amiga build.
+    the slave's `CHIPMEMSIZE` is `$150000` ([whdload.md](whdload.md) "Memory"). On the
+    68030 model `make t-amiga-sfx` replays mx1 with the capture, render, cache and player:
+    69 plays for 69 starts, each with its channels muted, and the host check passes
+    (MEASURED 2026-11-21). Acceptance: the FM checks and their sabotage pass; the
+    intro's speech plays on the Amiga build.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).

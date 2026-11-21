@@ -5,7 +5,8 @@ tests/test_fx_play.py (its commit 0eda68f's successors, docs/upstream.md).
 
   python3 tests/test_fx_play.py [--sabotage]
 
-A slot that starts an effect with a sample at full volume (7Fh): the OPL
+A slot that starts an effect with a sample at full volume (7Fh), once its start
+is counted (before, its channels muted and no play): the OPL
 channels its voices play muted while it plays, a Paula voice reserved and
 restarted on the sample's first chunk at the effect period and the sample's
 volume, the next chunk (or silence) latched a field after the latched one
@@ -110,6 +111,19 @@ def checks(lib):
     assert r.field() == (0, []), 'a slot below full volume taken'
     r.stop(30)
     r.field()
+    # A slot seen before its start is counted (the start fills it, keys the
+    # note on, then returns): muted, no play; the count a field later starts
+    # one play, not a restart after it.
+    r.play(7, 5, (2,), start=False)
+    assert r.field() == (1 << 2, []), 'a play before its start was counted'
+    r.starts[5] += 1
+    m = r.field()
+    assert m == (1 << 2, [0]) and r.v[0].restart, f'the counted start not played {m}'
+    m = r.field()
+    assert m == (1 << 2, [0]) and not r.v[0].restart, f'the count taken as a restart {m}'
+    r.stop(7)
+    for _ in range(FADE + 2):
+        r.field()
     base, sil = C.addressof(small), C.addressof(silence)
     for mode in (0, 1):
         ntsc.value = mode
@@ -200,8 +214,8 @@ def checks(lib):
     for p in (0, 1, 2, 5):
         r.stop(p)
     assert r.field() == (0, []), 'cleared samples still play'
-    print('effect play: masks, full volume, chunks, latch, instances, restart, fade, tail and key-on, '
-          'voice cap, PAL/NTSC: ok')
+    print('effect play: masks, full volume, counted start, chunks, latch, instances, restart, fade, '
+          'tail and key-on, voice cap, PAL/NTSC: ok')
 
 
 def main():
@@ -216,7 +230,9 @@ def main():
               'release': ('mask = (uint16_t)(mask | p->channels);', ';'),
               'keyon': ('keyon[c] != p->keys[c]', '0'),
               'cap': ('if (plays[k].phase == IDLE) {\n                if (!p)', 'if (1) {\n                if (!p)'),
-              'ntsc': ('fm_ntsc ? EFFECT_PERIOD_NTSC', '0 ? EFFECT_PERIOD_NTSC')}
+              'ntsc': ('fm_ntsc ? EFFECT_PERIOD_NTSC', '0 ? EFFECT_PERIOD_NTSC'),
+              'count': ('appeared[k] = fresh[id] != 0;', 'appeared[k] = 1;'),
+              'wait': ('now[d->owner[k]] != FX_NONE', 'tracked[d->owner[k]] != FX_NONE')}
     cases = plants.items() if '--sabotage' in sys.argv else [('normal', None)]
     missed = []
     for name, plant in cases:

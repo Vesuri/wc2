@@ -3,7 +3,7 @@
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
-	github-release test-release-installer gates-audio sound-fm sfx-price test-sfx-capture clean
+	github-release test-release-installer gates-audio sound-fm sfx-price test-sfx-capture t-amiga-sfx clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -48,6 +48,7 @@ help:
 	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
 	@echo "  make sfx-price          every FM effect captured from the original, played by the re-hoster"
 	@echo "  make test-sfx-capture   the runtime's effect capture against the original's in host lockstep, and its plants"
+	@echo "  make t-amiga-sfx        the effects on the 68030 model: capture, prerender and player in the replay, and its plants"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
@@ -346,6 +347,14 @@ AMIGA_MILESTONE ?= m1b
 AMIGA_CPU       ?= 68030
 test-amiga: host
 	. amiga/env.sh && AMIGA_CPU=$(AMIGA_CPU) $(PYTHON) tests/amiga_replay.py --milestone $(AMIGA_MILESTONE)
+# The effects on the 68030 model (X-Wing's t-amiga-sfx, 269828b): the replay to
+# SFX_MILESTONE with the capture, prerender and player running, each play against the
+# game's slots in the guest RAM, the host check with the capture; then the check's
+# plants on the saved run (each must fail).
+AMIGA_SFX_PLANTS = starts mute reserve
+t-amiga-sfx: host
+	. amiga/env.sh && AMIGA_CPU=$(AMIGA_CPU) nice -n 10 $(PYTHON) tests/amiga_replay.py --milestone $(SFX_MILESTONE) --sfx
+	for p in $(AMIGA_SFX_PLANTS); do $(PYTHON) tests/amiga_replay.py --milestone $(SFX_MILESTONE) --sfx $$p || exit 1; done
 
 amiga: gen-check
 	. amiga/env.sh && $(MAKE) -C amiga

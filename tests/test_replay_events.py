@@ -62,6 +62,7 @@ uint8_t rt_irq_saved[RT_STATE_BYTES + sizeof(struct rt_regs)];
 void rt_ems_touch(uint32_t a, uint32_t n)      /* no EMS frame here: a frame access stops */
 { (void)a; (void)n; __asm__("moveq #2,%d0; jmp test_stop"); __builtin_unreachable(); }
 volatile uint8_t rt_key_hook_running;
+volatile uint8_t rt_sfx_capturing;                 /* no effect capture here */
 int rt_guest_vector(uint8_t vector) { (void)vector; return 1; }  /* no idle point here */
 int main(void) {
     G_IF = 1;

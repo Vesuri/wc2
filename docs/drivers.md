@@ -126,3 +126,12 @@ latches read a count falling 40h a latch. `tools/sfx_capture.py` uses the same m
 is its oracle (`tests/host_run.py --sfx-capture`). The start is reached only by direct far
 calls, so it needs an `entries.csv` row for the runtime's call. The capture keeps only
 writes that change a register: 10,566 of 133,254 (MEASURED, m4 snapshot).
+
+In play, `fx_play.c` reads the slots once a field from the Paula field task, at Amiga
+interrupt level, whatever the guest's IF. The start fills the slot (channel byte first,
+record last), keys the note on through the driver (`+121E9`, OPL writes with PIT delay
+loops), then returns, where HLE `sfx_start` counts it: a field in between sees the slot,
+or its last effect's record, with no start. A slot starts a play only once its id's start
+is counted; until then its channels are muted. Starting on sight played nearly every start
+of mx1's effect 37 twice, the count a field later taken for a restart (MEASURED,
+`make t-amiga-sfx`: 106 plays for 69 starts, 69 for 69 after).

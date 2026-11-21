@@ -9,8 +9,9 @@
  * key-on on the channel (the slot frees at the note-off: the release is the
  * sample's). A stop before the game's release fades out over FX_FADE_FIELDS;
  * at most FX_PLAYS play, the oldest giving way. A start that reuses a slot
- * within one field is seen in the start counts. Another slot volume stays on
- * FM. */
+ * within one field is seen in the start counts; a slot seen before its start
+ * is counted waits for the count, its channels muted. Another slot volume
+ * stays on FM. */
 #include "fx_play.h"
 
 #define SILENCE_BYTES 4
@@ -200,7 +201,7 @@ static void play_field(struct play *p, struct fm_voice *v, uint32_t field)
 uint16_t fx_field(const struct fx_driver *d, const uint8_t *starts, const uint8_t *keyon, struct fm_voice *voice)
 {
     uint32_t field = fm_ntsc ? EFFECT_FIELD_NTSC : EFFECT_FIELD_PAL;
-    uint8_t fresh[FX_IDS], appeared[FX_SLOTS], k, c;
+    uint8_t fresh[FX_IDS], appeared[FX_SLOTS], now[FX_SLOTS], k, c;
     uint16_t mask = 0;
     if (!tracking) {
         for (k = 0; k < FX_SLOTS; ++k) {
@@ -213,16 +214,28 @@ uint16_t fx_field(const struct fx_driver *d, const uint8_t *starts, const uint8_
         seen[k] = starts[k];
     }
     /* A slot that now plays another effect, or none, stopped its own; one
-     * that newly plays an effect started it. */
+     * that newly plays an effect started it once its start is counted. The
+     * start fills the slot, then keys the note on through the driver, and is
+     * counted at its return: a field between sees the slot (or, before the
+     * record is written, its last effect's) with no start. It waits, its
+     * channels muted, and plays at the count (MEASURED: else nearly every
+     * start of mx1's effect 37 played twice, the count taken a field later as
+     * a restart). */
     for (k = 0; k < FX_SLOTS; ++k) {
         uint8_t id = d->active[k] && d->id[k] < FX_IDS && d->volume[k] == FX_FULL && effects[d->id[k]].pcm
                    ? d->id[k] : FX_NONE;
-        appeared[k] = id != FX_NONE && id != tracked[k];
+        now[k] = id;
+        appeared[k] = 0;
         if (tracked[k] != FX_NONE && id != tracked[k]) {
             stop(k, field);
         }
-        if (appeared[k] && fresh[id]) {
-            --fresh[id];
+        if (id != FX_NONE && id != tracked[k]) {
+            appeared[k] = fresh[id] != 0;
+            if (appeared[k]) {
+                --fresh[id];
+            } else {
+                id = FX_NONE;       /* its start not counted yet */
+            }
         }
         tracked[k] = id;
     }
@@ -240,7 +253,7 @@ uint16_t fx_field(const struct fx_driver *d, const uint8_t *starts, const uint8_
         }
     }
     for (k = 0; k < 9; ++k) {
-        if (d->owner[k] < FX_SLOTS && tracked[d->owner[k]] != FX_NONE) {
+        if (d->owner[k] < FX_SLOTS && now[d->owner[k]] != FX_NONE) {
             mask = (uint16_t)(mask | 1u << k);
         }
     }

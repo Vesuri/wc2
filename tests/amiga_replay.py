@@ -17,6 +17,7 @@ is re-recorded.
 import argparse
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -30,6 +31,8 @@ import host_run as H  # noqa: E402
 import rep_replay  # noqa: E402
 from translator import cfg, emit, gen  # noqa: E402
 from translator.lower import LOADSEG  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
+import sfx_capture as X  # noqa: E402
 
 ROOT = H.REPO
 TIMEOUT = 3600   # seconds of emulation for the whole run (the 68030 model at max speed)
@@ -233,7 +236,7 @@ def fresh_run_directory(out):
     return Path(tempfile.mkdtemp(prefix='run-', dir=out))
 
 
-def run(name, out, trace, work, timeout=TIMEOUT):
+def run(name, out, trace, work, timeout=TIMEOUT, sfx=False):
     capture = out / 'capture'
     capture.mkdir(exist_ok=True)
     template = (ROOT / 'amiga/milestone.gdb.in').read_text()
@@ -259,6 +262,11 @@ def run(name, out, trace, work, timeout=TIMEOUT):
         'rep_record.service, rep_record.hits, rep_record.point, rep_record.cx, rep_record.end_cx, '
         'rep_record.restart, rep_record.repeat, replay_rep_offset\n'
         '  printf "WC2_REPLAY_VISITS %u epoch=%u\\n", visits[*(unsigned *)($sp+8)], epochs[*(unsigned *)($sp+8)]\n'))
+    if sfx:
+        rel = os.path.relpath(capture, ROOT / 'amiga')
+        check += '\n' + SFX_REPORT.replace('@OUT@', rel)
+        assert template.count('break rt_replay_done\n') == 1
+        template = template.replace('break rt_replay_done\n', sfx_watch(rel) + 'break rt_replay_done\n')
     template = template.replace('set $bm = &amiga_bitmap', check + '\nset $bm = &amiga_bitmap')
     (capture / 'fixture.gdb').write_text(template)
     with socket.socket() as listener:
@@ -296,11 +304,144 @@ def run(name, out, trace, work, timeout=TIMEOUT):
     regs = [line.removeprefix('WC2_REGS ') for line in lines if line.startswith('WC2_REGS ')]
     assert len(regs) == 1, regs
     (capture / 'regs.txt').write_text(regs[0])
-    problems = H.check(name, timeout, capture, None, trace=trace)
+    if sfx:
+        problems = sfx_problems(capture)
+        if problems:
+            raise SystemExit('\n'.join(problems))
+    problems = H.check(name, timeout, capture, None, trace=trace, **({'sfx': 'on'} if sfx else {}))
     if problems:
         raise SystemExit('\n'.join(problems))
     print(f'Amiga diagnostic replay {name}: registers, state, RAM, DAC, shown pixels and '
-          f'service history match DOSBox-X', flush=True)
+          f'service history match DOSBox-X' + (' with the effect capture, prerender and player '
+          f'running; every start of an effect with a sample played, its channels muted' if sfx else ''),
+          flush=True)
+
+
+# The effect check (--sfx, make t-amiga-sfx; X-Wing 269828b's, per play): at the
+# first field after each play starts (fx_play.c's start, the Paula field task's
+# fm_field call with the mute mask fx_field returned), the game's 32 effect slots
+# and STRAX.DRV's voice table from the guest RAM; at the end the capture's and
+# player's counts (runtime.h rt_sfx_*, fx_play.h, Audio.cpp). No effect slot is
+# active at the last snapshot of m4, mx1 or mx2 (MEASURED), so X-Wing's
+# end-of-replay check has nothing to check here.
+DS = (LOADSEG + X.DGROUP) * 16          # DGROUP's linear address (sfx.c: load = DS - DGROUP)
+DRV_VOICES, DRV_VOICE_COUNT = 0x86, 11  # sfx.c: STRAX.DRV's voice MIDI channels, FFh free
+RESERVE = 0xF000                        # fm_paula.h FM_RESERVE(0..3)
+FULL = 0x7F                             # fx_play.h FX_FULL
+SFX_REPORT = r"""printf "WC2_SFX captures=%u capture_fields=%u fields=%u bytes=%u cached=%u started=%u events=%u\n", rt_sfx_captures, amiga_sfx_capture_fields, amiga_audio_effect_fields, amiga_audio_effect_bytes, amiga_audio_effect_cached, fx_started, $sfx_n
+dump binary memory @OUT@/sfx-starts.bin &rt_sfx_starts[0] &rt_sfx_starts[56]
+dump binary memory @OUT@/sfx-ticks.bin &rt_sfx_ticks[0] &rt_sfx_ticks[56]
+dump binary memory @OUT@/sfx-writes.bin &rt_sfx_writes[0] &rt_sfx_writes[56]"""
+
+
+def guest_dump(path, start, length):
+    """A gdb dump of guest linear [start, start + length) (rt_guest reversed:
+    guest L at $g - L), byte order reversed in the file."""
+    return (f'  eval "dump binary memory {path} %lu %lu", (unsigned long)($g - ({start}) - {length - 1}), '
+            f'(unsigned long)($g - ({start}) + 1)\n')
+
+
+def sfx_watch(rel):
+    """A breakpoint before the milestone's, on fm_field's entry (once a field,
+    from the Paula field task, with the mask fx_field returned as its third
+    argument): in a field where plays started (fx_started changed; a line
+    breakpoint in fx_play.c misses its inlined copies), the slots and voices
+    dumped and the mask printed."""
+    drv = (f'(*(unsigned char *)($g - {DS + X.DRV_CS}) | *(unsigned char *)($g - {DS + X.DRV_CS + 1}) << 8) * 16')
+    dump = lambda name, start, length: guest_dump(f'{rel}/sfx-{name}-%u.bin', start, length).replace(
+        '.bin %lu %lu", ', '.bin %lu %lu", $sfx_n, ')
+    return ('set $sfx_n = 0\n'
+            'set $sfx_seen = 0\n'
+            'break *fm_field if fx_started != $sfx_seen\n'
+            'commands\n'
+            '  silent\n'
+            '  set $g = *(unsigned char **)&rt_guest\n'
+            + dump('slots', DS + X.SLOTS, X.SLOT_BYTES * X.SLOT_COUNT)
+            + dump('voices', f'{drv} + {DRV_VOICES}', DRV_VOICE_COUNT)
+            + '  printf "WC2_SFX_PLAY n=%u from=%u started=%u mask=%u\\n", $sfx_n, $sfx_seen, fx_started, '
+            '*(unsigned *)($sp+12) & 0xffff\n'
+            '  set $sfx_seen = fx_started\n'
+            '  set $sfx_n = $sfx_n + 1\n'
+            '  continue\n'
+            'end\n')
+
+
+def live_ids():
+    text = (ROOT / 'src/platform/amiga/fx_play.h').read_text()
+    return {int(x) for x in re.search(r'#define FX_LIVE_IDS \{([^}]*)\}', text).group(1).split(',')}
+
+
+SFX_PLANTS = ('starts', 'mute', 'reserve')
+
+
+def sfx_problems(capture, plant=None):
+    """The capture ran and the samples rendered; the plays are the starts the
+    game made of the effects with a sample (captured with writes and a release,
+    not FX_LIVE_IDS: Audio.cpp wanted); at the first field of each play, a slot
+    of the game plays such an effect at full volume, every OPL channel a STRAX.DRV
+    voice of such a slot plays is muted and a Paula voice is reserved. A plant
+    alters the saved data and must fail."""
+    lines = (capture / 'gdb.log').read_text().splitlines()
+    report = [x for x in lines if x.startswith('WC2_SFX ')]
+    if len(report) != 1:
+        return ['no WC2_SFX report']
+    print(report[0], flush=True)
+    f = {k: int(v) for k, v in (kv.split('=') for kv in report[0].split()[1:])}
+    starts = bytearray((capture / 'sfx-starts.bin').read_bytes())
+    ticks = struct.unpack('>56H', (capture / 'sfx-ticks.bin').read_bytes())
+    writes = struct.unpack('>56H', (capture / 'sfx-writes.bin').read_bytes())
+    if f['captures'] < 1 or not f['bytes']:
+        return [f'no capture or no samples: {f}']
+    live = live_ids()
+    sampled = {i for i in range(56) if writes[i] and ticks[i] and i not in live}
+    plays = [dict(kv.split('=') for kv in x.split()[1:]) for x in lines if x.startswith('WC2_SFX_PLAY ')]
+    plays = [{k: int(v) for k, v in p.items()} for p in plays]
+    if plant == 'starts':
+        sid = next(i for i in sampled if starts[i])
+        starts[sid] = (starts[sid] + 1) & 255
+    problems = []
+    took = sum(starts[i] for i in sampled)
+    if f['started'] != took:
+        problems.append(f'{f["started"]} plays for {took} starts of effects with samples')
+    if plays and plays[-1]['started'] != f['started']:
+        problems.append(f'plays after the last reported field: {plays[-1]["started"]} of {f["started"]}')
+    if len(plays) != f['events'] or not plays:
+        problems.append(f'{len(plays)} play fields reported, {f["events"]} counted: nothing to check')
+    seg = DS >> 4
+    for p in plays:
+        s = (capture / f'sfx-slots-{p["n"]}.bin').read_bytes()[::-1]
+        voices = (capture / f'sfx-voices-{p["n"]}.bin').read_bytes()[::-1]
+        w = lambda a: s[a] | s[a + 1] << 8
+        slots = {}
+        for k in range(X.SLOT_COUNT):
+            at = X.SLOT_BYTES * k
+            off, rseg = w(at + 10), w(at + 12)
+            sid = (off - X.FX_TABLE) // 8
+            if s[at + 1] and rseg == seg and off > X.FX_TABLE and not (off - X.FX_TABLE) % 8 and sid < 56:
+                slots[k] = (sid, s[at + 1], s[at + 2], s[at + 4])
+        owner = {}
+        for v in range(DRV_VOICE_COUNT):
+            if voices[v] != 0xFF:
+                for k, (_, c1, c2, _) in slots.items():
+                    if voices[v] + 1 in (c1, c2):
+                        owner[v if v <= 8 else 17 - v] = k
+        want = {k for k, (sid, _, _, vol) in slots.items() if sid in sampled and vol == FULL}
+        channels = sorted(c for c, k in owner.items() if k in want)
+        mask = p['mask']
+        if plant == 'mute' and p is plays[0] and channels:
+            mask &= ~(1 << channels[0])
+        if plant == 'reserve' and p is plays[0]:
+            mask &= ~RESERVE
+        print(f'field {p["n"]} (plays {p["from"] + 1}-{p["started"]}): slots ' +
+              ', '.join(f'{k}: effect {slots[k][0]}' for k in sorted(want)) +
+              f'; channels {channels}, mask {mask:#06x}', flush=True)
+        if not want:
+            problems.append(f'field {p["n"]}: no slot plays an effect with a sample at full volume')
+        if any(not mask >> c & 1 for c in channels):
+            problems.append(f'field {p["n"]}: channels {channels} not all muted (mask {mask:#06x})')
+        if not mask & RESERVE:
+            problems.append(f'field {p["n"]}: no Paula voice reserved (mask {mask:#06x})')
+    return problems
 
 
 if __name__ == '__main__':
@@ -310,11 +451,22 @@ if __name__ == '__main__':
                     help="control: the image expects the reference's second SB block one byte longer; must fail")
     ap.add_argument('--hash-step', type=int, default=HASH_STEP,
                     help='diagnostic: service-history checkpoint interval (1: stop at the first differing event)')
+    ap.add_argument('--sfx', nargs='?', const='on', choices=('on', 'check') + SFX_PLANTS,
+                    help='the effect check: the capture, prerender and player run; each play against '
+                         'the slots in the guest RAM; the host check with the capture. "check" rechecks '
+                         'the saved run; a plant name alters the saved run and must fail')
     ap.add_argument('--timeout', type=int, default=TIMEOUT,
                     help='seconds for the FS-UAE run and for the host run of the check (X-Wing c737385)')
     args = ap.parse_args()
     out = ROOT / 'tmp/amiga-replay' / args.milestone
+    if args.sfx in ('check',) + SFX_PLANTS:
+        problems = sfx_problems(out / 'capture', None if args.sfx == 'check' else args.sfx)
+        if args.sfx == 'check':
+            print('\n'.join(problems) or 'effect check: ok')
+            sys.exit(1 if problems else 0)
+        print(f'effect check plant {args.sfx}: ' + (f'caught ({problems[0]})' if problems else 'MISSED'))
+        sys.exit(0 if problems else 1)
     trace = H.host_reference(args.milestone)
     prepare(args.milestone, out, trace, args.sabotage, args.hash_step)
     work = build(out)
-    run(args.milestone, out, trace, work, args.timeout)
+    run(args.milestone, out, trace, work, args.timeout, sfx=bool(args.sfx))
