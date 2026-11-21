@@ -96,9 +96,10 @@ INT 08h (60 Hz), which steps each voice's software pitch envelope and vibrato an
 its A0h/B0h, then calls the game's callback (`[1Ch]` → `WC2.EXE+132CC`: music fades, the
 song sequencer, then the effect tick). DERIVED by reading.
 
-An effect is a chain of 8-byte `FX.000` records: flags, program, note, velocity, duration
-in ticks (word), target note. The game keeps the file at DS:0540h (id k at + 8k; ids
-1-55 after the container header). `WC2.EXE+06B48` (sound on: DS:070Eh) passes a request to
+An effect is a chain of 8-byte records: flags, program, note, velocity, duration in
+ticks (word), target note, in the effect table at DS:0540h (id k at + 8k; ids 1-55).
+WC2.EXE holds that table; `FX.000`, loaded into a heap buffer, differs from it in 6
+records and is not what the starts read (MEASURED on snap-m4-1). `WC2.EXE+06B48` (sound on: DS:070Eh) passes a request to
 `+1254D`, which takes one of 32 slots (DS:A54Ch, 14 bytes) and one or two MIDI channels
 (`+1219E`) and starts it in `+121E9` (all notes off, program, volume, pan, note on). The
 effect tick `+123F4` counts the duration down; at 0, the note ends and flag bit 1 slides
@@ -113,3 +114,15 @@ their release), 11 are held (11, 12, 14, 15, 17, 32, 38, 45, 48, 53, 54); no rec
 36 use feedback 7. Control: a captured effect's per-tick pitch writes after its key-on
 equal the reference's for the same patch (ids 1 and 37 against `host-m6`); 23 of the 55
 patches occur at key-ons of the m6 and mx2 references (MEASURED 2026-11-20).
+
+Prerendered (owner decisions D13, D14): at the first effect start the runtime
+(`src/runtime/sfx.c`, HLE `sfx_start` at the start's RETF `WC2.EXE+126D4`) captures every
+one-shot the same way. The callback cannot be redirected (`indirect.csv` knows only
+`+132CC`), so its gates in DGROUP hold it to the effect tick: A53Ch 0 (no fade), A801h 1
+and A544h/A546h 0 (no song). The BIOS chain after it (`+10080`, `pushf; callf [DEBE]`)
+adds its step to an accumulator and jumps to the BIOS on a carry, so each tick sets the
+step to 1 and the accumulator to 0. The driver's OPL delay reads the PIT, so a capture's
+latches read a count falling 40h a latch. `tools/sfx_capture.py` uses the same method and
+is its oracle (`tests/host_run.py --sfx-capture`). The start is reached only by direct far
+calls, so it needs an `entries.csv` row for the runtime's call. The capture keeps only
+writes that change a register: 10,566 of 133,254 (MEASURED, m4 snapshot).

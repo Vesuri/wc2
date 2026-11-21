@@ -9,8 +9,9 @@
         INCLUDE whdmacros.i
 
 ; Sizes from MemFree measurements (docs/whdload.md, Memory): code, guest RAM
-; and the EMS store in Fast; 1.2 MiB of Fast left for the sound to come.
-CHIPMEMSIZE = $C0000
+; and the EMS store in Fast; in Chip the screens, the FM pool and the
+; prerendered effects (owner decision D13: $C0000 plus what they need).
+CHIPMEMSIZE = $150000
         IFD FASTSIZE
 FASTMEMSIZE = FASTSIZE            ; sizing variants (MemFree)
         ELSE

@@ -6,30 +6,20 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6b: Amiga platform (stream C, beside P6)
 
-19. Audio on Paula (port-plan P6b.2): FM music through SWOTL's `fm_paula.c`, effects priced
-    by `fm_effect_check` then prerendered, speech on one Paula voice from the SB DMA blocks,
+19. Audio on Paula (port-plan P6b.2): speech on one Paula voice from the SB DMA blocks,
     channel ownership stated. The Amiga `plat_sb_block` is silent today: it times the block
     and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
     3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)); production delivers
     INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8), up to 57 retries of about 1 ms
     late for one block (MEASURED over the intro's blocks). Playing it keeps that timing.
     Music: `make gates-audio` passes on the host references' OPL logs (m6, mx1, mx2: level
-    97.5-98.8%, pitch 99.7-100%, MEASURED 2026-11-20). Effects ([drivers.md](drivers.md)
-    "FM effects": FX.000 note scripts the game steps on STRAX.DRV's 60 Hz tick) are priced on
-    the live re-hoster (`make sfx-price`, each effect alone from the original under Unicorn,
-    MEASURED 2026-11-20): level within 3 dB on 89.8% of 8,176 voiced fields, a voice on
-    89.8% of 9,040 audible channel fields; 27 of 55 effects below 95% level, 16 below 80%
-    (1, 2, 5, 10, 13, 16, 19, 23, 27, 44, 46-48, 53-55), mostly feedback 7 with a loud
-    modulator about 3 dB quiet (the noise tables' level); the slides 18 and 20 keep 3-5 OPL
-    channels sounding, a voice on 62-65% of theirs; pitch is not measurable by fm_check (the
-    driver moves every effect's F-number each tick). Prerendering as X-Wing (`0eda68f`,
-    `269828b`) needs two HLE rows (the effect start `WC2.EXE+1254D` or `+121E9`, a capture
-    point) and Chip for 42.5 s of one-shots before their release tails (INFERRED: about
-    700 KB at X-Wing's 16.6 KB/s; the largest Chip block free in flight is 535,248 bytes,
-    [whdload.md](whdload.md) "Memory"). Owner decision D13 (2026-11-20): prerender, with
-    those rows, and raise the slave's `CHIPMEMSIZE` to what the samples need, MemFree
-    measured. Acceptance: the FM checks and their sabotage pass; the
-    intro's speech plays on the Amiga build; the Chip cost MEASURED.
+    97.5-98.8%, pitch 99.7-100%, MEASURED 2026-11-20). Effects are prerendered (D13, D14,
+    [drivers.md](drivers.md) "FM effects"): 39 one-shots, 573,963 bytes of Chip, the rest live;
+    the slave's `CHIPMEMSIZE` is `$150000` ([whdload.md](whdload.md) "Memory"). Not yet run on
+    the Amiga model: the capture, render, cache and player in one replay, as X-Wing's
+    `t-amiga-sfx` (`tests/amiga_replay.py --sfx`, `269828b`). Acceptance: the FM checks and
+    their sabotage pass; the effect replay shows every start of an effect with a sample
+    played and its channels muted; the intro's speech plays on the Amiga build.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).

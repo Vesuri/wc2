@@ -296,6 +296,33 @@ extern uint8_t rt_music_skip;        /* 1: HLE music_skip skips song starts */
 extern uint16_t rt_deliver_cs, rt_deliver_ip;
 extern void *rt_deliver_code;
 extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 clears it */
+
+/* Effect capture (sfx.c, owner decision D13): at the first effect start on
+ * the main thread with rt_sfx_prerender_on, each effect id's OPL writes
+ * in rt_sfx_capture[rt_sfx_first[id]..+rt_sfx_writes[id]), ticks of
+ * STRAX.DRV's 60 Hz timer from its start (0); rt_sfx_ticks[id] the tick its
+ * slot was released (0: held, the game stops it); rt_sfx_opl the registers the
+ * captures start from. While rt_sfx_capturing, rt_out8's data writes go to
+ * rt_sfx_write, not rt_opl, and PIT counter 0 latches read a count falling
+ * 40h a latch from FFFFh (rt_sfx_pit_reset, ports.c). */
+#define RT_SFX_IDS 56               /* the effect table (DS:0540h): ids 1-55 */
+#define RT_SFX_WRITES 16384
+struct rt_sfx_write { uint16_t tick; uint8_t reg, value; };
+extern uint8_t rt_sfx_prerender_on;
+extern volatile uint8_t rt_sfx_capturing;
+extern struct rt_sfx_write rt_sfx_capture[RT_SFX_WRITES];
+extern uint16_t rt_sfx_first[RT_SFX_IDS], rt_sfx_writes[RT_SFX_IDS], rt_sfx_ticks[RT_SFX_IDS];
+extern uint8_t rt_sfx_opl[256];
+extern uint32_t rt_sfx_captures;    /* completed captures */
+void rt_sfx_write(uint32_t reg, uint32_t value);
+void rt_sfx_start(void);
+void rt_sfx_pit_reset(void);
+/* In play (fx_play.c): rt_sfx_starts[id] counts the starts the game made that
+ * took a slot (HLE sfx_start), wrapping; rt_sfx_read the game's RT_SFX_SLOTS
+ * effect slots and each OPL channel's slot (sfx.c). */
+#define RT_SFX_SLOTS 32
+extern uint8_t rt_sfx_starts[RT_SFX_IDS];
+int rt_sfx_read(uint8_t *active, uint8_t *id, uint8_t *volume, uint8_t *owner);
 /* Gameport (port 201h), set by the platform before rt_start: 0 answers as the
  * reference's absent joystick; 1 is stick A, whose axis one-shots time out
  * after rt_joystick_axis[] (X, Y) reads following the trigger and whose

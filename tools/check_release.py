@@ -22,7 +22,7 @@ from package_release import ORIGINAL_HASHES, PREFIX, ROOT, archive_names, crc16,
 
 DATE = '19.11.2026'
 STAMP = (((2026 - 1980) << 9) | (11 << 5) | 19) << 16
-CHIP, EXP = 0xC0000, 0x700000 + 0x80000     # the slave's BaseMem; ExpMem: game plus Kickstart
+CHIP, EXP = 0x150000, 0x700000 + 0x80000     # the slave's BaseMem; ExpMem: game plus Kickstart
 
 
 def original_blocks(size=64):

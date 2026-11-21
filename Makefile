@@ -3,7 +3,7 @@
 .PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
-	github-release test-release-installer gates-audio sound-fm sfx-price clean
+	github-release test-release-installer gates-audio sound-fm sfx-price test-sfx-capture clean
 
 REFERENCE_ROOT ?= tmp/pc-root
 INSTALL_OUT ?= tmp/pc-install
@@ -44,9 +44,10 @@ help:
 	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1, m1b, m2, m3, m4, m5 and m6 (tests/host_run.py)"
 	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
 	@echo "  make gates-audio        the FM re-hoster against Nuked OPL on the host references' OPL logs,"
-	@echo "                          the FM unit checks and every plant (docs/sound-plan.md)"
+	@echo "                          the FM unit checks, the effect render and player, and every plant (docs/sound-plan.md)"
 	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
 	@echo "  make sfx-price          every FM effect captured from the original, played by the re-hoster"
+	@echo "  make test-sfx-capture   the runtime's effect capture against the original's in host lockstep, and its plants"
 	@echo "  make amiga              build amiga/out/Wc2.exe"
 	@echo "  make smoke              boot it under FS-UAE + GDB: takeover live, then hand-back"
 	@echo "  make size               account for code, data, symbols and relocations in the executable"
@@ -263,6 +264,16 @@ host: gen-check build/host/wc2.elf
 HOST_MILESTONES = m1 m1b m2 m3 m4 m5 m6
 t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 20000)
+# The effect capture (src/runtime/sfx.c, HLE sfx_start) against tools/sfx_capture.py in
+# host lockstep to the first milestone whose route starts an effect, and its plants.
+SFX_MILESTONE ?= mx1
+SFX_PLANTS = restore tick value end starts
+t-sfx-capture: host
+	$(call RUN,sfx-capture,$(PYTHON) tests/host_run.py --milestone $(SFX_MILESTONE) --timeout 20000 --sfx-capture)
+t-sab-sfx-capture-%: host
+	$(call RUN,sabotage-sfx-capture-$*,$(PYTHON) tests/host_run.py --milestone $(SFX_MILESTONE) --timeout 20000 --sfx-capture $*)
+test-sfx-capture:
+	@$(MAKE) -s -k -j$(JOBS) t-sfx-capture $(SFX_PLANTS:%=t-sab-sfx-capture-%)
 test-host: host
 	@$(MAKE) -s -k -j$(JOBS) $(HOST_MILESTONES:%=t-host-%)
 
@@ -289,7 +300,7 @@ t-sab-fm-paula: build/tools/fm_check
 FM_UNITS = quality render phase envelope allocation cache
 t-sab-fm-%:
 	$(call RUN,sabotage-fm-$*,$(PYTHON) tests/test_fm_$*.py --sabotage)
-# The FM effects priced on the live re-hoster (open-work 19): each FX.000 effect's OPL
+# The FM effects priced on the live re-hoster (open-work 19): each effect's OPL
 # writes from the original game code and STRAX.DRV under Unicorn (tools/sfx_capture.py,
 # the m4 host reference's flight snapshot), each through fm_check; a report, no gate
 # (fm_check's pitch needs steady notes, and the driver moves every effect's pitch a tick).
@@ -299,10 +310,34 @@ sfx-price: build/tools/fm_check
 	for f in tmp/sound/sfx/*.csv; do n=$$(basename $$f .csv); \
 		nice -n $(NICE) build/tools/fm_check $$f tmp/sound/sfx-paula/$$n.wav | sed "s|^|$$n |"; \
 	done | sort -n > tmp/sound/sfx-price.txt; cat tmp/sound/sfx-price.txt
+# Prerendered effects (D13) against Nuked OPL on the original's captures
+# (tools/sfx_capture.py from the m4 flight snapshot); WAVs in tmp/sound/sfx-wav.
+build/tools/fm_effect_check: tools/fm_effect_check.cpp src/platform/amiga/fm_paula.c src/platform/amiga/fm_paula.h src/platform/amiga/fx_play.h
+	@mkdir -p build/tools
+	cc -O2 -std=c99 -Wall -Wextra -Werror -c -o build/tools/fm_effect_paula.o src/platform/amiga/fm_paula.c
+	c++ -O2 -std=c++17 -Isrc/platform/amiga -I$(NUKED) -o $@ $< build/tools/fm_effect_paula.o $(NUKED)/nukedopl.cpp
+tmp/sound/sfx-writes.csv: tools/sfx_capture.py
+	nice -n $(NICE) $(PYTHON) tools/sfx_capture.py > tmp/sound/sfx-capture.txt
+t-fm-effect: build/tools/fm_effect_check tmp/sound/sfx-writes.csv
+	$(call RUN,fm-effect,sh -c 'mkdir -p tmp/sound/sfx-wav && build/tools/fm_effect_check tmp/sound/sfx-writes.csv tmp/sound/sfx-wav')
+t-sab-fm-effect: build/tools/fm_effect_check tmp/sound/sfx-writes.csv
+	$(call RUN,sabotage-fm-effect,sh -c 'mkdir -p tmp/test/sfx-wav && for s in pitch level end fade live; do \
+		! build/tools/fm_effect_check tmp/sound/sfx-writes.csv tmp/test/sfx-wav --sabotage $$s || exit 1; done')
+# The prerender's assembly loop (fm_effect_run.s) on the 68020 core against the C loop.
+t-fm-effect-asm: tmp/sound/sfx-writes.csv
+	$(call RUN,fm-effect-asm,sh -c '. amiga/env.sh && $(PYTHON) tests/test_fm_effect_asm.py')
+t-sab-fm-effect-asm: tmp/sound/sfx-writes.csv
+	$(call RUN,sabotage-fm-effect-asm,sh -c '. amiga/env.sh && $(PYTHON) tests/test_fm_effect_asm.py --sabotage')
+# The effect player (fx_play.c) on synthetic effect slots.
+t-fx-play:
+	$(call RUN,fx-play,$(PYTHON) tests/test_fx_play.py)
+t-sab-fx-play:
+	$(call RUN,sabotage-fx-play,$(PYTHON) tests/test_fx_play.py --sabotage)
 # Isolated audio changes (AGENTS.md "Validation scope"): the sound checks and their plants.
 gates-audio:
 	@$(MAKE) -s -k -j$(JOBS) $(FM_MILESTONES:%=t-fm-paula-%) t-sab-fm-paula \
-		$(FM_UNITS:%=t-unit-test_fm_%) $(FM_UNITS:%=t-sab-fm-%)
+		$(FM_UNITS:%=t-unit-test_fm_%) $(FM_UNITS:%=t-sab-fm-%) \
+		t-fm-effect t-sab-fm-effect t-fm-effect-asm t-sab-fm-effect-asm t-fx-play t-sab-fx-play
 
 # test-amiga (gate 5): the diagnostic replay image (tests/amiga_replay.py) replays
 # the host reference's interrupts, REP slices, 3DAh and PIT reads and clocks on the

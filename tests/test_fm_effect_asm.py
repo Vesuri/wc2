@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""fm_effect_run.s (the prerender's inner loop, docs/sound-plan.md R4) against
-the C loop it replaces.
+"""fm_effect_run.s (the prerender's inner loop, docs/translator-design.md Sound)
+against the C loop it replaces, copied from Secret Weapons of the Luftwaffe's.
 
   python3 tests/test_fm_effect_asm.py [--sabotage]
 
 fm_paula.c built for the 68020 with FM_EFFECT_ASM and the assembly, run on the
 Unicorn 68020 core; fm_paula.c's C loop built natively. Both render every
-captured effect (t-sfx-capture's tmp/sfx-capture.csv) and four synthetic ones,
-one per loop variant (feedback on/off x FM/additive, waveforms 0-3): every
-output byte, the length and the peak equal. Plants (the assembly):
+captured effect (tools/sfx_capture.py's tmp/sound/sfx-writes.csv, the loops
+too) and twelve synthetic ones, one per loop variant (feedback on/off x
+FM/additive x the mix's shift 0-2 by the channels written, waveforms 0-3):
+every output byte, the length and the peak equal. Plants (the assembly):
 
   mask      the carrier's phase index masked to 9 bits
   feedback  the feedback doubled
   history   the modulator's previous output not kept
+  shift     the mix's shift by 2 dropped
+  chiprate  one of the feedback's two chip-rate samples dropped
 """
 import ctypes as C
 import os
@@ -28,14 +31,16 @@ import uc as U  # noqa: E402
 from host_run import elf_load  # noqa: E402
 
 SRC = ROOT / "src/platform/amiga"
-CAPTURE = ROOT / "tmp/sfx-capture.csv"
-MAX = 131068                        # tfh_paula.h TFH_EFFECT_BYTES
-WRITES = 4096
+CAPTURE = ROOT / "tmp/sound/sfx-writes.csv"
+MAX = 10 * 16572                    # FM_EFFECT_RATE: the capture's 8 s and the tail
+WRITES = 4096                       # an effect's writes at most (the loops' 2,959)
 TOOLS = Path(os.environ.get("AMIGA_TOOLCHAIN") or Path.home() / ".local/opt") / "bin"
 PLANTS = {
     "mask": ("\tand.w\t#$3ff,d3\n", "\tand.w\t#$1ff,d3\n"),
     "feedback": ("\tasr.l\td6,d7\n", "\tasr.l\td6,d7\n\tadd.l\td7,d7\n"),
     "history": ("\tmovea.l\td2,a5\n", "\tnop\n"),
+    "shift": (".m11:\tFXLOOP\t1,1,2\n", ".m11:\tFXLOOP\t1,1,0\n"),
+    "chiprate": ("\tFXMOD\n\tendif\n\tadd.l\td5,d1\n", "\tendif\n\tadd.l\td5,d1\n"),
 }
 HARNESS = r'''
 #include "fm_paula.h"
@@ -60,10 +65,12 @@ def effects():
             t, i, r, v = line.split(",")
             fx.setdefault(int(i), []).append((int(t), int(r, 16), int(v, 16)))
     out = [(f"id {i}", opl0, w) for i, w in sorted(fx.items())]
-    for mode in range(4):           # channel 3: feedback 7 or 0, FM or additive
+    for mode in range(12):          # channel 3: feedback 7 or 0, FM or additive, shift mode >> 2
         regs = bytearray(256)
         regs[1] = 0x20              # waveform select on
         w = [(0, 0xc3, (7 << 1 if mode & 2 else 0) | (mode & 1))]
+        others = [c for c in range(9) if c != 3][:(0, 4, 8)[mode >> 2]]
+        w += [(0, 0xa0 + c, 0x40) for c in others]   # written, never keyed: the shift only
         for k, (off, mult) in enumerate(((8, 0x2f), (11, 0x21))):
             w += [(0, 0x20 + off, mult), (0, 0x40 + off, 0x04 * k), (0, 0x60 + off, 0xf4),
                   (0, 0x80 + off, 0x35), (0, 0xe0 + off, (mode + k) & 3)]
@@ -133,7 +140,7 @@ class Native:
 
 
 def cases(asm_source):
-    with tempfile.TemporaryDirectory(prefix="swotl-fx-asm-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="xwing-fx-asm-") as tmp:
         out = Path(tmp)
         m68k, native = M68k(build_68k(out, asm_source)), Native(out)
         total = 0

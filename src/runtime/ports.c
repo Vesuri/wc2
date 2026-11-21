@@ -18,6 +18,13 @@ static uint8_t pit_access[3] = {3, 3, 3}, pit_high[3];
 static uint16_t pit_latched[3];
 static uint8_t pit_latch_left[3];
 static uint16_t pit_reload[3];
+/* The effect capture's counter (sfx.c): it falls 40h a latch from FFFFh, as
+ * tools/sfx_capture.py's, so STRAX.DRV's OPL delay loops end at once. */
+static uint16_t capture_count = 0xffff;
+void rt_sfx_pit_reset(void)
+{
+    capture_count = 0xffff;
+}
 uint32_t rt_pit_divisor = 0x10000;
 
 /* AdLib: index register, the written OPL2 register file (D10) and the key-on
@@ -60,7 +67,7 @@ static void pit_control(uint8_t v)
         if (ch != 0) {
             rt_stop("PIT latch of another channel than 0", v, 0);
         }
-        pit_latched[ch] = plat_pit_count(ch);
+        pit_latched[ch] = rt_sfx_capturing ? (capture_count = (uint16_t)(capture_count - 0x40)) : plat_pit_count(ch);
         pit_latch_left[ch] = pit_access[ch] == 3 ? 2 : 1;
         return;
     }

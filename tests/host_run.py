@@ -477,7 +477,15 @@ class Host:
                                                 "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_pit_count", "plat_mouse", "plat_present", "plat_palette",
                                                 "plat_service", "plat_vga_status", "plat_dsp_status", "plat_sb_block",
                                                 "plat_log", "plat_console",
-                                                "plat_exit")}
+                                                "plat_sfx_wanted", "plat_sfx_captured", "plat_exit")}
+        # --sfx-capture: the effect captures (src/runtime/sfx.c), each with the
+        # guest RAM at its hook; sfx_cap while one runs (out of the game's flow:
+        # no trigger, poll, service, OPL, IRQ or memory check sees it)
+        self.sfx_cap = False
+        self.sfx_depth = 0                # the capture's own starts return through the hook
+        self.sfx_plant = "on"
+        self.sfx_entry: tuple[bytes, int] | None = None
+        self.sfx_captures: list[dict] = []
         # VGA status replay: (service events, value, reads) runs of trace/retrace.csv
         self.retrace = list(retrace or [])
         self.retrace_i = self.retrace_used = 0
@@ -689,6 +697,8 @@ class Host:
 
         @U.CODE_CB
         def out8(h, addr, size, user):
+            if self.sfx_cap:
+                return
             port, v = self.r("d7") & 0xFFFF, self.r("d6") & 0xFF
             if port in (0x388, 0x389):
                 self.opl_ports.append((port, v))
@@ -709,6 +719,8 @@ class Host:
 
         @U.CODE_CB
         def irq_entry(h, addr, size, user):
+            if self.sfx_cap:
+                return
             g = self.guest_regs(0)
             top = g["ss"] * 16 + g["sp"]
             self.masked.update(range(top - irq_dead, top))
@@ -722,11 +734,13 @@ class Host:
 
         @U.CODE_CB
         def irq_deliver(h, addr, size, user):
-            self.irq.deliver()
+            if not self.sfx_cap:
+                self.irq.deliver()
 
         @U.CODE_CB
         def irq_back(h, addr, size, user):
-            self.irq.returned()
+            if not self.sfx_cap:
+                self.irq.returned()
 
         e.hook_range(U.HOOK_CODE, irq_deliver, self.syms["deliver_guest"], self.syms["deliver_guest"])
         for n in ("rt_irq_async_back", "rt_irq_interrupt_back", "rt_irq_back", "rt_key_hook_back"):
@@ -740,6 +754,8 @@ class Host:
 
         @U.MEM_CB
         def write(h, kind, addr, size, value, user):
+            if self.sfx_cap:
+                return True
             # memory is reversed: the 68k value's byte k is the guest's byte lin + k
             self.irq.write(TOP - addr - size + 1, size, value & ((1 << 8 * size) - 1))    # I3
             span = range(TOP - addr - size + 1, TOP - addr + 1)
@@ -758,6 +774,8 @@ class Host:
         # annotation; its word below SS:SP is masked until the guest rewrites it.
         @U.CODE_CB
         def dead_pushf(h, addr, size, user):
+            if self.sfx_cap:
+                return
             g = self.guest_regs(0)
             self.dead_flags = g["ss"] * 16 + ((g["sp"] - 2) & 0xFFFF)
 
@@ -771,6 +789,8 @@ class Host:
 
         @U.MEM_CB
         def read(h, kind, addr, size, value, user):
+            if self.sfx_cap:
+                return True
             lin = TOP - addr - size + 1
             self.irq.read(lin, size)    # I3 (tests/irq_monitor.py)
             if (machine[lin] or machine[lin + size - 1]) and not self.in_service \
@@ -1054,11 +1074,55 @@ class Host:
             print(self.log[-1])
         elif n == "plat_console":
             self.console += self.mem(args[0], args[1])
+        elif n == "plat_sfx_wanted":
+            res = 1
+        elif n == "plat_sfx_captured":
+            if self.sfx_plant == "restore":     # a DGROUP byte the restore missed:
+                ds = self.sfx_entry[1]          # the capture's slot 31 flags
+                a = TOP - (ds * 16 + 0xa54c + 14 * 31)
+                self.e.write(a, bytes([self.mem(a, 1)[0] ^ 0x80]))
+            if self.sfx_plant == "starts":      # a start counted inside the capture
+                self.e.write(self.syms["rt_sfx_starts"] + 1, b"\1")
+            self.sfx_captures.append(self.sfx_state())
         elif n == "plat_exit":
             self.exit = args[0]
             self.halted = True
             self.e.stop()
         self.e.reg_write(U.M68K["d0"], res & 0xFFFFFFFF)
+
+    def sfx_enable(self, plant: str = "on") -> None:
+        """Turn the effect capture on (rt_sfx_prerender_on) and mark its window,
+        keeping the guest RAM and DS at its hook."""
+        self.e.write(self.syms["rt_sfx_prerender_on"], b"\1")
+        self.sfx_plant = plant
+
+        @U.CODE_CB
+        def cap(h, addr, size, user):
+            if addr == self.syms["rt_hle_sfx_start"]:
+                self.sfx_depth += 1
+                if self.sfx_depth == 1:
+                    self.sfx_entry = (self.e.read(TOP - GUEST_BYTES + 1, GUEST_BYTES)[::-1], self.state(1, 2))
+            else:
+                self.sfx_depth -= 1
+            self.sfx_cap = self.sfx_depth > 0
+
+        for n in ("rt_hle_sfx_start", "rt_hle_sfx_start_done"):
+            self.e.hook_range(U.HOOK_CODE, cap, self.syms[n], self.syms[n])
+
+    def sfx_state(self) -> dict:
+        """At plat_sfx_captured: the capture (runtime.h rt_sfx_*), the guest RAM
+        (linear, restored) and the RAM and DS at the hook."""
+        ids = 56                                    # runtime.h RT_SFX_IDS
+        words = lambda n: struct.unpack(f">{ids}H", self.mem(self.syms[n], 2 * ids))
+        first, writes, ticks = words("rt_sfx_first"), words("rt_sfx_writes"), words("rt_sfx_ticks")
+        total = max((f + w for f, w in zip(first, writes)), default=0)
+        raw = self.mem(self.syms["rt_sfx_capture"], 4 * total)
+        cap = [struct.unpack_from(">HBB", raw, 4 * k) for k in range(total)]
+        ram, ds = self.sfx_entry
+        return {"ids": {i: (cap[first[i]:first[i] + writes[i]], ticks[i]) for i in range(ids)},
+                "opl": bytes(self.mem(self.syms["rt_sfx_opl"], 256)), "ram": bytes(ram), "ds": ds,
+                "starts": bytes(self.mem(self.syms["rt_sfx_starts"], ids)),
+                "after": bytes(self.e.read(TOP - GUEST_BYTES + 1, GUEST_BYTES)[::-1])}
 
     def vga_status(self) -> int:
         """The reference's next 3DAh value, read in the same service interval."""
@@ -1186,7 +1250,7 @@ class Host:
 
         @U.CODE_CB
         def hit(h, addr, size, user):
-            if self.step == len(steps):
+            if self.step == len(steps) or self.sfx_cap:
                 return
             (lab, _, n), key = steps[self.step]
             if self.release is not None:
@@ -1229,7 +1293,7 @@ class Host:
         def replay(addr):
             if self.posted_at and self.r("a7") >= self.posted_at[2]:
                 self.posted_at = None   # a later poll, not one nested in the handlers
-            if self.irq_i == len(self.irqs):
+            if self.irq_i == len(self.irqs) or self.sfx_cap:
                 return
             n = len(self.services)
             if n != self.visit_n:  # executions of each poll point since the service event
@@ -1287,6 +1351,8 @@ class Host:
 
         @U.CODE_CB
         def back(h, addr, size, user):
+            if self.sfx_cap:
+                return
             try:
                 stack = self.r("a7")
                 key = self.groups.pop(stack, None)
@@ -1306,6 +1372,8 @@ class Host:
 
         @U.CODE_CB
         def done(h, addr, size, user):
+            if self.sfx_cap:
+                return
             # rt_irq_done: the posted interrupts ran BIOS handlers only. A service
             # the keyboard intercept made inside them (INT 16h, WC2.EXE+0FEA5)
             # starts a new interval, and the reference took the next interrupt at
@@ -1347,6 +1415,8 @@ class Host:
 
         @U.CODE_CB
         def executed(h, addr, size, user):
+            if self.sfx_cap:
+                return
             n = len(self.services)
             if n != self.visit_n:
                 self.visit_n, self.visits = n, {}
@@ -1359,6 +1429,9 @@ class Host:
         if rep is not None:
             @U.CODE_CB
             def rep_checkpoint(h, addr, size, user):
+                if self.sfx_cap:            # the capture's driver code: no interrupt cuts it
+                    self.e.write(self.r("a7") + 4, struct.pack(">I", 0))
+                    return
                 try:
                     sp = self.r("a7")
                     point, done = struct.unpack(">II", self.mem(sp + 4, 8))
@@ -1809,6 +1882,50 @@ def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h, irq=None) 
     return problems
 
 
+# --sfx-capture plants (each must fail the check; tests/host_run.py --sfx-capture NAME):
+# "restore" leaves a DGROUP byte changed after the capture; "tick", "value" and "end"
+# alter the first captured id after it ran; "starts" counts a start inside it.
+SFX_SABOTAGE = ("restore", "tick", "value", "end", "starts")
+
+
+def sfx_problems(h: "Host", plant: str) -> list[str]:
+    """Every capture (src/runtime/sfx.c) against tools/sfx_capture.py: STRAX.DRV and
+    the game's effect code under Unicorn x86 from the guest RAM at the hook; and the
+    guest RAM after the capture equal to the RAM at the hook."""
+    import sfx_capture as X
+    if not h.sfx_captures:
+        return ["effect capture: the effect start's hook (WC2.EXE+126D4) was not reached"]
+    problems = []
+    for n, c in enumerate(h.sfx_captures):
+        if c["after"] != c["ram"]:
+            diff = [a for a in range(len(c["ram"])) if c["ram"][a] != c["after"][a]]
+            problems.append(f"effect capture {n}: {len(diff)} guest bytes not restored, first "
+                            f"{diff[0]:05x}: {c['ram'][diff[0]]:02x} -> {c['after'][diff[0]]:02x}")
+        if n == 0 and any(c["starts"]):
+            problems.append(f"effect capture 0: starts counted before the first start's own: "
+                            f"{[i for i, k in enumerate(c['starts']) if k]} (the capture's starts counted)")
+        opl0, want = X.capture(c["ram"], c["ds"])
+        got = dict(c["ids"])
+        if plant in ("tick", "value", "end"):
+            sid = next(i for i in sorted(want) if want[i][0])
+            w, end = got[sid]
+            t, r, v = w[0]
+            got[sid] = ([(t + (plant == "tick"), r, v ^ (plant == "value"))] + w[1:], end + (plant == "end"))
+        for sid in range(len(got)):
+            ours, ours_end = got[sid]
+            writes, end = want.get(sid, ([], 0))
+            if ours_end != end or ours != writes:
+                k = next((k for k, (a, b) in enumerate(zip(ours, writes)) if a != b), min(len(ours), len(writes)))
+                problems.append(f"effect capture {n} id {sid}: end tick {ours_end}, {len(ours)} writes; "
+                                f"the original's {end}, {len(writes)}; first difference at write {k}: "
+                                f"{ours[k] if k < len(ours) else '-'} vs {writes[k] if k < len(writes) else '-'}")
+        if c["opl"] != opl0:
+            problems.append(f"effect capture {n}: start registers differ from the oracle's")
+        print(f"effect capture {n}: {len(want)} ids, {sum(len(w) for w, _ in got.values())} writes, "
+              f"{sum(1 for i in want if not got[i][1])} without an end", flush=True)
+    return problems
+
+
 def main(argv=None) -> int:
     global TABLE
     ap = argparse.ArgumentParser()
@@ -1825,6 +1942,9 @@ def main(argv=None) -> int:
     ap.add_argument("--plants", help="with --sabotage: only these (comma-separated)")
     ap.add_argument("--table", type=Path, default=TABLE,
                     help="the milestone table (tools/reference.py --table; a diagnostic one in tmp/)")
+    ap.add_argument("--sfx-capture", nargs="?", const="on", choices=("on",) + SFX_SABOTAGE,
+                    help="turn the effect capture on (src/runtime/sfx.c) and compare every capture "
+                         "with tools/sfx_capture.py; a plant name must fail")
     args = ap.parse_args(argv)
     TABLE = args.table.resolve()
     if args.label:
@@ -1852,9 +1972,12 @@ def main(argv=None) -> int:
         print("not caught: " + ", ".join(missed) if missed else "all sabotages caught")
         return 1 if missed else 0
     problems = check(args.milestone, args.timeout, args.amiga, None, stall=args.stall,
-                     stale_polls=args.stale_polls)
+                     stale_polls=args.stale_polls, sfx=args.sfx_capture)
     for p in problems:
         print(p)
+    if args.sfx_capture in SFX_SABOTAGE:
+        print(f"effect capture plant {args.sfx_capture}: {'caught' if problems else 'MISSED'}")
+        return 0 if problems else 1
     print(f"host run to {args.milestone}: {'ok' if not problems else 'FAIL'}")
     return 1 if problems else 0
 
@@ -1998,7 +2121,7 @@ def frame_view(ram: bytes, pages: dict) -> bytes:
 
 def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None,
           trace: Path | None = None, elf: Path | None = None, stall: int = 300,
-          stale_polls: bool = False) -> list[str]:
+          stale_polls: bool = False, sfx: str | None = None) -> list[str]:
     script = milestone_script(milestone)
     frame = script["frame"]
     trace = trace or host_reference(milestone)
@@ -2033,9 +2156,13 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     want = reference_services(trace)
     h.services = ServiceLog(h, want)
     h.stall = 20 if sabotage == "stall" else stall
+    if sfx:
+        h.sfx_enable(sfx)
     t0 = time.monotonic()
     h.run(script, timeout)
     print(f"host run: {time.monotonic() - t0:.0f} s")
+    if sfx:
+        problems += sfx_problems(h, sfx)
     w = h.watch
     print(f"memory watch: {w.seen[0]} reads, {w.seen[1]} writes; {w.passed[0]} and {w.passed[1]} "
           f"passed to the Python hooks")

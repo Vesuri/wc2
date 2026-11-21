@@ -25,7 +25,8 @@ passes data/keys as its KEYS argument (amiga_platform.c's key script; `*` double
 the ReadArgs quotes). --expect exit: the game ends by itself (the slave's TDREASON_OK, no
 core dump) before TIMEOUT; timeout: as run. --expect-file: data/NAME holds TEXT afterwards;
 --expect-read: WHDLoad's FILELOG (.whdl_log) shows NAME read after it was written.
-The MemFree slave's low-water marks (Chip, Fast) are read from its $100 slot.
+The MemFree slave's low-water marks (Chip, Fast) are read from its $100 slot; in script
+mode (KeysMemFree.slave) from the data/memfree file it saves at the game's exit.
 --installed runs an installed WC2 drawer as it is (slave, data/Wc2, data).
 --setup a1200-040: full 68040 with its MMU and FPU, JIT off, on $FSUAE_MMU; the report
 must show TC=8000 (translation on; AmigaXDev whdload-mmu.md). The default --setup a1200 is a
@@ -165,6 +166,13 @@ def judge_script(args, base, game, data, report, output):
         print(f'FILELOG {name}:', *lines[-6:], sep='\n  ')
         if not read:
             raise SystemExit(f'FAIL: FILELOG shows no read of {name} after its write ({base})')
+    memfree = data / 'memfree'
+    if args.slave and 'MemFree' in args.slave.name:
+        if not memfree.exists():
+            raise SystemExit(f'FAIL: no data/memfree from the MemFree slave ({base})')
+        low = memfree.read_bytes()
+        print('MemFree low water: Chip {:,} Fast {:,} bytes'.format(
+            int.from_bytes(low[0:4], 'big'), int.from_bytes(low[4:8], 'big')))
     print(f'PASS: script on {args.setup}')
     shutil.rmtree(base)
 

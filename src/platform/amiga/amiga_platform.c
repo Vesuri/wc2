@@ -319,6 +319,9 @@ volatile ULONG amiga_ticks = 0, amiga_ticks_async = 0;
 static ULONG cia_tick(void)
 {
     ++amiga_ticks;
+    if (rt_sfx_capturing) {
+        return 0;               /* the effect capture holds the tick: game time pauses */
+    }
 #ifndef WC2_SYNC
     /* Production has no poll checks (docs/irq-plan.md I8): ticks posted while
      * IRQ0 could not run go first, then this one. */
@@ -879,6 +882,25 @@ static void key_script_step(void)
     script_press(name, n);
 }
 
+/* Effect capture (runtime.h rt_sfx_*): every effect when Audio has its Chip;
+ * the prerender follows in Audio (fx_play.c, owner decision D13). */
+extern int amiga_audio_effect_wanted(uint8_t id);
+extern void amiga_audio_effects(void);
+__attribute__((aligned(4))) volatile uint32_t amiga_sfx_capture_fields;  /* the capture's fields (diagnostics) */
+int plat_sfx_wanted(uint8_t id)
+{
+    if (id == 1) {
+        amiga_sfx_capture_fields = amiga_frames;
+    }
+    return amiga_audio_effect_wanted(id);
+}
+
+void plat_sfx_captured(void)
+{
+    amiga_sfx_capture_fields = amiga_frames - amiga_sfx_capture_fields;
+    amiga_audio_effects();
+}
+
 void plat_service(void)
 {
     key_script_step();
@@ -1012,6 +1034,7 @@ int amiga_guest_open(void)
         return 0;
     }
     key_script_check();
+    rt_sfx_prerender_on = 1;    /* effects prerendered at the first effect start (runtime.h) */
     if (!dispatch_count) {
         /* WC2 before port-plan P1.4: no translated program. The takeover runs
          * EMPTY_FIELDS fields and hands back (make smoke). */

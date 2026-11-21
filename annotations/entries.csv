@@ -106,6 +106,7 @@ WC2.EXE,0x112d4,after retf WC2.EXE+112D3
 WC2.EXE,0x116ca,far pointer in data 16DDE
 WC2.EXE,0x11832,far pointer in data 16DF6
 WC2.EXE,0x123f4,after retf WC2.EXE+123F3
+WC2.EXE,0x1254d,the effect start: a far call from the runtime's effect capture (src/runtime/sfx.c, HLE sfx_start; owner decision D13)
 WC2.EXE,0x126d5,after retf WC2.EXE+126D4
 WC2.EXE,0x12ab4,after retf WC2.EXE+12AB3
 WC2.EXE,0x12b75,after retf WC2.EXE+12B74

@@ -27,11 +27,14 @@ extern uint8_t fm_ntsc;
 /* Loop storage (Chip RAM on the Amiga): `bytes` a multiple of 4 pages. */
 void fm_init(int8_t *pool, uint32_t bytes);
 /* One field: `opl` the 256 register bytes, `keyon` per channel a count of
- * key-on edges (B0-B8 bit 5 rising), wrapping. mute_mask excludes OPL
- * channels owned by samples from every voice; envelopes still advance. Fills `voice[FM_VOICES]`. */
+ * key-on edges (B0-B8 bit 5 rising), wrapping. mute_mask: bits 0-8 exclude
+ * OPL channels owned by samples from every voice (envelopes still advance),
+ * FM_RESERVE(v) leaves Paula voice v to a sample (voice[v] silent). Fills
+ * `voice[FM_VOICES]`. */
+#define FM_RESERVE(v) (1u << (12 + (v)))
 void fm_field(const uint8_t *opl, const uint8_t *keyon, uint16_t mute_mask, struct fm_voice *voice);
 /* Prerendered effect (docs/sound-plan.md R2), after fm_init: OPL data writes
- * at SPAZ ticks (236.7 Hz; tick 0 the play call), the same layout as the
+ * at the driver's ticks (WC2: 1193182/19886 Hz; tick 0 the start), the same layout as the
  * runtime's capture (runtime.h struct rt_sfx_write). */
 #define FM_EFFECT_RATE 16572        /* the OPL rate / 3; Paula period 214 PAL */
 struct fm_write { uint16_t tick; uint8_t reg, value; };
@@ -47,7 +50,7 @@ struct fm_write { uint16_t tick; uint8_t reg, value; };
 #define FM_EFFECT_FADE (FM_EFFECT_RATE / 5)
 /* Bumped whenever fm_effect's output for the same input changes: it keys the
  * Amiga's cache of rendered effects (Audio.cpp). */
-#define FM_EFFECT_VERSION 2
+#define FM_EFFECT_VERSION 3
 uint32_t fm_effect(const uint8_t *opl, const struct fm_write *w, uint32_t n, int16_t *buf, uint32_t max,
                    uint32_t *level);
 /* Loops rendered since fm_init (cost statistics). */
