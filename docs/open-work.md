@@ -29,16 +29,6 @@ Items are in work order; numbers are identifiers and are not reused.
     mechanisms). Read the menu's event handling (`WC2.EXE+0FFF0`'s consumer) and script it from
     that. Acceptance: 8 parallel runs of `amiga/play_walk.sh` all print `WC2_PLAY_OK`.
 
-## Owner report (no phase)
-
-6. Feasibility report for the owner ([feasibility.md](feasibility.md): the quiet flight
-   frame and FM channel use are in; P2 measured the overlay and EMS paging and the drivers:
-   [vroomm.md](vroomm.md), [drivers.md](drivers.md), [external-surface.md](external-surface.md)).
-   The translated cost is in (port-plan P5.4: the intro animation on the 50 MHz 68030, flight
-   about 2× short by estimate). Open: code size, those inputs written into the report, the
-   engine's relation to WC1 (supplied disks in `tmp/wc1/`), a combat frame's cost.
-   Acceptance: the doc with measured inputs, checked against D1 (68030 minimum).
-
 ## P7: performance (after gate 6)
 
 11. Flag liveness through the dispatcher: 59 PUSHF and 2 INT sites read the whole

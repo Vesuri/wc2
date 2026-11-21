@@ -154,7 +154,7 @@ can run beside stream A (reference and map, P1–P2) once P0 is in.
    - each driver from its file, unpacked by `tools/origin_pak.py` if packed.
 
    The DOSBox-X entry dump diff proves the image at entry.
-5. Feasibility estimate (feeds open-work 6; checks D1's 68030 minimum). Measure the reference's flight frame
+5. Feasibility estimate (feeds [feasibility.md](feasibility.md); checks D1's 68030 minimum). Measure the reference's flight frame
    time at fixed cycles (ticks per frame from WC2's own clock or from the frame boundary)
    and apply SWOTL's ratio:
    - its 68020 frames are 290–300 ms;
@@ -312,7 +312,7 @@ store page ("WC2 EMS model").
    DAC must equal the reference.
 3. `make test-amiga` at m1b: the shown bitplanes and colours equal the reference frame.
 4. First profile on the target: where the frame time goes, and the feasibility estimate
-   recomputed from it on the 68030 and 68040 models. That makes open-work 6's report, checked
+   recomputed from it on the 68030 and 68040 models. That makes the feasibility report ([feasibility.md](feasibility.md)), checked
    against D1.
 
 Status: 1–3 pass (`make test-host`: m1 and m1b in lockstep, services inside IRQ0's handler

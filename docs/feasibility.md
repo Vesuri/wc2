@@ -1,7 +1,26 @@
 # Feasibility
 
-The owner's feasibility report (open-work 6). This page holds its measured inputs as they
-arrive; port-plan P1.5 supplies the first ones.
+The owner's feasibility report: can WC2 run on D1's target (AGA, 68030 minimum, 68040 or
+better recommended) by translation? The verdict comes first, then its measured inputs.
+
+## Verdict against D1 (2026-11-21)
+
+- **It runs.** The translated game matches the original in host lockstep through m6 and
+  the exits, and the Amiga image on the 68030 model through m4, the first flight frame
+  (gate 6, port-plan P6). Nothing found in P2's map (overlays, EMS, drivers,
+  ports) needs more than the runtime already provides.
+- **Memory fits** an 8 MiB Fast RAM machine: the code is 1.86 MB, the image allocates
+  2.28 MB, and the WHDLoad slave runs in 7 MiB of Fast and 1.31 MiB of Chip with 0.5 MB of
+  each to spare (below; [whdload.md](whdload.md) "Memory").
+- **Speed misses on the 68030 before P7.** On the 50 MHz 68030 the frame the original
+  draws in 4 timer ticks (15 fps) takes about 9 ticks in quiet flight and 10–12 in the
+  Nav 1 fight: 2.2× over in flight, 2.4× (median) to 2.8× (p90) in that fight. A 40 MHz
+  68040 meets quiet flight and the median fight frame. The 68030 minimum therefore holds
+  for running the game, not for its original frame rate: P7 must cut the translated cost
+  by about 2.5–3× to reach 15 fps there (DERIVED below; P7's targets come from the P5.4
+  profile).
+- **Unmeasured:** larger fights (capital ships, many fighters, the asteroid field), whose
+  frames cost more than Nav 1's 10–13 objects; flight's own instruction mix on the target.
 
 ## Flight frame cost (port-plan P1.5)
 
@@ -80,3 +99,82 @@ launch through the first flight, 447,113 writes over 399 s):
 
 The FM synthesis must render 9 channels at once into the Paula voices that the sound
 policy gives music (`docs/sound-plan.md`, P6b).
+
+## Combat frame cost (MEASURED)
+
+The original under the same DOSBox-X conf, m5's route (debug mode, so no scripted combat)
+to its first autopilot, then no Alt-Ins: the autopilot drops out at Nav 1 into the Sartha
+attack, and the Ferret holds its course while the fighters attack and pass (the shield
+gauge takes hits; one snapshot shows a fighter on screen). Probes as for the flight frame,
+plus `SUPERTM.DRV+153E` (the scaled sprite driver's entry 2; as many calls as entry 1,
+one per scaled object drawn, INFERRED); `tools/frame_time.py --group` gives each frame its
+own work (interval less its limiter wait). The run also pressed Backspace 600 ticks after
+the autopilot key; the speed stayed 360.
+
+| Objects drawn a frame | Frames | Interval median | Work median | p90 | max |
+|---|---|---|---|---|---|
+| 0 | 283 | 66.5 ms | 21.7 ms | 25.9 | 32.9 |
+| 1–5 | 333 | 66.5 | 22.7–24.9 | 24.5–28.0 | 33.4 |
+| 8 or more (the fight, 10–13) | 196 | 66.6 | 25.6 | 29.2 | 45.7 |
+
+Every frame waits in the limiter: at 12000 cycles the original keeps its 4 ticks through
+this fight, its work up 18% (median) over the empty frames, about 0.4 ms (5,000 cycles)
+an object. An earlier run on the same route without the probe on objects (1,445 frames,
+the fighters on radar, never in view) gave work median 22.8, p90 27.8, max 78.5 ms (one
+frame over budget).
+
+Estimate (DERIVED, the P5.4 ratio: 148 ms on the target for flight's 23.3 ms, 6.35×;
+SUPERTM.DRV's own cost per instruction not measured, INFERRED alike):
+
+| | Quiet flight | Fight, median | Fight, p90 |
+|---|---|---|---|
+| 12000-cycle reference | 23.3 ms | 25.6 ms | 29.2 ms |
+| 50 MHz 68030 | 148 ms (9 ticks, 6.7 fps) | 163 ms (10 ticks, 6 fps) | 185 ms (12 ticks, 5 fps) |
+| 25 MHz 68040 | 78–87 ms | 86–96 ms | 98–109 ms |
+| 40 MHz 68040 | 49–55 ms | 54–60 ms | 61–69 ms |
+
+The 66.7 ms frame is met where the figure is below it.
+
+## Code size (MEASURED, `make amiga-release`, `tools/code_size.py`)
+
+The release image `Wc2-release.exe` is 1,991,248 bytes: code 1,864,080, relocations
+120,040, data 7,012 (`make size`); its hunks allocate 2,275,564 bytes with BSS. Its
+.text by source:
+
+| Source | Amiga bytes | x86 bytes | Ratio |
+|---|---|---|---|
+| `WC2.EXE`, translated | 1,461,544 | 279,857 (resident and overlay code, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)) | 5.2× |
+| `SUPERTM.DRV`, translated | 149,952 | 30,053 (the loaded entry, [drivers.md](drivers.md)) | 5.0× |
+| `TM.DRV`, translated | 39,124 | 11,802 | 3.3× |
+| `STRAX.DRV`, translated | 13,928 | 3,986 | 3.5× |
+| runtime and platform | 197,928 | | |
+
+Every overlay's 68k code is in the image; the VROOMM manager still runs, translated, and
+loads the overlay bytes into guest RAM, and far dispatch reads its residency record
+(port-plan P4). So code size is fixed at link time; the game's data paging (EMS, below)
+is unchanged.
+
+## P2's inputs (MEASURED; the docs hold the detail)
+
+- **Overlays** ([vroomm.md](vroomm.md)): Borland VROOMM, 124 overlays, 184,673 bytes of
+  code, its EMS caching off; translated as SWOTL's overlays, each at its link segment
+  with a residency check.
+- **Drivers** ([drivers.md](drivers.md)): three, each loaded once at a fixed paragraph and
+  never moved: `TM.DRV` (VGA drawing, the DAC), `SUPERTM.DRV` (scaled sprites, the space
+  view), `STRAX.DRV` (every OPL write). Translated at one CS each; speech is root code on
+  the Sound Blaster DSP and DMA 1.
+- **EMS** ([external-surface.md](external-surface.md) "EMS"): one handle of 164 pages
+  (2.6 MB), four physical pages, 4–15 maps a timer tick; the runtime serves it from the
+  guest block in Fast RAM.
+- **Surface** ([external-surface.md](external-surface.md)): DOS files, BIOS, INT 33h, the
+  PIT, PIC, VGA, OPL, Sound Blaster and joystick ports; all are runtime services, and an
+  unknown one stops.
+
+## The engine and WC1 (MEASURED, [wc1-wc2-comparison.md](wc1-wc2-comparison.md))
+
+WC2 is WC1's engine moved to Borland C++ 1991: 29.5% of WC2's code is a WC1 function
+nearly unchanged (similarity 0.85 or more), another 14.3% a modified one; the music, the
+span/sprite drawing module and ship loading are 64–100% shared, the cinematics and the
+pilot-file menu new. For feasibility this means the translated route stands on its own;
+WC1's Amiga CD32 routines are an optimisation (open-work 8, after gate 6), not a
+dependency.
