@@ -111,6 +111,7 @@ static uint8_t dsp_reset, dsp_ready;
 static uint8_t dsp_command, dsp_args, dsp_arg[2];   /* a command awaiting argument bytes */
 static uint8_t dsp_time_constant;
 uint8_t rt_sb_playing;      /* a block started and its IRQ 7 not yet taken (machine.c) */
+uint8_t rt_sb_speaker;      /* D1h on, D3h off; off at reset (Paula speech volume) */
 
 /* 8237 channel 1: base address and count (lo, hi through the flip-flop),
  * page (83h), mode (0Bh), single mask (0Ah; masked at reset). */
@@ -163,6 +164,7 @@ static void dsp_out(uint16_t port, uint8_t v)
         } else if (v == 0 && dsp_reset) {
             dsp_reset = 0;
             dsp_ready = 1;
+            rt_sb_speaker = 0;
         } else {
             rt_stop("DSP reset sequence", v, dsp_reset);
         }
@@ -183,8 +185,8 @@ static void dsp_out(uint16_t port, uint8_t v)
     switch (v) {
     case 0x40: dsp_command = v; dsp_args = 1; return;    /* time constant */
     case 0x14: dsp_command = v; dsp_args = 2; return;    /* 8-bit single-cycle DMA output */
-    case 0xd1: return;                                   /* speaker on */
-    case 0xd3: return;                                   /* speaker off */
+    case 0xd1: rt_sb_speaker = 1; return;                /* speaker on */
+    case 0xd3: rt_sb_speaker = 0; return;                /* speaker off */
     case 0xd0:                                           /* halt DMA */
         if (!rt_sb_playing) {
             return;

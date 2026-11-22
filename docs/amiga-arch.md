@@ -134,11 +134,15 @@ per period (L44). Publication never feeds back into simulation; missed slots are
   speech (single-cycle DMA blocks, IRQ 7; the commands in `src/runtime/ports.c`).
 - **Music and effects**: STRAX.DRV runs translated into the runtime's OPL register shadow
   (`rt_opl`); a Paula-only re-hoster (`fm_paula.c`, `Audio.cpp`, fed each field by
-  `amiga_audio_service`) never decides what sounds (L71). Effect pricing and any prerender
-  are open-work 19; SWOTL's effect capture and cache were removed ([upstream.md](upstream.md)).
-- **Speech**: `plat_sb_block` times each block silently and posts IRQ 7 at its end; playing
-  it on Paula is open-work 19. Facts and methods: [sound-plan.md](sound-plan.md) (SWOTL's
-  until re-derived).
+  `amiga_audio_service`) never decides what sounds (L71). The one-shot effects are
+  prerendered and played by `fx_play.c` (D13, D14, [drivers.md](drivers.md) "FM effects").
+- **Speech**: `plat_sb_block` hands each DSP block to `Audio.cpp`, which converts it to
+  signed samples in one of two 64 KiB Chip blocks; `sb_play.c` (X-Wing's) plays it on Paula
+  voice 3 from the next field, the FM re-hoster giving that voice up while it plays, at
+  volume 64 with the DSP speaker on (D1h); the next block, which the game starts at the
+  last one's IRQ 7, is latched behind it without a restart. IRQ 7 comes at length / rate from the block
+  timer on CIA-B's other timer, not from the player's fields (`make test-amiga-speech`).
+  Facts and methods: [sound-plan.md](sound-plan.md) (SWOTL's until re-derived).
 - **Shared rules.** Channel ownership between music and effects is an explicit policy
   (L59); stereo placement deliberate (L68); the LED filter is off from the takeover and restored as found at the hand-back (L69).
 

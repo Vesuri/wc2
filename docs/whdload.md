@@ -48,20 +48,21 @@ build/whdload/MemFree.slave`, release image, 68030, PreLoad, attract mode, 2026-
 | `$600000` | 8 MiB, 16 MiB | 3,000 | 535,248 | 158,520 | runs |
 | `$700000` | 4 MiB Zorro II (control) | — | — | — | WHDLoad: "Can't allocate ExpMem." |
 
-`$700000` is kept: an 8 MiB host runs it, and its 1.2 MiB headroom is left for open-work 19
-(the sound still to come, its cost unmeasured). Chip was `$C0000` (251 KiB used) for the
+`$700000` is kept: an 8 MiB host runs it, with 0.5 MB of Fast left at the low water with
+the effects and speech (below). Chip was `$C0000` (251 KiB used) for the
 same reason; D13 raised it by `$90000` (589,824 bytes) for the prerendered effects'
 573,963 bytes (`make t-fm-effect`), keeping that headroom.
 
-`CHIPMEMSIZE = $150000`, 68030, release slave, 2026-11-21, MEASURED:
+`CHIPMEMSIZE = $150000`, 68030, release slave, 2026-11-22 (with the speech blocks), MEASURED:
 
 | Route | Slave | Chip free | Fast free |
 |---|---|---|---|
-| attract mode, 1,500 fields (`--mode run`) | `MemFree.slave` | 1,125,072 | 938,488 |
-| title menu Alt+X, an effect started: capture, render, cache (`--mode script --keys 'uBUTTONS.V00:esc*10,d300:alt+x' --expect exit --max-speed`) | `KeysMemFree.slave` (`make -C whdload keys-memfree`) | 550,976 | 506,968 |
+| attract mode, 1,500 fields (`--mode run`) | `MemFree.slave` | 994,000 | 936,512 |
+| title menu Alt+X, an effect started: capture, render, cache (`--mode script --keys 'uBUTTONS.V00:esc*10,d300:alt+x' --expect exit --max-speed`) | `KeysMemFree.slave` (`make -C whdload keys-memfree`, the diagnostic image `make amiga-diag`) | 419,904 | 505,000 |
 
 The effects take 574,096 bytes of the largest Chip chunk, their bytes plus allocation
-rounding; the Fast low water includes the capture's saved state and the render buffer,
+rounding; the speech's two Chip blocks (`Audio.cpp`, 2 × 64 KiB, reserved at start) take
+131,072 on both routes (1,125,072 and 550,976 before); the Fast low water includes the capture's saved state and the render buffer,
 freed after. `make -C whdload memfree 'FASTSIZE=\$$600000'` builds a sizing variant (the `$` is
 escaped for both make and the shell). A 68EC020 board maps at most 8 MiB Zorro II beside
 the slave, so the tests default to a 68030 (D1's minimum).

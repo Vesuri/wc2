@@ -409,7 +409,9 @@ Status: gate 6 passes (2026-11-17, MEASURED).
      then prerender at start-up as SWOTL's R1–R4: capture the driver's OPL writes per effect,
      synthesise into Chip, cache on disk; measure the Chip cost.
    - **Speech**: one Paula voice playing SB DMA blocks copied to Chip; channel ownership
-     between speech, music and effects is an explicit policy.
+     between speech, music and effects is an explicit policy. Status: X-Wing's `sb_play.c`
+     on voice 3, which the FM re-hoster gives up while a block plays; the effects take
+     voices from 0 up ([amiga-arch.md](amiga-arch.md) "Audio", `make test-amiga-speech`).
 3. Input: the key map, mouse and joystick from SWOTL; WC2's own joystick calibration runs.
    - Status (1, 3): `amiga/play_walk.sh` flies m4's route from generated code with the
      keyboard, WC2's calibration (Ctrl+J) and the proportional stick (`WC2_PLAY_OK`: 155
@@ -551,7 +553,7 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Trace corpus includes the host references (`wc2_model.CORPUS`); typematic repeats and the BIOS ROM in host lockstep | WC2 P6 (`git log -S typematic`) | to X-Wing: its sweep corpus and key script have the same gaps when a key is held past DOSBox-X's typematic delay or code samples ROM (INFERRED) |
 | Amiga display and input | WC2 (P6b.1, P6b.3: SWOTL's display and input, the flight smoke with the game's calibration; `git log -S driver-slots`) | to X-Wing: the driver loader's slots in the driver-call bracket, the key script's `tN`, `alt+`/`ctrl+` and ReadArgs quoting |
 | Music on Paula through SWOTL's FM re-hoster with additive patches and `fm_check` on vibrato notes (`ba28410`); FM effects captured from the driver and prerendered (`0eda68f`, owner decision 2026-11-15, HLE `sfx_prerender`); effects played from the driver's players (`269828b`, `fx_play.c`, HLE `sfx_start`) | X-Wing P7 | taken (owner decision D13, [upstream.md](upstream.md) row "D13"): one HLE row (`sfx_start`, the capture at the first effect start); `t-amiga-sfx` checks each play and runs the host check; WC2's two render fixes and the counted-start rule go back |
-| SB speech on Paula | neither yet | whichever port lands it first |
+| SB speech on Paula: `sb_play.c` on voice 3 from the DSP model's blocks, the block's end from the DSP's own time on a CIA-B timer | X-Wing P10 (`baea334`) | taken ([upstream.md](upstream.md)): the player and its test; WC2 keeps its block timer and retries (no pause in WC2's DSP model); the follow-on of back-to-back blocks without a restart goes back |
 
 ## Copy map (SWOTL `658fc60` → here)
 

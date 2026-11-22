@@ -1,6 +1,6 @@
 ## Wing Commander II — repository-level targets.
 
-.PHONY: all help test-host test-amiga extract install inspect hash check-ref prepare-reference reference-staging compare \
+.PHONY: all help test-host test-amiga test-amiga-speech t-sb-play t-sab-sb-play extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
 	github-release test-release-installer gates-audio sound-fm sfx-price test-sfx-capture t-amiga-sfx clean
@@ -43,6 +43,7 @@ help:
 	@echo "  make host               link generated program + runtime for Unicorn 68020 -> build/host/wc2.elf"
 	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1, m1b, m2, m3, m4, m5 and m6 (tests/host_run.py)"
 	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
+	@echo "  make test-amiga-speech  the intro's speech on Paula in the production image (68030 model)"
 	@echo "  make gates-audio        the FM re-hoster against Nuked OPL on the host references' OPL logs,"
 	@echo "                          the FM unit checks, the effect render and player, and every plant (docs/sound-plan.md)"
 	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
@@ -301,7 +302,7 @@ t-sab-fm-paula: build/tools/fm_check
 FM_UNITS = quality render phase envelope allocation cache
 t-sab-fm-%:
 	$(call RUN,sabotage-fm-$*,$(PYTHON) tests/test_fm_$*.py --sabotage)
-# The FM effects priced on the live re-hoster (open-work 19): each effect's OPL
+# The FM effects priced on the live re-hoster (D13): each effect's OPL
 # writes from the original game code and STRAX.DRV under Unicorn (tools/sfx_capture.py,
 # the m4 host reference's flight snapshot), each through fm_check; a report, no gate
 # (fm_check's pitch needs steady notes, and the driver moves every effect's pitch a tick).
@@ -334,11 +335,21 @@ t-fx-play:
 	$(call RUN,fx-play,$(PYTHON) tests/test_fx_play.py)
 t-sab-fx-play:
 	$(call RUN,sabotage-fx-play,$(PYTHON) tests/test_fx_play.py --sabotage)
+# The speech player (sb_play.c, X-Wing's) on synthetic blocks.
+t-sb-play:
+	$(call RUN,sb-play,$(PYTHON) tests/test_sb_play.py)
+t-sab-sb-play:
+	$(call RUN,sabotage-sb-play,$(PYTHON) tests/test_sb_play.py --sabotage)
+# The intro's speech on Paula: the production image into the intro,
+# every DSP block played, its samples in Chip, the speaker on (tests/amiga_speech.py).
+test-amiga-speech: amiga
+	nice -n 10 $(PYTHON) tests/amiga_speech.py
 # Isolated audio changes (AGENTS.md "Validation scope"): the sound checks and their plants.
 gates-audio:
 	@$(MAKE) -s -k -j$(JOBS) $(FM_MILESTONES:%=t-fm-paula-%) t-sab-fm-paula \
 		$(FM_UNITS:%=t-unit-test_fm_%) $(FM_UNITS:%=t-sab-fm-%) \
-		t-fm-effect t-sab-fm-effect t-fm-effect-asm t-sab-fm-effect-asm t-fx-play t-sab-fx-play
+		t-fm-effect t-sab-fm-effect t-fm-effect-asm t-sab-fm-effect-asm t-fx-play t-sab-fx-play \
+		t-sb-play t-sab-sb-play
 
 # test-amiga (gate 5): the diagnostic replay image (tests/amiga_replay.py) replays
 # the host reference's interrupts, REP slices, 3DAh and PIT reads and clocks on the

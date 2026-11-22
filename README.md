@@ -31,8 +31,8 @@ want to try the port early and report what they find.
   the title, the intro and the first flight frame.
 - **Sound:** the AdLib music and sound effects play on Paula, resynthesised from the FM
   chip the game drives. Their sound has not been measured against the PC yet, and some
-  instruments may not sound as on the PC. The Sound Blaster's digitised speech is silent;
-  it is the next step of the port.
+  instruments may not sound as on the PC. The Sound Blaster's digitised speech in the
+  intro plays on Paula too.
 - **Speed:** not optimized. In the one scene measured on an emulated 50 MHz 68030, the
   opening animation, the Amiga draws one frame for every eight the PC does. Flight is
   estimated, not measured, at about half the PC's frame rate on that 68030 and close to

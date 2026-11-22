@@ -6,20 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P6b: Amiga platform (stream C, beside P6)
 
-19. Audio on Paula (port-plan P6b.2): speech on one Paula voice from the SB DMA blocks,
-    channel ownership stated. The Amiga `plat_sb_block` is silent today: it times the block
-    and posts IRQ 7 at its end (length / rate; the reference's acknowledgement within
-    3.0 ms of it over m2–m4, [pc-reference-loop.md](pc-reference-loop.md)); production delivers
-    INT 0Fh without poll points, as IRQ0 (irq-plan I6, I8), up to 57 retries of about 1 ms
-    late for one block (MEASURED over the intro's blocks). Playing it keeps that timing.
-    Music: `make gates-audio` passes on the host references' OPL logs (m6, mx1, mx2: level
-    97.5-98.8%, pitch 99.7-100%, MEASURED 2026-11-20). Effects are prerendered (D13, D14,
-    [drivers.md](drivers.md) "FM effects"): 39 one-shots, 573,963 bytes of Chip, the rest live;
-    the slave's `CHIPMEMSIZE` is `$150000` ([whdload.md](whdload.md) "Memory"). On the
-    68030 model `make t-amiga-sfx` replays mx1 with the capture, render, cache and player:
-    69 plays for 69 starts, each with its channels muted, and the host check passes
-    (MEASURED 2026-11-21). Acceptance: the FM checks and their sabotage pass; the
-    intro's speech plays on the Amiga build.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).

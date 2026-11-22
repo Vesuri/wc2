@@ -374,7 +374,7 @@ static void cia_load(uint32_t divisor)
  * Production then runs INT 0Fh's guest handler at once when the runtime allows
  * it (machine.c rt_irq7_ready), as cia_tick runs IRQ0's, else retries after
  * SB_RETRY E-clocks (about 1 ms); the sync bench posts vector 0Fh for the next
- * poll point. No sound yet (open-work 19). */
+ * poll point. The samples play on Paula (plat_sb_block, sb_play.c). */
 #define SB_RETRY 709u
 static struct Interrupt sb_interrupt;
 static WORD sb_bit = -1;
@@ -548,9 +548,11 @@ uint8_t plat_dsp_status(uint32_t port, uint32_t value)
 #endif
 }
 
-/* A DSP block is timed silently and ends with IRQ 7 (sb_timer); speech on
- * Paula is open-work 19. The diagnostic replay checks the block against the
+/* A DSP block plays on Paula from the next field (Audio.cpp, sb_play.c) and
+ * ends with IRQ 7 at length / rate on the block timer (sb_timer), not at the
+ * player's fields. The diagnostic replay checks the block against the
  * reference's and replays its IRQ 7. */
+extern void amiga_audio_sb_block(uint32_t linear, uint32_t length, uint32_t rate);
 void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
 {
 #ifdef WC2_REPLAY
@@ -559,6 +561,7 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
     if (sb_bit < 0 || rate == 0) {
         rt_stop("Sound Blaster block without the CIA-B block timer (linear, length)", linear, length);
     }
+    amiga_audio_sb_block(linear, length, rate);
     /* E-clocks per byte in 24.8: rate >= 3906 Hz (time constant 0) keeps
      * length (<= 65536) times it inside 32 bits */
     uint32_t eclock = amiga_ntsc ? 715909u : 709379u;

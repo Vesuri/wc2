@@ -87,7 +87,7 @@ code-pointer words `cs:[6C2h]`, 32 targets, and `cs:[6C4h]`, 16, called from 32 
 every decoded write to them must store a listed target, `check_code_vars`). Flight runs
 targets no trace reached (`+4CFA` through `cs:[6C4h]`, MEASURED on the Amiga build).
 
-## FM effects (STRAX.DRV, open-work 19)
+## FM effects (STRAX.DRV)
 
 `STRAX.DRV` is a MIDI-style driver: entry 5 (`+074D`) note on/off (channel, note, velocity),
 entry 6 (`+0B61`) controller (channel, controller, value: 1, 7 volume, 0Ah pan, 79h reset,

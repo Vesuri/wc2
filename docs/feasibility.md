@@ -11,7 +11,8 @@ better recommended) by translation? The verdict comes first, then its measured i
   ports) needs more than the runtime already provides.
 - **Memory fits** an 8 MiB Fast RAM machine: the code is 1.86 MB, the image allocates
   2.28 MB, and the WHDLoad slave runs in 7 MiB of Fast and 1.31 MiB of Chip with 0.5 MB of
-  each to spare (below; [whdload.md](whdload.md) "Memory").
+  Fast and 0.42 MB of Chip to spare with the effects and speech ([whdload.md](whdload.md)
+  "Memory").
 - **Speed misses on the 68030 before P7.** On the 50 MHz 68030 the frame the original
   draws in 4 timer ticks (15 fps) takes about 9 ticks in quiet flight and 10–12 in the
   Nav 1 fight: 2.2× over in flight, 2.4× (median) to 2.8× (p90) in that fight. A 40 MHz

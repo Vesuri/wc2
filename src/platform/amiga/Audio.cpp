@@ -7,6 +7,7 @@ extern "C" {
 #include "runtime.h"
 #include "fm_paula.h"
 #include "fx_play.h"
+#include "sb_play.h"
 #include "amiga_platform.h"
 }
 #include "Audio.h"
@@ -14,7 +15,8 @@ extern "C" {
 
 // Voice v plays on Paula channel v (WC2's voice assignment: port-plan P6b.2);
 // an effect takes the voice fx_play gives it (prerendered effects, X-Wing's,
-// owner decision D13).
+// owner decision D13), a Sound Blaster block voice SB_VOICE (sb_play.c, the
+// intro's speech, X-Wing's baea334).
 #define POOL_BYTES (FM_POOL_BYTES)
 #define SILENCE_BYTES 4
 #define AUDIO_DMA (DMAF_AUD0 | DMAF_AUD1 | DMAF_AUD2 | DMAF_AUD3)
@@ -42,6 +44,11 @@ static volatile bool effects = false;
 static int8_t* pool = 0;
 static const int8_t* silence = 0;
 static struct fm_voice pending[FM_VOICES];
+// Speech: two Chip blocks, the next converted while the last may still be
+// latched on Paula
+static int8_t* sbChip = 0;
+static uint8_t sbNext = 0;
+#define SB_CHIP_BYTES (2 * SB_BLOCK_BYTES)
 static volatile bool fresh = false;
 static volatile bool muted = false;
 static bool running = false;
@@ -53,6 +60,8 @@ volatile uint32_t amiga_audio_restarts = 0;   // channel restarts (diagnostics)
 volatile uint32_t amiga_audio_effect_fields = 0;  // fields the prerender took (diagnostics)
 volatile uint32_t amiga_audio_effect_bytes = 0;   // its Chip bytes (diagnostics)
 volatile uint8_t amiga_audio_effect_cached = 0;   // 1 loaded from the cache, 2 written to it (diagnostics)
+volatile uint32_t amiga_audio_sb_linear = 0;      // the last speech block's guest address (diagnostics)
+volatile uint32_t amiga_audio_sb_bytes = 0;       // and its length (diagnostics)
 }
 
 static_assert(sizeof(struct rt_sfx_write) == sizeof(struct fm_write), "capture and fm_effect write layouts");
@@ -60,6 +69,9 @@ static_assert(RT_SFX_IDS == FX_IDS && RT_SFX_SLOTS == FX_SLOTS, "runtime and fx_
 
 bool Audio::begin()
 {
+    // largest first (amiga-arch.md "Reserve"): the speech blocks, then the pool
+    sbChip = (int8_t*)AllocMem(SB_CHIP_BYTES, MEMF_CHIP | MEMF_CLEAR);
+    if (!sbChip) return false;
     pool = (int8_t*)AllocMem(POOL_BYTES + SILENCE_BYTES, MEMF_CHIP | MEMF_CLEAR);
     if (!pool) return false;
     silence = pool + POOL_BYTES;
@@ -279,6 +291,9 @@ extern "C" void amiga_audio_effects(void)
 void Audio::end()
 {
     freeEffects();
+    sb_clear();
+    if (sbChip) FreeMem(sbChip, SB_CHIP_BYTES);
+    sbChip = 0;
     if (pool) FreeMem(pool, POOL_BYTES + SILENCE_BYTES);
     pool = 0;
 }
@@ -322,13 +337,20 @@ void Audio::service()
     for (uint16_t k = 0; k < 9; ++k) keyon[k] = rt_opl_keyon[k];
     for (uint16_t k = 0; k < RT_SFX_IDS; k += 4) *(Long*)(starts + k) = *(const Long*)(rt_sfx_starts + k);
     bool play = effects && rt_sfx_read(driver.active, driver.id, driver.volume, driver.owner);
+    uint8_t speaker = rt_sb_speaker;
     Enable();
-    // The effects first: they take their OPL channels and Paula voices.
+    // The effects and the speech block first: they take their OPL channels
+    // and Paula voices (the effects voices from 0 up, the block SB_VOICE).
     struct fm_voice v[FM_VOICES], t[FM_VOICES];
     uint16_t mask = play ? fx_field(&driver, starts, keyon, t) : 0;
-    fm_field(opl, keyon, mask, v);
+    uint8_t ended = 0;
+    Disable();
+    uint16_t sb = sb_field(speaker, t, &ended);
+    Enable();
+    (void)ended;        // IRQ 7 comes from the DSP's own time (amiga_platform.c)
+    fm_field(opl, keyon, mask | sb, v);
     for (uint16_t k = 0; k < FM_VOICES; ++k) {
-        if (mask & FM_RESERVE(k)) v[k] = t[k];
+        if ((mask | sb) & FM_RESERVE(k)) v[k] = t[k];
     }
     Disable();
     for (uint16_t c = 0; c < FM_VOICES; ++c) {
@@ -414,4 +436,29 @@ void Audio::mute(bool on)
 extern "C" void amiga_audio_service(void)
 {
     Audio::service();
+}
+
+// DSP 14h (ports.c, plat_sb_block): the block's guest bytes (unsigned, guest
+// RAM byte-reversed as runtime.h rd8 reads it) converted to signed in the next
+// Chip block, padded with a zero to an even length, played from the next field.
+extern "C" void amiga_audio_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
+{
+    // the EMS page frame's bytes go through rt_ems_touch (runtime.h rt_frame)
+    if (!sbChip || !pool) {
+        rt_stop("Sound Blaster block with no Chip RAM for speech (linear, length)", linear, length);
+    }
+    if (length > SB_BLOCK_BYTES || linear + length > RT_GUEST_BYTES ||
+            (linear < 0xf0000u && linear + length > 0xe0000u)) {
+        rt_stop("Sound Blaster block outside the speech buffer (linear, length)", linear, length);
+    }
+    int8_t* chip = sbChip + sbNext * SB_BLOCK_BYTES;
+    const uint8_t* src = rt_guest - linear;
+    for (uint32_t k = 0; k < length; ++k) chip[k] = (int8_t)(*(src - k) ^ 0x80);
+    if (length & 1) chip[length] = 0;
+    sbNext ^= 1;
+    amiga_audio_sb_linear = linear;
+    amiga_audio_sb_bytes = length;
+    Disable();
+    sb_block(chip, length, rate, silence);
+    Enable();
 }

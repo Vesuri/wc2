@@ -296,6 +296,7 @@ extern uint8_t rt_music_skip;        /* 1: HLE music_skip skips song starts */
 extern uint16_t rt_deliver_cs, rt_deliver_ip;
 extern void *rt_deliver_code;
 extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 clears it */
+extern uint8_t rt_sb_speaker;       /* ports.c: DSP D1h on, D3h off (Paula speech volume) */
 
 /* Effect capture (sfx.c, owner decision D13): at the first effect start on
  * the main thread with rt_sfx_prerender_on, each effect id's OPL writes
