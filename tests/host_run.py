@@ -477,12 +477,12 @@ class Host:
                                                 "plat_calendar_date", "plat_file_stamp", "plat_close", "plat_dir_names", "plat_file_info", "plat_timer_rate", "plat_pit_count", "plat_mouse", "plat_present", "plat_palette",
                                                 "plat_service", "plat_vga_status", "plat_dsp_status", "plat_sb_block",
                                                 "plat_log", "plat_console",
-                                                "plat_sfx_wanted", "plat_sfx_captured", "plat_exit")}
+                                                "plat_sfx_cached", "plat_sfx_wanted", "plat_sfx_captured", "plat_exit")}
         # --sfx-capture: the effect captures (src/runtime/sfx.c), each with the
         # guest RAM at its hook; sfx_cap while one runs (out of the game's flow:
         # no trigger, poll, service, OPL, IRQ or memory check sees it)
         self.sfx_cap = False
-        self.sfx_depth = 0                # the capture's own starts return through the hook
+        self.sfx_depth = 0                # the sound init's hook (HLE sfx_init) entered
         self.sfx_plant = "on"
         self.sfx_entry: tuple[bytes, int] | None = None
         self.sfx_captures: list[dict] = []
@@ -1074,6 +1074,8 @@ class Host:
             print(self.log[-1])
         elif n == "plat_console":
             self.console += self.mem(args[0], args[1])
+        elif n == "plat_sfx_cached":            # no cache on the host: every run captures
+            res = 0
         elif n == "plat_sfx_wanted":
             res = 1
         elif n == "plat_sfx_captured":
@@ -1098,7 +1100,7 @@ class Host:
 
         @U.CODE_CB
         def cap(h, addr, size, user):
-            if addr == self.syms["rt_hle_sfx_start"]:
+            if addr == self.syms["rt_hle_sfx_init"]:
                 self.sfx_depth += 1
                 if self.sfx_depth == 1:
                     self.sfx_entry = (self.e.read(TOP - GUEST_BYTES + 1, GUEST_BYTES)[::-1], self.state(1, 2))
@@ -1106,7 +1108,7 @@ class Host:
                 self.sfx_depth -= 1
             self.sfx_cap = self.sfx_depth > 0
 
-        for n in ("rt_hle_sfx_start", "rt_hle_sfx_start_done"):
+        for n in ("rt_hle_sfx_init", "rt_hle_sfx_init_done"):
             self.e.hook_range(U.HOOK_CODE, cap, self.syms[n], self.syms[n])
 
     def sfx_state(self) -> dict:
@@ -1890,11 +1892,12 @@ SFX_SABOTAGE = ("restore", "tick", "value", "end", "starts")
 
 def sfx_problems(h: "Host", plant: str) -> list[str]:
     """Every capture (src/runtime/sfx.c) against tools/sfx_capture.py: STRAX.DRV and
-    the game's effect code under Unicorn x86 from the guest RAM at the hook; and the
-    guest RAM after the capture equal to the RAM at the hook."""
+    the game's effect code under Unicorn x86 from the guest RAM at the hook (the
+    sound init's return); and the guest RAM after the capture equal to the RAM at
+    the hook."""
     import sfx_capture as X
     if not h.sfx_captures:
-        return ["effect capture: the effect start's hook (WC2.EXE+126D4) was not reached"]
+        return ["effect capture: the sound init's hook (WC2.EXE+13771) was not reached"]
     problems = []
     for n, c in enumerate(h.sfx_captures):
         if c["after"] != c["ram"]:
@@ -1902,7 +1905,7 @@ def sfx_problems(h: "Host", plant: str) -> list[str]:
             problems.append(f"effect capture {n}: {len(diff)} guest bytes not restored, first "
                             f"{diff[0]:05x}: {c['ram'][diff[0]]:02x} -> {c['after'][diff[0]]:02x}")
         if n == 0 and any(c["starts"]):
-            problems.append(f"effect capture 0: starts counted before the first start's own: "
+            problems.append(f"effect capture 0: starts counted at the sound init: "
                             f"{[i for i, k in enumerate(c['starts']) if k]} (the capture's starts counted)")
         opl0, want = X.capture(c["ram"], c["ds"])
         got = dict(c["ids"])

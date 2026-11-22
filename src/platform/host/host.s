@@ -25,6 +25,7 @@
 	xdef	plat_present
 	xdef	plat_palette
 	xdef	plat_service
+	xdef	plat_sfx_cached
 	xdef	plat_sfx_wanted
 	xdef	plat_sfx_captured
 	xdef	plat_log
@@ -84,6 +85,8 @@ plat_present:	nop
 plat_palette:	nop
 	rts
 plat_service:	nop
+	rts
+plat_sfx_cached:	nop
 	rts
 plat_sfx_wanted:	nop
 	rts

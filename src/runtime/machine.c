@@ -136,6 +136,7 @@ static void exec_root(uint16_t psp_seg)
         rt_stop("WC2.EXE not found", 0, 0);
     }
     fail_read(plat_read(f, h, sizeof h), sizeof h);
+    rt_sfx_input(h, sizeof h);
 #define HW(o) ((uint16_t)(h[o] | h[(o) + 1] << 8))
     if (HW(0) != 0x5a4d) {
         rt_stop("WC2.EXE is not MZ", HW(0), 0);
@@ -147,11 +148,13 @@ static void exec_root(uint16_t psp_seg)
     plat_seek(f, HW(8) * 16, 0);
     uint8_t *image = rt_span_w(lin(load, 0), size);
     fail_read(plat_read(f, image, size), (int32_t)size);
+    rt_sfx_input(image, size);
     rt_span_order(image, size);
     plat_seek(f, HW(0x18), 0);
     for (uint16_t k = 0; k < HW(6); ++k) {
         uint8_t r[4];
         fail_read(plat_read(f, r, 4), 4);
+        rt_sfx_input(r, 4);
         uint32_t a = lin(load + (r[2] | r[3] << 8), r[0] | r[1] << 8);
         wr16(a, rd16(a) + load);
     }

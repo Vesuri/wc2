@@ -298,8 +298,10 @@ extern void *rt_deliver_code;
 extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 clears it */
 extern uint8_t rt_sb_speaker;       /* ports.c: DSP D1h on, D3h off (Paula speech volume) */
 
-/* Effect capture (sfx.c, owner decision D13): at the first effect start on
- * the main thread with rt_sfx_prerender_on, each effect id's OPL writes
+/* Effect capture (sfx.c, owner decisions D13, D15): at the game's sound init
+ * (HLE sfx_init) with rt_sfx_prerender_on, unless plat_sfx_cached keeps the
+ * samples of rt_sfx_key (the CRC-32 of the file bytes the game read before:
+ * rt_sfx_input from machine.c and dos.c), each effect id's OPL writes
  * in rt_sfx_capture[rt_sfx_first[id]..+rt_sfx_writes[id]), ticks of
  * STRAX.DRV's 60 Hz timer from its start (0); rt_sfx_ticks[id] the tick its
  * slot was released (0: held, the game stops it); rt_sfx_opl the registers the
@@ -315,7 +317,10 @@ extern struct rt_sfx_write rt_sfx_capture[RT_SFX_WRITES];
 extern uint16_t rt_sfx_first[RT_SFX_IDS], rt_sfx_writes[RT_SFX_IDS], rt_sfx_ticks[RT_SFX_IDS];
 extern uint8_t rt_sfx_opl[256];
 extern uint32_t rt_sfx_captures;    /* completed captures */
+extern uint32_t rt_sfx_key;         /* set at the sound init */
+void rt_sfx_input(const uint8_t *p, uint32_t n);
 void rt_sfx_write(uint32_t reg, uint32_t value);
+void rt_sfx_init(void);
 void rt_sfx_start(void);
 void rt_sfx_pit_reset(void);
 /* In play (fx_play.c): rt_sfx_starts[id] counts the starts the game made that

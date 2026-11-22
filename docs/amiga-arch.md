@@ -135,7 +135,8 @@ per period (L44). Publication never feeds back into simulation; missed slots are
 - **Music and effects**: STRAX.DRV runs translated into the runtime's OPL register shadow
   (`rt_opl`); a Paula-only re-hoster (`fm_paula.c`, `Audio.cpp`, fed each field by
   `amiga_audio_service`) never decides what sounds (L71). The one-shot effects are
-  prerendered and played by `fx_play.c` (D13, D14, [drivers.md](drivers.md) "FM effects").
+  prerendered at the game's sound init, before the first scene, or loaded from `sfx.cache`
+  without a capture, and played by `fx_play.c` (D13, D14, D15, [drivers.md](drivers.md) "FM effects").
 - **Speech**: `plat_sb_block` hands each DSP block to `Audio.cpp`, which converts it to
   signed samples in one of two 64 KiB Chip blocks; `sb_play.c` (X-Wing's) plays it on Paula
   voice 3 from the next field, the FM re-hoster giving that voice up while it plays, at
@@ -205,7 +206,8 @@ Each guest DOS file call (open, create, read, write, seek, delete, directory) is
 dos.library call in its own I/O window, relative to the current directory (L7). Saves are
 the guest's own create/write calls; L83 and L88 are not applied. Any code loaded or patched
 at runtime is followed by `CacheClearU()` (L87). The effect cache `sfx.cache` is read
-per effect straight into Chip and written by one `Write` from a Fast image (sound-plan R4).
+per effect straight into Chip and written by one `Write` from a Fast image (sound-plan R4);
+its key is the file bytes the game read before its sound init and the build (D15).
 
 ## Build rules
 

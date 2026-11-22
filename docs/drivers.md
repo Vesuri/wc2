@@ -115,9 +115,29 @@ their release), 11 are held (11, 12, 14, 15, 17, 32, 38, 45, 48, 53, 54); no rec
 equal the reference's for the same patch (ids 1 and 37 against `host-m6`); 23 of the 55
 patches occur at key-ons of the m6 and mx2 references (MEASURED 2026-11-20).
 
-Prerendered (owner decisions D13, D14): at the first effect start the runtime
-(`src/runtime/sfx.c`, HLE `sfx_start` at the start's RETF `WC2.EXE+126D4`) captures every
-one-shot the same way. The callback cannot be redirected (`indirect.csv` knows only
+Prerendered (owner decisions D13, D14, D15): at the return of the game's sound init
+(`WC2.EXE+13641`, RETF `+13771`, HLE `sfx_init`), which the startup init calls
+(`+397DA`) before the first scene once it has loaded `strax.drv` and the bank `wing2.tim`,
+set DS:AE54h/AE56h and installed the callback, the runtime (`src/runtime/sfx.c`)
+captures every one-shot the same way. The init returns early with no sound driver
+(DS:A52Ch 0); then nothing is captured. DERIVED by reading.
+
+A capture depends on the driver's state where it runs: which OPL channels an effect's
+voices take, the order of the voices' writes in a tick, and for a few ids what they play.
+`fm_effect`'s renders of the oracle's captures (`build/tools/fm_effect_check`'s
+`ID-fx.wav`) from the sound init's guest RAM (host lockstep to m1) and from the m1, m4-0,
+m4-1 and m6 snapshots are byte-identical for 37 of the 39 prerendered ids; id 2 differs
+from m4-1's flight state by -40 dB (m6: twice as long) and id 20 by -35 dB, as m1's
+state does (MEASURED 2026-11-22). Any one capture point gives one state; the first effect
+start (D13 before D15) did too. From the same state `fm_effect_check` also finds ids 26
+and 40, which D14 lists live, within its thresholds: D14's list is m4-1's measurement.
+
+At the sound init the capture's only input from outside the build is the file bytes the
+game read before (the EXE image and the DOS reads; the command tail is empty): their
+CRC-32 (`rt_sfx_key`) and a build key (`amiga/Makefile` `sfx_build.h`) key `sfx.cache`,
+which, when it holds them, loads with no capture. Two captures on the Amiga with the same
+key render the same samples, and a kept cache loads them (`make test-amiga-sfx-cache`,
+MEASURED). The callback cannot be redirected (`indirect.csv` knows only
 `+132CC`), so its gates in DGROUP hold it to the effect tick: A53Ch 0 (no fade), A801h 1
 and A544h/A546h 0 (no song). The BIOS chain after it (`+10080`, `pushf; callf [DEBE]`)
 adds its step to an accumulator and jumps to the BIOS on a carry, so each tick sets the

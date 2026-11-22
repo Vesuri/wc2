@@ -1,9 +1,13 @@
 /* Effect capture for prerendering (owner decision D13, docs/drivers.md "FM
  * effects"), adapted from X-Wing's src/runtime/sfx.c. An effect is a chain of
  * 8-byte records in WC2.EXE's effect table (DS:0540h) the game steps on
- * STRAX.DRV's 60 Hz tick. At the return of
- * the game's effect start (WC2.EXE+1254D, HLE sfx_start, observe only), the
- * first time it runs on the main thread with rt_sfx_prerender_on, each
+ * STRAX.DRV's 60 Hz tick. At the return of the game's sound init
+ * (WC2.EXE+13641, from the startup init: STRAX.DRV and WING2.TIM loaded, the
+ * callback installed; HLE sfx_init, observe only), before the first scene,
+ * with rt_sfx_prerender_on (owner decision D15), the platform is first asked
+ * for samples kept under rt_sfx_key: a CRC-32 of every file byte the game
+ * read up to there (the EXE image and its DOS reads), the capture's only
+ * input from outside the build. Without them each
  * effect's OPL writes are captured by running the game's own effect code and
  * the driver with the tick held: every slot cleared, all notes off on the 16
  * MIDI channels, 120 ticks to let releases end; then per id from that state
@@ -22,8 +26,8 @@
  *
  * In play, rt_sfx_read gives the effect player (fx_play.c) the game's effect
  * slots and the OPL channel each STRAX.DRV voice of theirs plays, and HLE
- * sfx_start counts each id's starts in rt_sfx_starts. DERIVED by reading
- * (docs/drivers.md). */
+ * sfx_start (the RETF of the effect start WC2.EXE+1254D, observe only) counts
+ * each id's starts in rt_sfx_starts. DERIVED by reading (docs/drivers.md). */
 #include "platform.h"
 #include "runtime.h"
 
@@ -62,6 +66,7 @@
 #define TICKS_MAX 480               /* 8 s at 60 Hz */
 #define STACK_BYTES 0x800           /* the private stack the capture runs on, below RT_IRQ_SP */
 #define DGROUP_BYTES 0x10000u
+#define SOUND_CARD 0xa52c           /* DS word: the sound init's driver kind, 0 none (WC2.EXE+13641) */
 #define SENTINEL_CS RT_IRQ_SS
 #define SENTINEL_IP RT_IRQ_SP
 
@@ -71,9 +76,34 @@ __attribute__((aligned(4))) struct rt_sfx_write rt_sfx_capture[RT_SFX_WRITES];
 __attribute__((aligned(4))) uint16_t rt_sfx_first[RT_SFX_IDS], rt_sfx_writes[RT_SFX_IDS], rt_sfx_ticks[RT_SFX_IDS];
 __attribute__((aligned(4))) uint8_t rt_sfx_opl[256];
 uint32_t rt_sfx_captures;
+uint32_t rt_sfx_key;
 __attribute__((aligned(4))) uint8_t rt_sfx_starts[RT_SFX_IDS];
 static uint16_t capture_n, capture_tick, ds_seen, drv_seen;
-static uint8_t recording, shadow[256];
+static uint8_t recording, shadow[256], keyed;
+static uint32_t crc_table[256], crc = 0xffffffffu;
+
+/* The game's file bytes in the order it read them (machine.c's EXE image, dos.c's
+ * reads), into rt_sfx_key's CRC-32 until the sound init's return. */
+void rt_sfx_input(const uint8_t *p, uint32_t n)
+{
+    if (!rt_sfx_prerender_on || keyed) {
+        return;
+    }
+    if (!crc_table[1]) {
+        for (uint32_t k = 0; k < 256; ++k) {
+            uint32_t c = k;
+            for (int b = 0; b < 8; ++b) {
+                c = c & 1 ? 0xedb88320u ^ c >> 1 : c >> 1;
+            }
+            crc_table[k] = c;
+        }
+    }
+    uint32_t c = crc;
+    while (n--) {
+        c = crc_table[(c ^ *p++) & 0xff] ^ c >> 8;
+    }
+    crc = c;
+}
 
 uint32_t rt_guest_call(uint32_t sentinel);
 void *rt_lookup(uint32_t cs, uint32_t ip, uint32_t far);
@@ -161,14 +191,21 @@ static void memory(const struct span *s, uint8_t *save, int restore)
     }
 }
 
-static void capture(uint16_t ds)
+/* STRAX.DRV's CS, checked: DGROUP holds its note entry, it the game's callback. */
+static uint16_t driver(uint16_t ds)
 {
-    uint16_t load = (uint16_t)(ds - DGROUP), root = (uint16_t)(load + ROOT), drv = rd16(lin(ds, DRV_CS));
-    uint32_t timer = lin((uint16_t)(load + TIMER), 0);
+    uint16_t root = (uint16_t)(ds - DGROUP + ROOT), drv = rd16(lin(ds, DRV_CS));
     if (rd16(lin(ds, DRV_NOTE)) != DRV_NOTE_IP || rd16(lin(drv, DRV_CALLBACK)) != CALLBACK
         || rd16(lin(drv, DRV_CALLBACK + 2)) != root) {
         rt_stop("effect capture: DGROUP does not hold STRAX.DRV with the game's callback", drv, ds);
     }
+    return drv;
+}
+
+static void capture(uint16_t ds)
+{
+    uint16_t load = (uint16_t)(ds - DGROUP), root = (uint16_t)(load + ROOT), drv = driver(ds);
+    uint32_t timer = lin((uint16_t)(load + TIMER), 0);
     struct span s[4];
     spans(s, ds, drv, timer);
     uint32_t bytes = 0;
@@ -260,11 +297,35 @@ static void capture(uint16_t ds)
     rt_irq0_running = 0;
 }
 
-/* HLE sfx_start (rt_entry.s saves and restores the guest's registers and
- * state block around it): the RETF of WC2.EXE+1254D, DX:AX the slot it took
- * (0 none), its record's far pointer at SS:SP+4. The capture's own starts
- * return through it too: they are not the game's, so neither counted nor
- * captured again. */
+/* HLE sfx_init (rt_entry.s saves and restores the guest's registers and state
+ * block around it): the RETF of the game's sound init WC2.EXE+13641, DS
+ * DGROUP. Once, on the main thread, with a sound driver (SOUND_CARD; the init
+ * returns early without one): the samples kept under rt_sfx_key, else the
+ * capture and the prerender. */
+void rt_sfx_init(void)
+{
+    if (!rt_sfx_prerender_on || keyed || rt_irq0_running) {
+        return;
+    }
+    keyed = 1;
+    rt_sfx_key = ~crc;
+    uint16_t ds = G_DS;
+    if (!rd16(lin(ds, SOUND_CARD))) {
+        return;
+    }
+    uint16_t drv = driver(ds);
+    if (plat_sfx_cached()) {
+        ds_seen = ds;
+        drv_seen = drv;
+        return;
+    }
+    capture(ds);
+}
+
+/* HLE sfx_start (rt_entry.s as sfx_init): the RETF of WC2.EXE+1254D, DX:AX
+ * the slot it took (0 none), its record's far pointer at SS:SP+4. The
+ * capture's own starts return through it too: they are not the game's, so not
+ * counted. */
 void rt_sfx_start(void)
 {
     if (rt_sfx_capturing) {
@@ -273,9 +334,6 @@ void rt_sfx_start(void)
     uint16_t ds = G_DS;
     uint32_t top = lin(G_SS, rt_r.sp);
     uint16_t off = rd16(top + 4), seg = rd16(top + 6);
-    if (rt_sfx_prerender_on && !rt_sfx_captures && !rt_irq0_running) {
-        capture(ds);
-    }
     uint16_t id = (uint16_t)((off - FX_TABLE) / 8);
     if ((rt_r.ax || rt_r.dx) && seg == ds && off > FX_TABLE && !((off - FX_TABLE) & 7) && id < RT_SFX_IDS) {
         ++rt_sfx_starts[id];

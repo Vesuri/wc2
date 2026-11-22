@@ -83,7 +83,7 @@ obj/replay_s.o: $(REPO)/tests/amiga_replay.s | obj
 endif
 
 .DEFAULT_GOAL := all
-.PHONY: all clean verify-runtime
+.PHONY: all clean verify-runtime FORCE
 # Never leave a truncated executable that looks up to date after elf2hunk fails.
 .DELETE_ON_ERROR:
 
@@ -107,8 +107,20 @@ obj/Wc2.o: $(AMIGA_SRC)/Wc2.cpp | obj
 obj/Pointer.o: $(AMIGA_SRC)/Pointer.cpp | obj
 	$(CC) $(CPPFLAGS) -c -o $@ $<
 
-obj/Audio.o: $(AMIGA_SRC)/Audio.cpp | obj
-	$(CC) $(CPPFLAGS) -c -o $@ $<
+obj/Audio.o: $(AMIGA_SRC)/Audio.cpp obj/sfx_build.h | obj
+	$(CC) $(CPPFLAGS) -Iobj -c -o $@ $<
+
+# The effect cache's build key (Audio.cpp, owner decision D15): the code the
+# capture and the render run (the generated modules' input and body hashes, the
+# runtime's and the audio sources) and the flags. Rewritten only when it changes.
+SFX_BUILD_SOURCES = $(sort $(wildcard $(RUNTIME)/*.c $(RUNTIME)/*.h $(RUNTIME)/*.s)) \
+	$(addprefix $(AMIGA_SRC)/,Audio.cpp amiga_platform.c fm_paula.c fm_paula.h fm_effect_run.s fx_play.c fx_play.h)
+obj/sfx_build.h: FORCE | obj
+	@key=$$( { grep -h -e '^; inputs ' -e '^; body ' $(sort $(wildcard $(GEN)/*.s)); \
+		cat $(SFX_BUILD_SOURCES); echo '$(CCFLAGS)'; } | cksum | cut -d' ' -f1); \
+	new="#define SFX_BUILD_KEY $${key}u"; \
+	test "$$(cat $@ 2>/dev/null)" = "$$new" || echo "$$new" > $@
+FORCE:
 
 obj/Input.o: $(AMIGA_SRC)/Input.cpp | obj
 	$(CC) $(CPPFLAGS) -c -o $@ $<

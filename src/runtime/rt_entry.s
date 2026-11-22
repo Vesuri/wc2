@@ -29,8 +29,8 @@ G_DS	equ	1
 	xdef	rt_hle_music_skip
 	xdef	rt_guest_call
 	xdef	rt_hle_pointer_tracked
-	xdef	rt_hle_sfx_start,rt_hle_sfx_start_done
-	xref	rt_sfx_start
+	xdef	rt_hle_sfx_start,rt_hle_sfx_start_done,rt_hle_sfx_init,rt_hle_sfx_init_done
+	xref	rt_sfx_start,rt_sfx_init
 	xref	rt_sfx_capturing
 	xref	rt_sfx_write
 	xdef	rt_in8
@@ -498,11 +498,29 @@ rt_hle_pointer_tracked:
 	cmp.w	d7,d7
 	rts
 
-; HLE sfx_start (annotations/hle.csv, sfx.c): the RETF of the game's effect
-; start. The effect capture runs guest code: the 68k registers, the state
-; block and rt_r are saved around it and restored (X-Wing's). Observe only: EQ.
+; HLE sfx_init and sfx_start (annotations/hle.csv, sfx.c): the RETF of the
+; game's sound init and of its effect start. The effect capture runs guest
+; code: the 68k registers, the state block and rt_r are saved around the C call
+; (a3, sfx_call) and restored (X-Wing's). Observe only: EQ.
+rt_hle_sfx_init:
+	movem.l	d0-d7/a0-a6,-(a7)
+	lea	rt_sfx_init,a3
+	bsr.s	sfx_call
+	movem.l	(a7)+,d0-d7/a0-a6
+rt_hle_sfx_init_done:			; tests/host_run.py: the capture's window ends
+	cmp.w	d7,d7
+	rts
+
 rt_hle_sfx_start:
 	movem.l	d0-d7/a0-a6,-(a7)
+	lea	rt_sfx_start,a3
+	bsr.s	sfx_call
+	movem.l	(a7)+,d0-d7/a0-a6
+rt_hle_sfx_start_done:
+	cmp.w	d7,d7
+	rts
+
+sfx_call:
 	bsr	save_regs
 	lea	-32(a7),a7
 	movea.l	a7,a0
@@ -515,7 +533,7 @@ rt_hle_sfx_start:
 	move.l	(a1)+,(a0)+
 	move.l	(a1)+,(a0)+
 	move.l	(a1)+,(a0)+
-	jsr	rt_sfx_start
+	jsr	(a3)
 	movea.l	rt_guest,a6
 	movea.l	a7,a0
 	move.l	(a0)+,1(a6)
@@ -528,9 +546,6 @@ rt_hle_sfx_start:
 	move.l	(a0)+,(a1)+
 	move.l	(a0)+,(a1)+
 	lea	32(a7),a7
-	movem.l	(a7)+,d0-d7/a0-a6
-rt_hle_sfx_start_done:			; tests/host_run.py: the hook's window ends
-	cmp.w	d7,d7
 	rts
 
 ; TF set by POPF/IRET: d7 = IP of the instruction.

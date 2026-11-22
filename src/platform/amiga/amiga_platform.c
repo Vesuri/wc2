@@ -885,16 +885,25 @@ static void key_script_step(void)
     script_press(name, n);
 }
 
-/* Effect capture (runtime.h rt_sfx_*): every effect when Audio has its Chip;
- * the prerender follows in Audio (fx_play.c, owner decision D13). */
+/* Effect capture (runtime.h rt_sfx_*), at the game's sound init: the samples
+ * from sfx.cache when it holds rt_sfx_key's; else every effect when Audio has
+ * its Chip, the prerender following in Audio (fx_play.c, owner decisions D13,
+ * D15). */
+extern int amiga_audio_effects_cached(void);
 extern int amiga_audio_effect_wanted(uint8_t id);
 extern void amiga_audio_effects(void);
 __attribute__((aligned(4))) volatile uint32_t amiga_sfx_capture_fields;  /* the capture's fields (diagnostics) */
+__attribute__((aligned(4))) volatile uint32_t amiga_sfx_init_frame;      /* amiga_frames + 1 at the sound init, 0 before (diagnostics) */
+int plat_sfx_cached(void)
+{
+    amiga_sfx_init_frame = amiga_frames + 1;
+    int kept = amiga_audio_effects_cached();
+    amiga_sfx_capture_fields = kept ? 0 : amiga_frames;
+    return kept;
+}
+
 int plat_sfx_wanted(uint8_t id)
 {
-    if (id == 1) {
-        amiga_sfx_capture_fields = amiga_frames;
-    }
     return amiga_audio_effect_wanted(id);
 }
 
@@ -1037,7 +1046,7 @@ int amiga_guest_open(void)
         return 0;
     }
     key_script_check();
-    rt_sfx_prerender_on = 1;    /* effects prerendered at the first effect start (runtime.h) */
+    rt_sfx_prerender_on = 1;    /* effects prerendered at the game's sound init (runtime.h) */
     if (!dispatch_count) {
         /* WC2 before port-plan P1.4: no translated program. The takeover runs
          * EMPTY_FIELDS fields and hands back (make smoke). */

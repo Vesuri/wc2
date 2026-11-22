@@ -1,6 +1,6 @@
 ## Wing Commander II — repository-level targets.
 
-.PHONY: all help test-host test-amiga test-amiga-speech t-sb-play t-sab-sb-play extract install inspect hash check-ref prepare-reference reference-staging compare \
+.PHONY: all help test-host test-amiga test-amiga-speech test-amiga-sfx-cache t-sb-play t-sab-sb-play extract install inspect hash check-ref prepare-reference reference-staging compare \
 	reference-emulator reference map gen gen-check lint test test-decode test-x86 test-m68k test-blocks test-sabotage \
 	test-guards host amiga smoke size install-data test-install-data amiga-release amiga-diag whdload test-whdload release release-check \
 	github-release test-release-installer gates-audio sound-fm sfx-price test-sfx-capture t-amiga-sfx clean
@@ -44,6 +44,7 @@ help:
 	@echo "  make test-host          gate 5 host: lockstep from the MZ entry to m1, m1b, m2, m3, m4, m5 and m6 (tests/host_run.py)"
 	@echo "  make test-amiga         gate 5: m1b replayed on the 68030 model (FS-UAE + GDB capture, AMIGA_CPU)"
 	@echo "  make test-amiga-speech  the intro's speech on Paula in the production image (68030 model)"
+	@echo "  make test-amiga-sfx-cache  the effects ready before the first frame, and their cache (68030 model)"
 	@echo "  make gates-audio        the FM re-hoster against Nuked OPL on the host references' OPL logs,"
 	@echo "                          the FM unit checks, the effect render and player, and every plant (docs/sound-plan.md)"
 	@echo "  make sound-fm           the re-hoster's Paula WAVs of those logs -> tmp/sound/"
@@ -266,8 +267,9 @@ host: gen-check build/host/wc2.elf
 HOST_MILESTONES = m1 m1b m2 m3 m4 m5 m6
 t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 20000)
-# The effect capture (src/runtime/sfx.c, HLE sfx_start) against tools/sfx_capture.py in
-# host lockstep to the first milestone whose route starts an effect, and its plants.
+# The effect capture (src/runtime/sfx.c, HLE sfx_init at the game's sound init) against
+# tools/sfx_capture.py from the guest RAM there, in host lockstep to a milestone whose
+# reference has the current poll points, and its plants.
 SFX_MILESTONE ?= mx1
 SFX_PLANTS = restore tick value end starts
 t-sfx-capture: host
@@ -344,6 +346,11 @@ t-sab-sb-play:
 # every DSP block played, its samples in Chip, the speaker on (tests/amiga_speech.py).
 test-amiga-speech: amiga
 	nice -n 10 $(PYTHON) tests/amiga_speech.py
+# The prerendered effects at the game's sound init (D15): ready before the first frame,
+# captured and cached on the first start, loaded without a capture on the next, another
+# key captured again (tests/amiga_sfx_cache.py).
+test-amiga-sfx-cache: amiga
+	nice -n 10 $(PYTHON) tests/amiga_sfx_cache.py
 # Isolated audio changes (AGENTS.md "Validation scope"): the sound checks and their plants.
 gates-audio:
 	@$(MAKE) -s -k -j$(JOBS) $(FM_MILESTONES:%=t-fm-paula-%) t-sab-fm-paula \

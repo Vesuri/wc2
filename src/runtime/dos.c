@@ -396,6 +396,7 @@ static void read_file(void)
             fail(5);
             return;
         }
+        rt_sfx_input(buf, (uint32_t)n);
         uint8_t *d = rt_span(a + got, 1);
         rt_wrote(a + got, (uint32_t)n);
         for (int32_t k = 0; k < n; ++k) {
