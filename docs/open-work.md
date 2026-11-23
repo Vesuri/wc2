@@ -6,9 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-28. References current (P7.1): one `--stale-polls` pass on the current references, then
-    m1b, m2, m3, m5 and m6 re-recorded once. Acceptance: `make test-host` m1–m6 ok on the
-    new references.
 29. Instruments (P7.2), from X-Wing `0d20bcd`: the meter over m2, m3, m4 and m5's Nav 1
     fight with a 68030 cost model; frames fixtures for quiet flight and the fight on the
     Amiga image. Acceptance: each meter equal in two runs, a plant adding exactly its cost,

@@ -39,7 +39,7 @@ of that was undoing early choices. Here each one is made in its final form from 
 | C2 | **Timer interrupt**: the guest's handler runs from the Amiga timer interrupt (CIA-B) whenever guest IF is set and no handler is active, on a private guest stack, justified by the generation-time footprint proof (`translator/irq.py`) and the host-run monitor; sync points only in test builds | polls at 2,096 loop heads cost 5.15% of the meter's cycles; removing them cut frames from 330 to 300 ms (irq-plan) | P4.4 for every WC2 handler; long references wait for the final sync set |
 | C3 | **EMS page switching nearly free**: a map is a table update where provably exact; copies are the guarded fallback | two 16 KB pages copied byte by byte per map (240K cycles), about 25% of the cycles in close-bomber scenes; F1's long copies and identical-remap skip cut that scene's meter 27.7% | P2.5 measures the access pattern; P4.5 designs the model before the first profile |
 | C4 | **Display**: take the machine over, convert only the rows the game drew (marks at its stores, never frame compares), present each frame at the game's own frame boundary | rebuilt four times: periodic present (10-04), changed rows (10-06), takeover copper display (10-07), double-buffered publication (10-13), frame-boundary present (10-28) | P2 finds the boundary; P6b.1 copies the final path |
-| C5 | **Speed work** starts with the deterministic cost meter and lowering-cost meter, and profiles of several heavy scenes | round 1 judged steps on frame medians inside trajectory noise and ±0.7% layout noise, priced in instructions (speed-plan §5) | P7.1 before the first speed step |
+| C5 | **Speed work** starts with the deterministic cost meter and lowering-cost meter, and profiles of several heavy scenes | round 1 judged steps on frame medians inside trajectory noise and ±0.7% layout noise, priced in instructions (speed-plan §5) | P7.2 before the first speed step |
 | C6 | **Sound**: price the worst-case effect first; prerender effects at start-up | the heavy gun rendered live cost about 19 M cycles per 0.88 s shot, about 40% of a 50 MHz 68030; prerendering (capture the driver's OPL writes per effect id at start-up, synthesise into Chip, cache on disk) came after release 0.90: 465 KB Chip, 6.5 s first start, 0.9 s cached on a 68030 | P6b.2 |
 | C7 | **Release tests before the first release**: exit to DOS, save and load, every input device, NTSC, the CPU range 68030–68060 with the cache and MMU options | after 0.90: exit path (EMS release, mode 3, console text; 0.91), Paula restarts on fast CPUs (0.92), 68030 data cache with WHDLoad's MMU option, mouse rates, analog joystick axes and buttons (0.92, 0.93), NTSC timing | P8.3 |
 
@@ -479,9 +479,10 @@ Steps: each is one commit or a short series with its meter and frames figures, t
 priced win first once the instruments exist (X-Wing's order). Below about 5% the frames
 fixture cannot resolve a step and the meter decides.
 
-1. **References current.** One `--stale-polls` pass on the current references, then m1b, m2,
-   m3, m5 and m6 re-recorded once (their poll points are stale; m4's are current). The
-   meter's runs are lockstep checks, so its windows need current references.
+1. **References current.** Done 2026-11-23: one `--stale-polls` pass on m1b, m2, m3, m5 and
+   m6 found no problem besides the stale poll points, the five were re-recorded once, and
+   `make test-host` passes m1–m6 on them. The meter's runs are lockstep checks, so its
+   windows need current references.
 2. **Instruments** (C5), from X-Wing `0d20bcd`:
    - `tools/cost_meter.py` with a C block hook (X-Wing `tests/host_meter.c`), its run the
      lockstep check. Windows: m4 (the launch, quiet flight), m5's Nav 1 fight (frames
