@@ -17,9 +17,11 @@ come from `make compare`: static, linear decode, no run-time profile yet.
 | Startup | `mov dx,DGROUP` at `0000:0000`, DGROUP `1231h` | same, DGROUP `1976h` |
 
 Both are large-model Borland C with almost no hand-written assembly (frameless modules:
-WC1 2.5 KB, WC2 2.6 KB, the WC2 ones mostly matching WC1). There is no graphics driver
-file: the renderer is compiled C in the EXE. Shared driver files are sound: `SUPERTM.DRV`
-is identical (both entries), `STRAX.DRV` shares 1 of 3 entries, `TM.DRV` none.
+WC1 2.5 KB, WC2 2.6 KB, the WC2 ones mostly matching WC1). Drawing is split between
+compiled C in the EXE and two driver files ([drivers.md](drivers.md)). `SUPERTM.DRV`, the
+scaled and rotated sprites of the space view: WC1's file holds WC2's two entries
+byte-identically (30,053 and 57,133 B by SHA-256) and adds a third. `TM.DRV`, the mode 13h
+blits, fills and DAC: no shared entry. `STRAX.DRV`, the FM: 1 of 3 entries shared.
 
 ## Code similarity (MEASURED, `tools/wc_compare.py`)
 
@@ -79,7 +81,8 @@ Full per-module tables: `make compare` (`tmp/compare/`).
 - The sharing is real but partial: about 30–44% of WC2's code descends from WC1, unevenly.
   Core flight systems, music and the runtime are largely shared; the cinematics, menus and
   much of the HUD/weapons logic are new or rewritten.
-- The hot-path question is still open: `R:15AD` (100% shared) is a renderer candidate, but
-  only a profile of the PC reference in flight can say where the time goes.
+- The hot-path question is still open: `R:15AD` (100% shared) and `SUPERTM.DRV` (identical)
+  are renderer candidates, but only a flight profile can say where the time goes
+  (port-plan P7.3; the reuse itself is P7.10 and P7.11).
 - The data formats are shared, so WC1's loaders and decoders (container, LZW, sprite
   formats) are the most reliably reusable layer.

@@ -219,5 +219,5 @@ WC2 is WC1's engine moved to Borland C++ 1991: 29.5% of WC2's code is a WC1 func
 nearly unchanged (similarity 0.85 or more), another 14.3% a modified one; the music, the
 span/sprite drawing module and ship loading are 64–100% shared, the cinematics and the
 pilot-file menu new. For feasibility this means the translated route stands on its own;
-WC1's Amiga CD32 routines are an optimisation (open-work 8, after gate 6), not a
+WC1's Amiga CD32 routines are an optimisation (port-plan P7.10, P7.11), not a
 dependency.

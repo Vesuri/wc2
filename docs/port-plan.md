@@ -3,8 +3,8 @@
 How Wing Commander II reaches the Amiga: Secret Weapons of Luftwaffe's (SWOTL) translator,
 runtime, Amiga layer, tests and tools are copied at SWOTL `658fc60` (release 0.93,
 2026-10-31) and adapted, never rewritten. Phases and gates are SWOTL's (`docs/phases.md`
-there), with a phase 0 for the import. Code shared with PC Wing Commander I is a phase 7
-refinement (W steps), entered only when a profile names it. Owner decisions:
+there), with a phase 0 for the import. Code shared with PC Wing Commander I enters in
+phase 7 (P7.3, P7.10, P7.11), where a profile names it. Owner decisions:
 [design.md](design.md). Work queue: [open-work.md](open-work.md). Evidence: MEASURED,
 DERIVED, INFERRED. SWOTL files are cited by their path in that repository.
 
@@ -433,74 +433,157 @@ Status: P6b done (2026-11-23).
 
 ### P7. Performance (gate 7)
 
-1. Instruments copied:
-   - the cost meter and model;
-   - lowering cost;
-   - `profile_report` and `profile_tree`;
-   - `ab_runs`;
-   - the frames and flyby fixtures.
+Gate 7 ([phases.md](phases.md)): profiled on the target; optimizations in the translator
+(with its runtime and platform) or the G3 table (`annotations/hle.csv`) only; all relevant
+fidelity gates green.
+Rules and method: [speed-plan.md](speed-plan.md) §2–§6, [perf-method.md](perf-method.md).
+X-Wing's speed phase (its P8, from X-Wing `0d20bcd`) runs on the same Borland code a step
+ahead; each instrument starts from its commit. Code shared with PC WC1, and the Amiga CD32
+WC1 with the owner's improvements to it, enter at P7.3, P7.10 and P7.11 (the owner's plan,
+2026-10-28; part of this phase since 2026-11-23).
 
-   Before the first speed step (C5): deterministic fixtures for several heavy scenes (a
-   dogfight with many ships, a capital-ship battle, a cinematic, the busiest menu), and a
-   cost model recalibrated on them.
-2. Timing on the 68030 model (D1's minimum), checked on the 68040. The owner sets the
-   frame-rate bar from the P5 measurement.
-3. System first:
-   - CACHECHIP or CACHE on the slave;
-   - chunky buffers and guest RAM in Fast;
-   - changed rows only.
+**Where it stands** ([feasibility.md](feasibility.md)). On the 50 MHz 68030 model quiet
+flight costs about 148 ms a frame (6.7 fps), the Nav 1 fight 163 ms median and 185 ms p90
+(DERIVED from the intro's profile); the original asks for 66.7 ms, 4 ticks of its 60 Hz
+limiter (15 fps). The one target profile, the intro's (P5.4, MEASURED), is runtime and
+platform 50.7% (the 3DAh retrace spin 28.4%, port reads at 364 cycles each, PIT reads 5.5%,
+present 7.4%) and generated code 41.1% (21.5 cycles per x86 instruction in `TM.DRV`, 14.0 in
+`WC2.EXE`). There is no flight profile on the target yet. SWOTL's system steps are in: the
+slave's CACHE, guest RAM in Fast, changed-row c2p (P6b).
 
-   Their Finest Hour's slave got most of its gain from these (SWOTL
-   `docs/swotl-tfh-rendering-map.md`).
-4. Translator and runtime:
-   - regenerate the profile-chosen annotations;
-   - check the EMS map rate (F1) and REP copies (F2) first.
-5. Native routines: only with the owner's authorization per routine, by SWOTL
-   `docs/native-compute.md` and the S1–S9 procedure. Every row is priced before it is
-   built, and the WC2 x86 stays the oracle.
+**The inspiration: the CD32 WC1.** The same engine family in native 68k, measured in FS-UAE
+by the Wing Commander project (its `docs/internals.md`: "Native speed/range anchor",
+"Representative flight costs", "Phase 11b rendering costs: D1"):
 
-### P7W. WC1 refinement (the owner's plan; open-work 8)
+- 14 MHz 68EC020 (the WHDLoad version on an A1200: a software c2p in place of the CD32's
+  Akiko): flight at 10.2 pictures a second (98 ms), 65% of it c2p, 12–13% maths, 8% drawing.
+- 50 MHz 68030: its limiter's cap, 25 a second (40 ms). With the owner's patches it shows one
+  picture every PAL field in the Nav 1 fight (49.9 a second, 47.5 in a held turn): under a
+  field (20 ms) of work a picture (composition 3.8 ms, HUD 2.8, geometry 1.9, conversion
+  2.2).
 
-The Their Finest Hour precedent applies: same engine family, Amiga original, the
-user's improved slave.
+WC2 keeps its own limiter (game logic), so here the CD32's figure is a cost a frame, not a
+frame rate: 40 ms is 3.7× below today's quiet flight, 20 ms 7.4×. Under 66.7 ms the gain
+shows as the original frame rate held in heavier scenes and on slower machines (68030 boards
+from 25 MHz, the 25 MHz 68040). A WC2 "Enhanced framerate" (world time decoupled from the
+frame, as in the Wing Commander slave) changes game logic: an owner decision, not this plan.
 
-1. **W1, hot list.** The P7 profile on the 68030 model gives WC2's top routines by own and
-   inclusive cycles.
-2. **W2, PC lineage.** `make compare` (`tmp/compare/funcs.csv`) gives each hot routine's PC WC1
-   counterpart and ratio. Prime suspects:
-   - `R:15AD` "SPACE BUFFER" span/sprite (100% shared);
-   - `R:0BD7` ship loading and timing (64%);
-   - `R:073C` HUD (31%);
-   - `O:1764` weapons (16%).
-3. **W3, Amiga lineage.** A cross-reference doc (as SWOTL `docs/tfh-cross-reference.md`)
-   matches WC1 PC routines to the Amiga CD32 WC1 by behaviour, constants, tables and
-   strings. Starting points are the Wing Commander project's measured routines
-   (`docs/internals.md`, "Phase 11b rendering costs"):
-   - TM6 image drawing, plain `E:2efe8`, scaled `E:2ec98` and rotated `E:2d746`;
-   - geometry `E:2a086`;
-   - maths `E:2a9d4–2cbd8`;
-   - orientation `E:2bb30`;
-   - view clear `E:31cd6`;
-   - glyphs `E:2fd6a`.
+**Where the time can come from** (INFERRED until P7.3), largest expected first: waits that
+are not work; the runtime's per-access costs; c2p (the CD32's largest cost, while only
+0.03–1.4% of its frame's bytes change a picture); generated code per x86 instruction; native
+routines for the hot guest code, where WC1 helps most. X-Wing expects about 1.4–1.6× from the
+first four kinds (360 → 230–260 ms, INFERRED there). B1 below needs 2.2–2.5×, so the native
+routines (P7.11) carry the rest, as in X-Wing (its step 12).
 
-   That game is a Manx Aztec C build with hand-written assembly. It reads big-endian
-   repacked resources (`.pkt`, `LZNP`/`NJMP`, TM6 images) and plays ProTracker modules.
-   So the correspondence is algorithmic, not drop-in, and its data and music layers do not
-   transfer (Wing Commander project survey, 2026-11-01).
-4. **W4, sources** (SWOTL U0 rule):
-   - original Amiga WC1 code is reference only and never enters the port;
-   - adaptable sources are the owner's own improved routines (the Wing Commander slave's,
-     such as its software c2p), or new 68020 code written against WC2's x86.
-   - WC2's constants, rounding, branch order and tables are kept.
-5. **W5, price.** Own-cost ceiling at zero native cost (SWOTL B3) before asking for
-   authorization.
-6. **W6, build.** Owner authorizes per routine, then S1–S9 and the native-compute contract.
-   Each one is one commit with a meter A/B.
-7. **W7, expectation.** SWOTL's best single native row cut the meter 4.68% (R35); TFH's
-   routine rewrites gave 22.4 → 23.5 fps after system changes. The Amiga WC1 spends about 65%
-   of 68020 flight time in c2p, about 12–13% in maths and about 8% in drawing
-   (Wing Commander project, "Representative flight costs"). So W is a refinement, and
-   its first comparison is WC2's C2P cost against that slave's c2p.
+Steps: each is one commit or a short series with its meter and frames figures, the biggest
+priced win first once the instruments exist (X-Wing's order). Below about 5% the frames
+fixture cannot resolve a step and the meter decides.
+
+1. **References current.** One `--stale-polls` pass on the current references, then m1b, m2,
+   m3, m5 and m6 re-recorded once (their poll points are stale; m4's are current). The
+   meter's runs are lockstep checks, so its windows need current references.
+2. **Instruments** (C5), from X-Wing `0d20bcd`:
+   - `tools/cost_meter.py` with a C block hook (X-Wing `tests/host_meter.c`), its run the
+     lockstep check. Windows: m4 (the launch, quiet flight), m5's Nav 1 fight (frames
+     drawing 8 objects or more), m2's intro (P5.4's window), m3's pilot-file screen (a menu).
+   - `tools/cost_model.json` refit on a 68030 capture of WC2's flight (today SWOTL's 68020
+     fit).
+   - Frames fixtures on the Amiga image (X-Wing `amiga/perf_film.gdb`, `tools/perf_film.py`):
+     `play_walk.sh`'s keyed route with its steps counted in presents (X-Wing's `fN`), fields
+     per frame over 60 frames from a mark, then a 100-field profile, for quiet flight and
+     the Nav 1 fight. They replace SWOTL's `perf_frames`, `perf_flyby`, `bench_frames`,
+     `bench_palette` and `frame_pace` fixtures, which still name SWOTL labels.
+   - The cycle-exact 68030 model without its MMU (the profiler records nothing on the MMU
+     core), the FS-UAE build pinned; the 68040 by counts.
+3. **Baseline and hot list** (W1, W2). Per window on the 68030: classes, the top routines by
+   own and inclusive cycles, calls a frame, cycles per x86 instruction per module
+   (`profile_tree.py`, `lowering_cost.py`), the waits, rows marked and c2p time a frame
+   (`host_census.py --vram`), and the 68040's frame intervals. Each hot routine's PC WC1
+   counterpart and similarity (`make compare`); `SUPERTM.DRV`'s two entries are
+   byte-identical in PC WC1 (MEASURED, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)).
+   Output: speed-plan §1 and §9 re-derived for WC2; feasibility's flight estimates replaced
+   by measurements.
+4. **The bar** (owner, from P7.3's numbers). Proposed tiers on the 50 MHz 68030 model:
+   - B1: 66.7 ms (15 fps) in quiet flight and the median Nav 1 fight frame (2.2–2.5×);
+   - B2: the same at the fight's p90 and in a heavier fight, and B1 on the 25 MHz 68040
+     (about 3×);
+   - B3, the CD32's: 40 ms of work a flight frame, its original rate on the same machine
+     (3.7×).
+5. **Waits** (runtime).
+   - The 3DAh retrace spin. 3DAh follows the 50 Hz PAL beam, so a wait lasts up to 20 ms
+     where the VGA's 70 Hz retrace ends it within 14.3 ms. If flight spins, a 70 Hz retrace
+     from a CIA timer, as the PIT is modelled, keeps the game's wait at its PC length.
+   - The present's waits (`frame_pace`). If the present blocks, the Wing Commander slave's
+     queued buffers (`release_buffer.s`: the renderer waits only to reuse a buffer not yet
+     shown; 6–7 ms a picture there).
+   - The limiter passes at once when a frame is late (INFERRED; checked).
+6. **Runtime access costs.**
+   - The EMS guard's one-entry cache with the IRQ0 hold (X-Wing `4c50051`: its meter −10%,
+     360 → 320 ms a frame); WC2's generated code has 2,253 guard calls (`jsr rt_ems_es`).
+   - The port read path (364 cycles a read): constant-port sites to direct calls.
+   - The PIT counter reads.
+
+   Controls: `ems_guard_problems` and its sabotages, from X-Wing.
+7. **c2p** (platform). If flight rewrites rows whose bytes do not change (P7.3), the Wing
+   Commander slave's changed-block converter (`flight_render.s`, the owner's code):
+   - 32-pixel blocks inside the marked rows, compared with a history per planar buffer;
+   - only changed blocks converted, through a Kalms 030 specialisation;
+   - there −80% of conversion on the 68030 (15.5 → 3.1 ms).
+
+   It revisits SWOTL's S1 (a frame compare, rejected before it was built, speed-plan §10),
+   so it needs the owner's OK with the price. The history is 2 × 64,000 bytes of Fast; 0.5 MB
+   is free in flight. Kalms 030 or 040 per CPU, as that slave measured (its D5).
+8. **Translator** (the meter accepts, speed-plan §3):
+   - flag liveness (open-work 11);
+   - the profile-chosen annotations (`align`, `bp-regions`, `outline`, `seg-repeat`)
+     regenerated from the flight windows;
+   - the forms `lowering_cost.py` ranks in `SUPERTM.DRV` and `TM.DRV`;
+   - X-Wing's string and index steps where WC2's profile shows them (the REPE CMPSW restart,
+     short-count REP STOSW and MOVSW, the reversed index reused);
+   - overlay calls and residency checks in flight.
+9. **Checkpoint.** Frames on the 68030 and 68040 models against the bar; the native
+   candidates re-ranked on the new profile.
+10. **WC1 lineage on the Amiga** (W3; desk work beside 5–8). A cross-reference
+    (`docs/wc1-cross-reference.md`, as SWOTL's `docs/tfh-cross-reference.md`) matches each
+    hot WC2 routine to its PC WC1 counterpart and to the CD32 WC1 routine by behaviour,
+    constants, tables and strings. Anchors:
+    - `SUPERTM.DRV` (scaled and rotated sprites, identical in PC WC1) ↔ the CD32's object
+      dispatch `E:2ca3e` and image drawing (plain `E:2efe8`, scaled `E:2ec98`, rotated
+      `E:2d746`);
+    - the 3D maths ↔ `E:2a9d4–2cbd8`, geometry `E:2a086`, orientation `E:2bb30`;
+    - view clear `E:31cd6`, cockpit composition `E:2cf0a`, the HUD `E:46e6`, glyphs
+      `E:2fd6a`;
+    - the method's proof: PC WC1's flight rates at `4896` are the CD32's `E:7a4` term for term
+      (Wing Commander project, "The PC's signs").
+
+    The CD32's cost per routine on the same 68030 model (its D1 table) is the expected cost
+    of a native one. That game is a Manx Aztec C build with hand-written assembly, reading
+    big-endian repacked resources (`.pkt`, TM6 images) where WC2 reads PC formats in
+    byte-reversed guest RAM. So the correspondence is algorithmic, not drop-in.
+11. **Native routines** (W4–W6), each with the owner's authorization (S1–S9,
+    [native-compute.md](native-compute.md), an `annotations/hle.csv` row with reason and
+    oracle), one commit each with meter and frames A/B.
+    - Sources (SWOTL U0). Original code, PC or CD32, is reference only and never enters the
+      port. Adaptable: the owner's Wing Commander slave code (the changed-block converter,
+      `view_regions.s`'s MOVEM clears and span copies, the queued buffers), Kalms'
+      public-domain c2p, and new 68020 code written against WC2's x86, which stays the
+      oracle (its constants, rounding, branch order and tables).
+    - Price (W5): the own-cost ceiling at zero native cost (SWOTL B3) and the CD32
+      counterpart's measured cost, before asking.
+    - Candidates (INFERRED until P7.3):
+      - `SUPERTM.DRV`'s drawing: about 0.4 ms an object on the 12000-cycle reference, so the
+        fight's cost;
+      - the transform and projection (SWOTL's N1, F3a, F3b: −4.7%, −1.5%, −1.6% of its
+        meter);
+      - `TM.DRV`'s blits and fills (one sprite routine is 25.3% of the intro);
+      - the view clear and composition.
+12. **Machines and gate 7.**
+    - The 68040 and 68060 models.
+    - A frame recorder for the owner's real hardware (the Wing Commander slave's
+      `frame_stats.s`: field-stamped events saved with `resload_SaveFile`).
+    - Gate 7: the bar met on the frames fixtures; host lockstep m1–m6 and the replay on the
+      current references; the sabotages. The release matrix (P8.3) is re-run for the next
+      release.
 
 ### P8. Package (gate 8)
 
