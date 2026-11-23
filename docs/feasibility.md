@@ -9,10 +9,10 @@ better recommended) by translation? The verdict comes first, then its measured i
   the exits, and the Amiga image on the 68030 model through m4, the first flight frame
   (gate 6, port-plan P6). Nothing found in P2's map (overlays, EMS, drivers,
   ports) needs more than the runtime already provides.
-- **Memory fits** an 8 MiB Fast RAM machine: the code is 1.86 MB, the image allocates
-  2.28 MB, and the WHDLoad slave runs in 7 MiB of Fast and 1.31 MiB of Chip with 0.5 MB of
-  Fast and 0.42 MB of Chip to spare with the effects and speech ([whdload.md](whdload.md)
-  "Memory").
+- **Memory fits** an 8 MiB Fast RAM machine: the code is 1.87 MB, the image allocates
+  2.28 MB, guest RAM with the EMS store 3.80 MB, and the WHDLoad slave runs in 7 MiB of
+  Fast and 1.31 MiB of Chip with 0.5 MB of Fast and 0.42 MB of Chip to spare with the
+  effects and speech, in attract mode and in flight ("Memory" below).
 - **Speed misses on the 68030 before P7.** On the 50 MHz 68030 the frame the original
   draws in 4 timer ticks (15 fps) takes about 9 ticks in quiet flight and 10–12 in the
   Nav 1 fight: 2.2× over in flight, 2.4× (median) to 2.8× (p90) in that fight. A 40 MHz
@@ -136,24 +136,52 @@ SUPERTM.DRV's own cost per instruction not measured, INFERRED alike):
 
 The 66.7 ms frame is met where the figure is below it.
 
-## Code size (MEASURED, `make amiga-release`, `tools/code_size.py`)
+## Code size (MEASURED, `make amiga-release`, `tools/hunk_size.py`, `tools/code_size.py`, 2026-11-23)
 
-The release image `Wc2-release.exe` is 1,991,248 bytes: code 1,864,080, relocations
-120,040, data 7,012 (`make size`); its hunks allocate 2,275,564 bytes with BSS. Its
-.text by source:
+The release image `Wc2-release.exe` is 1,993,536 bytes: code 1,865,764, relocations
+120,512, data 7,144; its hunks allocate 2,278,600 bytes with BSS. Its .text by source
+(`build/amiga-release/out/Wc2.elf`):
 
 | Source | Amiga bytes | x86 bytes | Ratio |
 |---|---|---|---|
-| `WC2.EXE`, translated | 1,461,544 | 279,857 (resident and overlay code, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)) | 5.2× |
+| `WC2.EXE`, translated | 1,461,558 | 279,857 (resident and overlay code, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)) | 5.2× |
 | `SUPERTM.DRV`, translated | 149,952 | 30,053 (the loaded entry, [drivers.md](drivers.md)) | 5.0× |
 | `TM.DRV`, translated | 39,124 | 11,802 | 3.3× |
 | `STRAX.DRV`, translated | 13,928 | 3,986 | 3.5× |
-| runtime and platform | 197,928 | | |
+| runtime and platform | 199,598 | | |
 
 Every overlay's 68k code is in the image; the VROOMM manager still runs, translated, and
 loads the overlay bytes into guest RAM, and far dispatch reads its residency record
 (port-plan P4). So code size is fixed at link time; the game's data paging (EMS, below)
 is unchanged.
+
+## Memory (port-plan P6b.4)
+
+The game's blocks are reserved once at the start ([amiga-arch.md](amiga-arch.md)
+"Reserve"); later allocations are only find-first's name lists inside their I/O window, and
+the effects' Chip and render buffer at the sound init (D15). Fast RAM, by block:
+
+| Block | Bytes | Evidence |
+|---|---|---|
+| program hunks (code, data, BSS) | 2,278,600 | MEASURED, the release image above |
+| guest block: state 16, guest RAM 1,114,112 (1 MiB and the HMA), EMS store 2,686,976 (164 pages of 16 KiB) | 3,801,104 | DERIVED, `runtime.h` (`RT_STATE_BYTES`, `RT_GUEST_BYTES`, `RT_EMS_BYTES`), one `AllocMem` |
+| guest stack | 65,536 | DERIVED, `amiga_platform.c` `GUEST_STACK_BYTES` |
+| together | 6,145,240 | of the slave's 7,340,032 (`FASTMEMSIZE = $700000`), beside Kickstart's own use |
+
+EMS (MEASURED, the reference `ref-m1-a`): the game asks for the free page count (INT 67h
+AH=42h: A4h) and allocates all of it (AH=43h, BX=A4h), then maps logical pages 0–61 on the
+m1–m6 routes ([external-surface.md](external-surface.md) "EMS"): 62 pages, 1,015,808 bytes.
+The other 102 pages (1,671,168 bytes) are allocated and untouched on those routes. Answering
+fewer free pages would shrink the store, but the reference answers A4h and host lockstep
+compares the answers; that is the owner's to decide, not done.
+
+Low water under WHDLoad (MEASURED 2026-11-23, release slave, 68030, [whdload.md](whdload.md)
+"Memory"): Chip 419,904 and Fast 504,568 bytes free in attract mode, Chip 419,904 and Fast
+503,632 into flight (`KeysMemFree.slave` on the smoke's route, the run checked to reach
+flight by WHDLoad's FILELOG showing `TAPE.TMP`, which the reference creates just before
+the first flight frame; the title menu's route, which does not fly, fails that check). The
+requirement stands at D1's 68030 with 8 MiB of Fast RAM: a 4 MiB host refuses the slave's
+ExpMem (WHDLoad: "Can't allocate ExpMem."), an 8 MiB Zorro II host runs it.
 
 ## P2's inputs (MEASURED; the docs hold the detail)
 

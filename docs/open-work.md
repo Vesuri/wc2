@@ -4,12 +4,6 @@ The single list of open work. Remove items when done; history is in git.
 Plan, phases and gates: [port-plan.md](port-plan.md); each item names its phase.
 Items are in work order; numbers are identifiers and are not reused.
 
-## P6b: Amiga platform (stream C, beside P6)
-
-20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
-    Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
-    [feasibility.md](feasibility.md).
-
 ## P7: performance (after gate 6)
 
 11. Flag liveness through the dispatcher: 59 PUSHF and 2 INT sites read the whole

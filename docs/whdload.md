@@ -33,8 +33,7 @@ blocks are reserved at start (amiga-arch.md "Reserve"): code and BSS, the guest 
 (state, 1 MiB guest RAM, the EMS store), the guest stack; in Chip two screens and copper lists, the
 pointer and the FM audio pool. At the game's sound init, before the first scene, the prerendered effects (D13, D15) take a
 Chip block each and, without a kept `sfx.cache`, the render a Fast buffer. Later allocations are only find-first's name lists, freed in their I/O
-window (`dos.c`), so the attract mode's low water stands for flight too (INFERRED from the
-code; no WHDLoad route into flight exists yet: the release image has no `KEYS`).
+window (`dos.c`): flight's low water is the attract mode's within 936 bytes of Fast (below).
 
 MemFree low water (largest free chunk), `tools/test_whdload.py --mode run --slave
 build/whdload/MemFree.slave`, release image, 68030, PreLoad, attract mode, 2026-11-19, MEASURED:
@@ -53,15 +52,18 @@ the effects and speech (below). Chip was `$C0000` (251 KiB used) for the
 same reason; D13 raised it by `$90000` (589,824 bytes) for the prerendered effects'
 573,963 bytes (`make t-fm-effect`), keeping that headroom.
 
-`CHIPMEMSIZE = $150000`, 68030, release slave, 2026-11-23 (the speech blocks; the effects
+`CHIPMEMSIZE = $150000`, 68030, 2026-11-23 (the speech blocks; the effects
 at the sound init, D15; no `sfx.cache` at the start), MEASURED:
 
 | Route | Slave | Chip free | Fast free |
 |---|---|---|---|
 | attract mode, 1,500 fields (`--mode run`) | `MemFree.slave` | 419,904 | 504,568 |
 | title menu Alt+X (`--mode script --keys 'uBUTTONS.V00:esc*10,d300:alt+x' --expect exit --max-speed`) | `KeysMemFree.slave` (`make -C whdload keys-memfree`, the diagnostic image `make amiga-diag`) | 419,904 | 504,208 |
+| into flight: `amiga/play_walk.sh`'s keys without the pot steps to the briefing's Esc, then the arrow keys (`--mode script --keys '…,uMESSAGE.V00:esc*10,d300:left*99,d9:right*99' --expect timeout --expect-log TAPE.TMP --max-speed --ticks 7000`; the low water from the core dump's slot) | `KeysMemFree.slave` | 419,904 | 503,632 |
 
-Both routes capture, render and write the cache at the sound init, before the first
+`--expect-log TAPE.TMP` proves the flight route flew: WHDLoad's FILELOG shows the flight
+recording the reference creates just before the first flight frame (`ref-m4-a`); the title
+menu's route fails it. The routes capture, render and write the cache at the sound init, before the first
 scene, so they share the Chip low water (attract mode had 994,000 free while the effects
 came at the first effect start). The effects take 574,096 bytes of the largest Chip
 chunk, their bytes plus allocation rounding; the speech's two Chip blocks (`Audio.cpp`,

@@ -24,9 +24,12 @@ a 68020) ends it with COREDUMP and the dump is judged:
 passes data/keys as its KEYS argument (amiga_platform.c's key script; `*` doubled inside
 the ReadArgs quotes). --expect exit: the game ends by itself (the slave's TDREASON_OK, no
 core dump) before TIMEOUT; timeout: as run. --expect-file: data/NAME holds TEXT afterwards;
---expect-read: WHDLoad's FILELOG (.whdl_log) shows NAME read after it was written.
+--expect-read: WHDLoad's FILELOG (.whdl_log) shows NAME read after it was written;
+--expect-log: FILELOG shows an access to NAME (a route's screen reached: TAPE.TMP, the
+flight recording the reference creates just before the first flight frame).
 The MemFree slave's low-water marks (Chip, Fast) are read from its $100 slot; in script
-mode (KeysMemFree.slave) from the data/memfree file it saves at the game's exit.
+mode (KeysMemFree.slave) from the data/memfree file it saves at the game's exit, or with
+--expect timeout from the slot in the core dump (a route that does not exit, as flight).
 --installed runs an installed WC2 drawer as it is (slave, data/Wc2, data).
 --setup a1200-040: full 68040 with its MMU and FPU, JIT off, on $FSUAE_MMU; the report
 must show TC=8000 (translation on; AmigaXDev whdload-mmu.md). The default --setup a1200 is a
@@ -166,11 +169,20 @@ def judge_script(args, base, game, data, report, output):
         print(f'FILELOG {name}:', *lines[-6:], sep='\n  ')
         if not read:
             raise SystemExit(f'FAIL: FILELOG shows no read of {name} after its write ({base})')
+    for name in args.expect_log:
+        lines = [l for l in log if name.lower() in l.lower()]
+        print(f'FILELOG {name}:', *lines[:3], sep='\n  ')
+        if not lines:
+            raise SystemExit(f'FAIL: FILELOG shows no access to {name} ({base})')
     memfree = data / 'memfree'
     if args.slave and 'MemFree' in args.slave.name:
-        if not memfree.exists():
+        if args.expect == 'timeout':
+            # no exit to save it: kickemu's slot in the core dump's Chip, as run mode reads it
+            low = (game / '.whdl_memory').read_bytes()[0x100:0x108]
+        elif not memfree.exists():
             raise SystemExit(f'FAIL: no data/memfree from the MemFree slave ({base})')
-        low = memfree.read_bytes()
+        else:
+            low = memfree.read_bytes()
         print('MemFree low water: Chip {:,} Fast {:,} bytes'.format(
             int.from_bytes(low[0:4], 'big'), int.from_bytes(low[4:8], 'big')))
     print(f'PASS: script on {args.setup}')
@@ -189,6 +201,7 @@ def main():
     p.add_argument('--expect', choices=('exit', 'timeout'), default='exit', help='script mode: how the run ends')
     p.add_argument('--expect-file', action='append', default=[], metavar='NAME=TEXT')
     p.add_argument('--expect-read', action='append', default=[], metavar='NAME')
+    p.add_argument('--expect-log', action='append', default=[], metavar='NAME')
     p.add_argument('--data', type=Path, default=ROOT / 'ref/WING2')
     p.add_argument('--installed', type=Path, help='installed WC2 drawer, used unchanged')
     p.add_argument('--setup', choices=SETUPS, default='a1200')
@@ -205,7 +218,7 @@ def main():
     args = p.parse_args()
     args.exe = args.exe or ROOT / ('amiga/out/Wc2-diag.exe' if args.mode == 'script' else 'amiga/out/Wc2-release.exe')
     assert (args.mode == 'script') == bool(args.keys), '--keys goes with --mode script'
-    if args.expect_read:
+    if args.expect_read or args.expect_log:
         args.option.append('FILELOG')
     if args.installed:
         assert args.mode == 'run' and not args.slave, '--installed runs its own slave'
