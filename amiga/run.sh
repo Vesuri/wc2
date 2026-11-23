@@ -2,7 +2,8 @@
 # Boot the Amiga build on the target A1200 configuration. Left mouse button quits.
 #   ./run.sh [path-to-kickstart-rom]
 # Run a different binary with $WC2_EXE; extra fs-uae args via $EXTRA_ARGS (they win);
-# AMIGA_CPU=68030 for the faster development model; DEBUG=1 adds the gdb stub.
+# AMIGA_CPU=68030 (the a1200-030 preset, amiga/env.sh) for the development model;
+# DEBUG=1 adds the gdb stub.
 set -euo pipefail
 cd "$(dirname "$0")"
 . ./env.sh
@@ -27,7 +28,10 @@ rm -f "$RUN"/state/*.uss
 
 fsuae_prepare
 # Model, memory, sound and window: fsuae_options in $FSUAE_COMMON.
-KICKSTART="$ROM" AMIGA_MODEL=A1200 CPU="${CPU:-${AMIGA_CPU:-}}"
+# A preset brings its own ROM (KICKSTART_A1200); a ROM argument still names it.
+wc2_machine
+[ -z "${1:-}" ] || export KICKSTART_A1200="$ROM"
+KICKSTART="$ROM" AMIGA_MODEL=A1200 CPU="${CPU:-}"
 CHIP_KB=2048 FAST_KB="${FAST_KB:-${FAST_MEMORY:-8192}}"
 fsuae_options
 fsuae_exec \

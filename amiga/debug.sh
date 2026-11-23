@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Source-level debug the Amiga build via FS-UAE's GDB stub.
 #   ./debug.sh [path-to-kickstart] [fixture.gdb] [executable]
-# AMIGA_CPU=68030 (make test-amiga) for the faster development model.
+# AMIGA_CPU=68030 (make test-amiga; the a1200-030 preset, amiga/env.sh) for the
+# development model.
 # WC2_WORKBENCH=1: started from its icon by Workbench (SYS:WBStartup), tool
 # types from WC2_TOOLTYPES (words), instead of WC2_ARGS from the Shell.
 # WC2_INPUT: the Shell start's input (redirected from S:swotl-input), e.g. the
@@ -55,7 +56,10 @@ rm -f "$RUN"/state/*.uss
 
 fsuae_claim_port || exit 1
 # Quiet debug run (no sound, window behind the others): fsuae_options in $FSUAE_COMMON.
-KICKSTART="$ROM" AMIGA_MODEL=A1200 CPU="${CPU:-${AMIGA_CPU:-}}" DEBUG=1
+# A preset brings its own ROM (KICKSTART_A1200); a ROM argument still names it.
+wc2_machine || exit 1
+[ -z "${1:-}" ] || export KICKSTART_A1200="$ROM"
+KICKSTART="$ROM" AMIGA_MODEL=A1200 CPU="${CPU:-}" DEBUG=1
 CHIP_KB=2048 FAST_KB="${FAST_KB:-${FAST_MEMORY:-8192}}"
 fsuae_options
 FSUAE_LOG="$RUN/fsuae-dbg.log" fsuae_launch \

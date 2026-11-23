@@ -90,8 +90,16 @@ once.
 | Setting | Use |
 |---|---|
 | A1200, 2048 KiB Chip, 8192 KiB Fast (`FAST_KB`/`FAST_MEMORY`) | the scripts' default |
-| `AMIGA_CPU=68030` (the Makefile's default for `make test-amiga`) | development model, about 3× the 68020; `A1200/1230` needs the Blizzard 1230-IV ROM, which is absent, and there is no A4000 ROM |
+| `AMIGA_CPU=68030` (the Makefile's default for `make test-amiga`) | development model: the shared preset `a1200-030` (`amiga/env.sh` `wc2_machine`), a 50 MHz 68030 with its MMU, the instruction and data caches emulated, the A1200 ROM; `A1200/1230` needs the Blizzard 1230-IV ROM, which is absent, and there is no A4000 ROM |
+| `AMIGA_CPU=68040`, `68060` | the presets `a1200-040` (32 MiB Zorro III Fast), `a1200-060`; an explicit `AMIGA_SETUP` wins |
 | 68020 (`AMIGA_CPU` unset), 8 MiB Fast | the speed-plan measurement model ([speed-plan.md](speed-plan.md) §4) |
+
+Caches (MEASURED with Workbench 2.04's `CPU`, 2026-11-23): Kickstart turns on the 68030's
+instruction cache; SetPatch adds instruction burst and the data cache, not data burst; on
+the 68040 SetPatch turns on both caches with burst. The startup-sequence runs SetPatch only.
+Before this preset, `AMIGA_CPU=68030` runs set the data cache bit but FS-UAE did not
+emulate it (`uae_cpu_data_cache` is the presets' alone), so earlier 68030 timings ran
+without a data cache.
 
 Fast RAM is required (D15, [translator-design.md](translator-design.md)); the release's
 Chip/Fast budget is the slave's ([whdload.md](whdload.md), Memory): 2 MiB Chip, 8 MiB Fast host.
