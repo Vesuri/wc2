@@ -299,6 +299,9 @@ static void bios_key(uint8_t scan)
 /* The guest's keyboard polls: INT 16h AH=01h, DOS AH=0Bh, console waits (a
  * diagnostic key script paces on them, amiga_platform.c). */
 volatile uint32_t rt_key_polls;
+/* Console reads that found no key buffered and waited (rt_key_wait: the name
+ * prompt's getch; a diagnostic key script's w step waits on them). */
+volatile uint32_t rt_key_waits;
 
 int rt_key_available(void)
 {
@@ -328,6 +331,7 @@ uint8_t rt_idle_posted;
 void rt_key_wait(const char *what, uint8_t vector, uint16_t cs, uint16_t ip)
 {
     ++rt_key_polls;
+    ++rt_key_waits;
     if (rt_key_available()) {
         return;
     }

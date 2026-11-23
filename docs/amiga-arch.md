@@ -184,11 +184,24 @@ at 40h, broken at 80h). The personnel screen's [C]reate takes Shift+C on the Ami
 (user report); the reference took a plain `c` whose make and break (about 120,000
 instructions apart) fell inside one reader call, so the game saw only the release
 (INFERRED). Human-length presses on the original may behave as on the Amiga build.
-The personnel menu reads keys and clicks as events from the game's reader (emitted at
-`WC2.EXE+0FFF0`, every 4–7 fields there, MEASURED). Scripted input to it is unreliable
-(MEASURED, open-work 23): a 5-field Shift+C can fall between two reads (only a release
-arrives, with no character), and seen presses held 10 or 20 fields were also not acted on
-(7 of 12, 2 of 4 and 0 of 4 runs took Create at 5, 10 and 20 fields). A click 5 fields
+The game's input events (DERIVED by reading, MEASURED on the Amiga build with a
+`tmp/` gdb probe): the input tick `WC2.EXE+106CD` (`106C:000D`) empties the event ring
+(`1066:000C`) on every call, then, once the poll interval `A316` has passed since the last
+poll, polls the devices: the mouse (one INT 33h AX=03h, `amiga_mouse_reads`) before the
+key reader `WC2.EXE+10100`, which emits through `WC2.EXE+0FFF0` a press (type 4) the
+first time it sees a scan's make, a repeat (6) at its typematic count, and a release (5)
+on the break; a make and break between two polls leave only the release. So an event
+reaches only the consumer that runs between its poll and the next tick. The personnel
+screen runs two, each after its own tick, and on the 68030 model every tick polls, so they
+alternate poll for poll (every 3–7 fields): the menu `WC2.EXE+5139F` (`50FA:03FF`) takes
+a click (type 1; a press only for scan 24h, the calibration), and the scan-byte reader
+`WC2.EXE+33400` (`3340:0000`) turns a press or repeat into DGROUP 43C0h, where the
+screen's hotkeys ([C]reate) read it. A press seen at the menu's poll is lost: Create is
+taken only when the key's first poll is the reader's (in about half the runs), whatever
+the hold, as measured before (7 of 12, 2 of 4 and 0 of 4 runs at 5, 10 and 20 fields;
+a 5-field press could also fall between two polls). The smoke's `w:shift+c` holds each
+press over two mouse reads and repeats it until the name prompt waits on the console
+(`rt_key_waits`). A click 5 fields
 after a move came before the hover highlight; a later one was dropped; the menu snaps the
 pointer to the item under it (an AX=4 of its own, which lost a following move); a held
 button repeats clicks every 5 fields; an Enter there acts as a click and, on no item,

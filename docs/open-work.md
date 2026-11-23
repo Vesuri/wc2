@@ -9,11 +9,6 @@ Items are in work order; numbers are identifiers and are not reused.
 20. Memory (port-plan P6b.4): code, guest RAM and EMS pages for the Fast RAM requirement;
     Chip holds bitmaps, copper lists and audio only. Acceptance: the figures MEASURED in
     [feasibility.md](feasibility.md).
-23. The flight smoke's personnel menu route (`amiga/play_walk.sh`, owner-accepted for item 18
-    on its passing runs): scripted Create is taken in about half the runs, then the names go
-    astray or an Enter quits ([amiga-arch.md](amiga-arch.md) "Input" has the measured
-    mechanisms). Read the menu's event handling (`WC2.EXE+0FFF0`'s consumer) and script it from
-    that. Acceptance: 8 parallel runs of `amiga/play_walk.sh` all print `WC2_PLAY_OK`.
 
 ## P7: performance (after gate 6)
 

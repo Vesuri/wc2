@@ -7,9 +7,10 @@
 #   opening stops at the title's BUTTONS.V00, since Esc on the title menu quits.
 # - Each click repeats until the game opens CAMPAIGN.S00, its answer to both
 #   (the reference), so no Esc reaches a menu whose click did not take.
-# - Shift+C for Create, where m4 taps C; the names 150 ticks later, once the
-#   prompt takes keys. The personnel menu drops scripted input in about half the
-#   runs (Create missed, then an Enter there quits): open-work 23.
+# - Shift+C for Create, where m4 taps C, repeated until the name prompt waits
+#   for a key (w:): the personnel screen takes a press only at its hotkey
+#   reader's input polls, every other one (docs/amiga-arch.md "Input"); the
+#   names 150 ticks later, once the prompt takes keys.
 # At the emulator's maximum speed, the default here; EXTRA_ARGS replaces it.
 # AMIGA_CPU=68030 or 68040. Started from its icon (debug.sh WC2_WORKBENCH): the
 # tool types carry the script, with no Shell line limit and no ReadArgs quoting.
@@ -24,7 +25,7 @@ export EXTRA_ARGS="${EXTRA_ARGS-$fast}"
 # The pots centred first: an off-centre stick moves the menu pointer. The title
 # sets the pointer to (318,159) (MEASURED); my-20 is on "Start New Game".
 keys='d1:ax=128,d1:ay=128,uBUTTONS.V00:esc*10,fTEMPGLOB.000:shot,d300:my-20,uCAMPAIGN.S00:lmb,uOPTIONS.V00:esc*10'
-keys+=',t1000:shift+c,t150:a,t50:enter,t100:b,t50:enter,t100:d,t50:enter'
+keys+=',t1000:shot,w:shift+c,t150:a,t50:enter,t100:b,t50:enter,t100:d,t50:enter'
 keys+=',fMUSIC.A00:shot,uCAMPAIGN.S00:lmb,uMESSAGE.V00:esc*10'
 keys+=',d300:left*99,d9:right*99,d50:ctrl+j*40,d99:shot'
 keys+=',d1:ax=128,d1:ay=128,d50:jf,d99:ax=0,d1:ay=0,d50:jf,d99:ax=255,d1:ay=255,d50:jf,d99:shot'

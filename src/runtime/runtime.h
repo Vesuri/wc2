@@ -267,6 +267,7 @@ void rt_key_hook(void);
 int rt_guest_vector(uint8_t vector);
 int rt_key_available(void);
 extern volatile uint32_t rt_key_polls;   /* input.c: the guest's keyboard polls */
+extern volatile uint32_t rt_key_waits;   /* input.c: console reads that waited for a key */
 /* A read that waits for a key (input.c): returns with one buffered, or stops
  * with `what`. rt_idle (rt_entry.s): one replayed interrupt of the reference's
  * DOS idle wait at RT_IDLE_SEG:RT_IDLE_OFF, RT_IDLE_DEPTH bytes below the INT

@@ -418,8 +418,10 @@ Status: gate 6 passes (2026-11-17, MEASURED).
      flight frames, 122 after the calibration; without Ctrl+J it fails). Held Esc, repeated
      until each next screen's file opens, skips the opening, the intro and the briefing:
      flight at field 3,171 instead of about 88,300 (MEASURED), about 2 minutes at the
-     emulator's maximum speed; the personnel menu drops scripted input in about half the runs
-     (open-work 23).
+     emulator's maximum speed. The personnel screen takes [C]reate only from a press first
+     seen at every other input poll, so the smoke repeats Shift+C until the name prompt
+     waits (`w:shift+c`, [amiga-arch.md](amiga-arch.md) "Input"): 9 of 9 runs, four at a
+     time (MEASURED 2026-11-23).
 4. Memory: measure code, guest RAM and EMS pages for the Fast RAM requirement; Chip holds
    bitmaps, copper lists, audio only.
 

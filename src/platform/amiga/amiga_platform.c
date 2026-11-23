@@ -586,6 +586,10 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
  * after the previous step (a screen's own data: the reference's open order);
  * uNAME:KEY: KEY now and every SCRIPT_REPEAT frames until the guest opens NAME
  * (Esc through a cinematic's scenes, however long each takes to load);
+ * w:KEY: KEY now and every SCRIPT_REPEAT frames until a console read waits for
+ * a key (rt_key_waits), each held until the guest has read the mouse twice
+ * (a menu whose hotkey takes a press only at some of its input polls, as WC2's
+ * personnel screen: docs/amiga-arch.md "Input");
  * keys a-z 0-9 enter esc space up down left right or $hex raw codes, mouse
  * buttons lmb rmb, port 2's stick ju jd jl jr (directions) jf jg (buttons 1
  * and 2), alt+KEY, ctrl+KEY or shift+KEY with the left Alt, Ctrl or Shift held around it, a held step name*N (N frames), the proportional stick's pot counts
@@ -594,9 +598,9 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
  * amiga_script_mark for a debugger fixture; unknown names are logged at the
  * start and skipped): fed from the field task at each vertical blank into
  * the keyboard and mouse paths of Input.cpp; a key
- * is released 5 frames after it is pressed, a button once the guest has
- * also read the mouse twice (buttons are polled levels, keys reach the BIOS
- * buffer). */
+ * is released 5 frames after it is pressed (a w step's also once the guest
+ * has read the mouse twice), a button once the guest has also read the mouse
+ * twice (buttons are polled levels, keys reach the BIOS buffer). */
 #define SCRIPT_LMB 0x100
 #define SCRIPT_RMB 0x101
 #define SCRIPT_JOY 0x200            /* | the amiga_joystick_script bit */
@@ -612,6 +616,8 @@ static ULONG step_ticks = 0;    /* amiga_ticks at the previous step */
 static ULONG repeat_frame = 0;  /* amiga_frames at a u step's last press */
 static int key_up = -1;         /* the held raw key or SCRIPT_LMB/RMB */
 static int key_mod = -1;        /* the modifier held around it */
+static const char *wait_step = 0;  /* the w step being repeated */
+static ULONG wait_waits = 0;    /* rt_key_waits when it began */
 #define RAW_LALT 0x64
 #define RAW_CTRL 0x63
 #define RAW_LSHIFT 0x60
@@ -754,7 +760,7 @@ static void key_script_check(void)
     }
 }
 
-static void script_press(const char *name, int n)
+static void script_press(const char *name, int n, int reads)
 {
     ULONG hold;
     int mod = modifier(&name, &n);
@@ -769,11 +775,11 @@ static void script_press(const char *name, int n)
     script_event(code, 0);
     key_up = code;
     key_up_frame = amiga_frames + hold;
-    key_up_reads = amiga_mouse_reads + (code == SCRIPT_LMB || code == SCRIPT_RMB ? 2 : 0);
+    key_up_reads = amiga_mouse_reads + (reads || code == SCRIPT_LMB || code == SCRIPT_RMB ? 2 : 0);
 }
 
 /* A u step's KEY (after the ':' at p), every SCRIPT_REPEAT frames. */
-static void script_repeat(const char *p)
+static void script_repeat(const char *p, int reads)
 {
     if (amiga_frames - repeat_frame < SCRIPT_REPEAT) {
         return;
@@ -784,7 +790,7 @@ static void script_repeat(const char *p)
     while (*end > ' ' && *end != ',') {
         ++end;
     }
-    script_press(name, (int)(end - name));
+    script_press(name, (int)(end - name), reads);
 }
 
 /* A u step is done: past its KEY, the baselines for the next step. */
@@ -831,7 +837,7 @@ static void key_script_step(void)
         }
         if (!script_file_seen) {
             if (kind == 'u') {
-                script_repeat(p);
+                script_repeat(p, 0);
             }
             return;
         }
@@ -840,6 +846,19 @@ static void key_script_step(void)
             script_skip(p);
             return;
         }
+    } else if (kind == 'w') {
+        if (wait_step != p) {
+            wait_step = p;
+            wait_waits = rt_key_waits;
+            repeat_frame = amiga_frames - SCRIPT_REPEAT;
+        }
+        if (rt_key_waits == wait_waits) {
+            script_repeat(p, 1);
+            return;
+        }
+        wait_step = 0;
+        script_skip(p);
+        return;
     } else {
         while (*p >= '0' && *p <= '9') {
             when = when * 10 + (ULONG)(*p++ - '0');
@@ -882,7 +901,7 @@ static void key_script_step(void)
         amiga_script_mark(name[0] == 'q');
         return;
     }
-    script_press(name, n);
+    script_press(name, n, 0);
 }
 
 /* Effect capture (runtime.h rt_sfx_*), at the game's sound init: the samples
