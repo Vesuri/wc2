@@ -28,9 +28,9 @@ block saved), `Wc2Test.slave` (marks), `MemFree.slave` (low-water free memory at
 
 ## Memory
 
-`CHIPMEMSIZE = $150000`, `FASTMEMSIZE = $700000` (ExpMem `$780000` with Kickstart). The game's
+`CHIPMEMSIZE = $150000`, `FASTMEMSIZE = $570000` (ExpMem `$5F0000` with Kickstart). The game's
 blocks are reserved at start (amiga-arch.md "Reserve"): code and BSS, the guest block
-(state, 1 MiB guest RAM, the EMS store), the guest stack; in Chip two screens and copper lists, the
+(state, 1 MiB guest RAM, the EMS store of 64 pages), the guest stack; in Chip two screens and copper lists, the
 pointer and the FM audio pool. At the game's sound init, before the first scene, the prerendered effects (D13, D15) take a
 Chip block each and, without a kept `sfx.cache`, the render a Fast buffer. Later allocations are only find-first's name lists, freed in their I/O
 window (`dos.c`): flight's low water is the attract mode's within 936 bytes of Fast (below).
@@ -47,7 +47,7 @@ build/whdload/MemFree.slave`, release image, 68030, PreLoad, attract mode, 2026-
 | `$600000` | 8 MiB, 16 MiB | 3,000 | 535,248 | 158,520 | runs |
 | `$700000` | 4 MiB Zorro II (control) | — | — | — | WHDLoad: "Can't allocate ExpMem." |
 
-`$700000` is kept: an 8 MiB host runs it, with 0.5 MB of Fast left at the low water with
+`$700000` was kept with the 164-page EMS store: an 8 MiB host ran it, with 0.5 MB of Fast left at the low water with
 the effects and speech (below). Chip was `$C0000` (251 KiB used) for the
 same reason; D13 raised it by `$90000` (589,824 bytes) for the prerendered effects'
 573,963 bytes (`make t-fm-effect`), keeping that headroom.
@@ -60,6 +60,16 @@ at the sound init, D15; no `sfx.cache` at the start), MEASURED:
 | attract mode, 1,500 fields (`--mode run`) | `MemFree.slave` | 419,904 | 504,568 |
 | title menu Alt+X (`--mode script --keys 'uBUTTONS.V00:esc*10,d300:alt+x' --expect exit --max-speed`) | `KeysMemFree.slave` (`make -C whdload keys-memfree`, the diagnostic image `make amiga-diag`) | 419,904 | 504,208 |
 | into flight: `amiga/play_walk.sh`'s keys without the pot steps to the briefing's Esc, then the arrow keys (`--mode script --keys '…,uMESSAGE.V00:esc*10,d300:left*99,d9:right*99' --expect timeout --expect-log TAPE.TMP --max-speed --ticks 7000`; the low water from the core dump's slot) | `KeysMemFree.slave` | 419,904 | 503,632 |
+
+The rows above ran at `FASTMEMSIZE = $700000` with the 164-page EMS store. With the store
+at 64 pages (`RT_EMS_STORE_PAGES`, 1,638,400 bytes less) the slave is `$570000`, the same
+headroom, into flight as above (MEASURED 2026-11-23):
+
+| FASTMEMSIZE | Host Fast | Chip free | Fast free | Result |
+|---|---|---|---|---|
+| `$570000` | 16 MiB (8 MiB Zorro II, 8 MiB Zorro III) | 419,904 | 503,544 | flight (`TAPE.TMP`) |
+| `$570000` | 8 MiB Zorro II (`--fast 8192`) | 419,904 | 503,544 | flight (`TAPE.TMP`) |
+| `$570000` | 4 MiB Zorro II (`--fast 4096`, control) | — | — | WHDLoad: "Can't allocate ExpMem." |
 
 `--expect-log TAPE.TMP` proves the flight route flew: WHDLoad's FILELOG shows the flight
 recording the reference creates just before the first flight frame (`ref-m4-a`); the title

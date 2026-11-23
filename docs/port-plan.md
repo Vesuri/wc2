@@ -424,9 +424,10 @@ Status: gate 6 passes (2026-11-17, MEASURED).
      time (MEASURED 2026-11-23).
 4. Memory: measure code, guest RAM and EMS pages for the Fast RAM requirement; Chip holds
    bitmaps, copper lists, audio only.
-   - Status: measured ([feasibility.md](feasibility.md) "Memory"): 6.15 MB of reserved Fast
-     blocks (program 2.28 MB, guest RAM and the EMS store 3.80 MB, guest stack) in the
-     slave's 7 MiB, 0.5 MB left in attract mode and in flight; Chip 0.42 MB left.
+   - Status: measured ([feasibility.md](feasibility.md) "Memory"): 4.51 MB of reserved Fast
+     blocks (program 2.28 MB, guest RAM and the 64-page EMS store 2.16 MB, guest stack) in
+     the slave's 5.44 MiB, 0.5 MB left in flight; Chip 0.42 MB left. 8 MiB of Fast RAM
+     runs with and without WHDLoad, 4 MiB with neither (D1).
 
 Status: P6b done (2026-11-23).
 

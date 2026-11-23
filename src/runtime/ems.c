@@ -18,7 +18,9 @@
  * the other): the game's only map site slides a 4-page window, which aliases
  * one page only until the next call. Handles take store pages as DOSBox-X's
  * MEM_AllocatePages does, so after a release a handle's pages can be split
- * across free runs; a release leaves the frame mapped (tests/test_ems.py). */
+ * across free runs; a release leaves the frame mapped (tests/test_ems.py).
+ * Only store pages below RT_EMS_STORE_PAGES have bytes; mapping any other
+ * stops (runtime.h). */
 #if RT_EMS_PAGES > 256
 #error "store page numbers are bytes"
 #endif
@@ -105,7 +107,11 @@ static uint8_t map(uint8_t phys, uint16_t page, uint16_t handle)
     if (page != 0xffff && page >= pages[handle]) {
         return 0x8a;
     }
-    return map_slot(phys, page == 0xffff ? 0 : page_of[handle][page] + 1);
+    uint16_t slot = page == 0xffff ? 0 : page_of[handle][page] + 1;
+    if (slot > RT_EMS_STORE_PAGES) {
+        rt_stop("EMS page outside the store (logical page, store pages)", page, RT_EMS_STORE_PAGES);
+    }
+    return map_slot(phys, slot);
 }
 
 /* The frame page shows its mapped page's bytes from now on. */

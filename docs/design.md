@@ -16,8 +16,8 @@ translator output). Phases, the copy map and proposed decisions: [port-plan.md](
 Facts that decide feasibility, open unless marked ([open-work.md](open-work.md)):
 
 - the executable: measured as installed; `WC2.LZC` is the resource container's LZW (`make inspect`);
-- memory: the installer says music needs EMS; how much conventional and EMS memory the game
-  uses decides the A1200 Fast RAM requirement;
+- memory: measured ([feasibility.md](feasibility.md) "Memory"), the Fast RAM requirement
+  in D1;
 - the external surface: VGA mode 13h access, sound drivers (`*.DRV`), speech, timer rate,
   self-modifying or runtime-loaded code;
 - the relation to Wing Commander I (same engine lineage; the WC1 PC disks are supplied as a
@@ -30,7 +30,7 @@ Changed only by the owner.
 
 | ID | Decision | Status |
 |---|---|---|
-| D1 | Target: AGA Amiga, 68030 minimum, 68040 or better recommended; Fast RAM amount set once memory use is measured | owner, 2026-11-01 |
+| D1 | Target: AGA Amiga, 68030 minimum, 68040 or better recommended; 8 MiB of Fast RAM, with or without WHDLoad: the measured use rounded up to the next feasible size (4 MiB runs neither; [feasibility.md](feasibility.md) "Memory") | owner, 2026-11-01; Fast RAM 2026-11-23 |
 | D2 | Approach: offline x86 → 68020 translator as in Secret Weapons of Luftwaffe | default, from the handoff |
 | D3 | Scope: VGA 320×200×256; FM music and effects (`MUSIC.A00`, as played on AdLib/Sound Blaster) resynthesised on Paula, plus the digitised intro speech (`SPEECH.S00`); Roland, PC speaker and the Speech Accessory Pack are out | owner, 2026-10-29 |
 | D4 | Version: the 7-disk DOS release in `ref-originals/` ([source-inventory.md](source-inventory.md)) | default |

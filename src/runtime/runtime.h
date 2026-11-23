@@ -17,10 +17,15 @@ extern uint8_t *rt_guest;          /* a6: TOP, guest linear 0 (reversed); state 
 
 #define RT_GUEST_BYTES 0x110000u   /* 1 MiB + HMA (A20 on) */
 #define RT_STATE_BYTES 16u
-/* EMS logical pages after guest RAM (ems.c); reference: 16 KiB pages, memsize = 4 */
+/* EMS pages (ems.c): the reference's 164 (16 KiB, memsize = 4) are counted and
+ * allocated (the game takes them all, AH=43h BX=A4h); the store after guest RAM
+ * holds only the first RT_EMS_STORE_PAGES. The game maps logical pages 0-61 on
+ * the m1-m6 routes (docs/external-surface.md "EMS"); a map of any page outside
+ * the store stops, naming it (raise the store then). */
 #define RT_EMS_PAGES 0x00a4u
+#define RT_EMS_STORE_PAGES 64u
 #define RT_EMS_PAGE 0x4000u
-#define RT_EMS_BYTES (RT_EMS_PAGES * RT_EMS_PAGE)
+#define RT_EMS_BYTES (RT_EMS_STORE_PAGES * RT_EMS_PAGE)
 
 /* State block (translator/lower.py STATE_EQU), native big-endian. */
 #define G_CCR  (rt_guest[16])      /* C=CF V=OF Z=ZF N=SF */

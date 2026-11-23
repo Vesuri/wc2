@@ -11,7 +11,8 @@ without writes through either (ems.c keeps such aliases as separate copies,
 DOSBox does not), a final read-back of every page, and release: frame pages
 left mapped, freed pages reused (split across free runs, stale bytes kept),
 the free count and longest run apart, error codes. Release of the OS handle
-0 stops (its pages are outside the store). Accesses that miss the frame expose
+0 stops (its pages are outside the store), as does a map of a page beyond
+the store (RT_EMS_STORE_PAGES of the 164). Accesses that miss the frame expose
 no frame page (`outside`).
   test_ems.py [--sabotage]
 """
@@ -287,6 +288,19 @@ def main():
         h.e.write(h.syms['rt_r'] + 2 * H.REGS.index(r), struct.pack('>H', v))
     T.machine.call(h, 'rt_int67')
     assert h.halted and any('EMS release of handle 0' in line for line in h.log), h.log
+    # The store backs RT_EMS_STORE_PAGES (64) of the 164 pages: all 164 allocate
+    # (as the game does), logical page 63 maps, page 64 stops naming itself.
+    h = T.machine.machine()
+    for regs in ((0x4300, 164, 0), (0x4400, 63, 1)):
+        for r, v in zip(('ax', 'bx', 'dx'), regs):
+            h.e.write(h.syms['rt_r'] + 2 * H.REGS.index(r), struct.pack('>H', v))
+        T.machine.call(h, 'rt_int67')
+        assert not h.halted and reg(h, 'ax') >> 8 == 0, h.log
+    for r, v in (('ax', 0x4401), ('bx', 64), ('dx', 1)):
+        h.e.write(h.syms['rt_r'] + 2 * H.REGS.index(r), struct.pack('>H', v))
+    T.machine.call(h, 'rt_int67')
+    assert h.halted and any('EMS page outside the store' in line and '40' in line
+                            for line in h.log), h.log
     print(f'EMS: {len(expected[0])} result words and {len(expected[1])} 64 KB frame dumps '
           f'match DOSBox-X over {len(operations)} operations')
 

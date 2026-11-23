@@ -9,10 +9,11 @@ better recommended) by translation? The verdict comes first, then its measured i
   the exits, and the Amiga image on the 68030 model through m4, the first flight frame
   (gate 6, port-plan P6). Nothing found in P2's map (overlays, EMS, drivers,
   ports) needs more than the runtime already provides.
-- **Memory fits** an 8 MiB Fast RAM machine: the code is 1.87 MB, the image allocates
-  2.28 MB, guest RAM with the EMS store 3.80 MB, and the WHDLoad slave runs in 7 MiB of
-  Fast and 1.31 MiB of Chip with 0.5 MB of Fast and 0.42 MB of Chip to spare with the
-  effects and speech, in attract mode and in flight ("Memory" below).
+- **Memory fits** an 8 MiB Fast RAM machine, with or without WHDLoad, and not a 4 MiB one:
+  the code is 1.87 MB, the image allocates 2.28 MB, guest RAM with the EMS store 2.16 MB,
+  and the WHDLoad slave runs in 5.44 MiB of Fast and 1.31 MiB of Chip with 0.5 MB of Fast
+  and 0.42 MB of Chip to spare with the effects and speech, in attract mode and in flight
+  ("Memory" below).
 - **Speed misses on the 68030 before P7.** On the 50 MHz 68030 the frame the original
   draws in 4 timer ticks (15 fps) takes about 9 ticks in quiet flight and 10–12 in the
   Nav 1 fight: 2.2× over in flight, 2.4× (median) to 2.8× (p90) in that fight. A 40 MHz
@@ -163,25 +164,38 @@ the effects' Chip and render buffer at the sound init (D15). Fast RAM, by block:
 
 | Block | Bytes | Evidence |
 |---|---|---|
-| program hunks (code, data, BSS) | 2,278,600 | MEASURED, the release image above |
-| guest block: state 16, guest RAM 1,114,112 (1 MiB and the HMA), EMS store 2,686,976 (164 pages of 16 KiB) | 3,801,104 | DERIVED, `runtime.h` (`RT_STATE_BYTES`, `RT_GUEST_BYTES`, `RT_EMS_BYTES`), one `AllocMem` |
+| program hunks (code, data, BSS) | 2,278,684 | MEASURED, the release image (2026-11-23, with the EMS store limit; 2,278,600 above) |
+| guest block: state 16, guest RAM 1,114,112 (1 MiB and the HMA), EMS store 1,048,576 (64 pages of 16 KiB) | 2,162,704 | DERIVED, `runtime.h` (`RT_STATE_BYTES`, `RT_GUEST_BYTES`, `RT_EMS_BYTES`), one `AllocMem` |
 | guest stack | 65,536 | DERIVED, `amiga_platform.c` `GUEST_STACK_BYTES` |
-| together | 6,145,240 | of the slave's 7,340,032 (`FASTMEMSIZE = $700000`), beside Kickstart's own use |
+| together | 4,506,924 | of the slave's 5,701,632 (`FASTMEMSIZE = $570000`), beside Kickstart's own use |
 
 EMS (MEASURED, the reference `ref-m1-a`): the game asks for the free page count (INT 67h
 AH=42h: A4h) and allocates all of it (AH=43h, BX=A4h), then maps logical pages 0–61 on the
 m1–m6 routes ([external-surface.md](external-surface.md) "EMS"): 62 pages, 1,015,808 bytes.
-The other 102 pages (1,671,168 bytes) are allocated and untouched on those routes. Answering
-fewer free pages would shrink the store, but the reference answers A4h and host lockstep
-compares the answers; that is the owner's to decide, not done.
+The other 102 pages are allocated and untouched on those routes. As in Secret Weapons of
+Luftwaffe (`ecad321`), the runtime still counts and allocates all 164, so every answer is
+the reference's, but its store backs only the first 64 (`RT_EMS_STORE_PAGES`): a map of
+any other page stops with `WC2_STOP EMS page outside the store (logical page, store pages)`,
+the point to raise the store (`tests/test_ems.py`).
 
 Low water under WHDLoad (MEASURED 2026-11-23, release slave, 68030, [whdload.md](whdload.md)
-"Memory"): Chip 419,904 and Fast 504,568 bytes free in attract mode, Chip 419,904 and Fast
-503,632 into flight (`KeysMemFree.slave` on the smoke's route, the run checked to reach
+"Memory"): into flight Chip 419,904 and Fast 503,544 bytes free at `FASTMEMSIZE = $570000`
+(503,632 at `$700000` with the 164-page store; attract mode there 504,568), on an 8 MiB
+and a 16 MiB host (`KeysMemFree.slave` on the smoke's route, the run checked to reach
 flight by WHDLoad's FILELOG showing `TAPE.TMP`, which the reference creates just before
-the first flight frame; the title menu's route, which does not fly, fails that check). The
-requirement stands at D1's 68030 with 8 MiB of Fast RAM: a 4 MiB host refuses the slave's
-ExpMem (WHDLoad: "Can't allocate ExpMem."), an 8 MiB Zorro II host runs it.
+the first flight frame; the title menu's route, which does not fly, fails that check).
+
+The requirement (D1), MEASURED 2026-11-23 on the 68030 A1200 model with 2 MiB Chip:
+8 MiB of Fast RAM, with or without WHDLoad; 4 MiB does not run.
+
+| Start | 8 MiB Fast | 4 MiB Fast |
+|---|---|---|
+| WHDLoad (the release slave, ExpMem `$5F0000`) | into flight | WHDLoad: "Can't allocate ExpMem." |
+| Shell or Workbench, no WHDLoad (`amiga/play_walk.sh` on the plain A1200 model, `FAST_KB`) | into flight (`WC2_PLAY_OK`), the guest block in Fast | "WC2 not enough memory", return code 20, before the first frame |
+
+Without WHDLoad the reserved blocks (4.51 MB) and the OS share the Fast RAM. On 4 MiB the
+program loads but its guest block (2.16 MB, `MEMF_ANY`) fits neither the Fast RAM left
+nor the 2 MiB of Chip (DERIVED from the sizes; the message is `AllocMem`'s failure).
 
 ## P2's inputs (MEASURED; the docs hold the detail)
 
@@ -193,8 +207,8 @@ ExpMem (WHDLoad: "Can't allocate ExpMem."), an 8 MiB Zorro II host runs it.
   view), `STRAX.DRV` (every OPL write). Translated at one CS each; speech is root code on
   the Sound Blaster DSP and DMA 1.
 - **EMS** ([external-surface.md](external-surface.md) "EMS"): one handle of 164 pages
-  (2.6 MB), four physical pages, 4–15 maps a timer tick; the runtime serves it from the
-  guest block in Fast RAM.
+  (2.6 MB), of which pages 0–61 are mapped, four physical pages, 4–15 maps a timer tick;
+  the runtime serves it from the guest block in Fast RAM, whose store backs 64 pages.
 - **Surface** ([external-surface.md](external-surface.md)): DOS files, BIOS, INT 33h, the
   PIT, PIC, VGA, OPL, Sound Blaster and joystick ports; all are runtime services, and an
   unknown one stops.
