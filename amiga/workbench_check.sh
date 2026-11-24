@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # Workbench start (docs/amiga-lessons.md L84, L86): the program's result at
 # start.c's reply seam, from its icon and from the Shell.
-#   icon   tool types MUSIC and the menu exit as KEYS: the game reads its data
-#          from the icon's drawer, exits through its own menu with the state
+#   icon   tool types MUSIC and the title's Alt+X exit as KEYS: the game reads its data
+#          from the icon's drawer, exits through its title's Alt+X with the state
 #          restored, then result 0 with the WBStartup message held for the reply
 #   bench  tool type BENCH, which the production image refuses: result 20
 #   shell  argument BENCH from the Shell: result 20, no message
-# Shell arguments through ReadArgs (open-work 44), stopped at rt_start once parsed:
-#   lower  tfh keys=1:shot in lower case: TFH chosen, the key script set
-#   prompt `?`, then tfh read from the Shell input (WC2_INPUT)
+# Shell arguments through ReadArgs, stopped at rt_start once parsed:
+#   lower  analogjoystick keys=1:shot in lower case: the stick chosen, the key script set
+#   prompt `?`, then analogjoystick read from the Shell input (WC2_INPUT)
 #   bad    an unknown argument: ReadArgs fails with IoErr 118 (wrong number of
 #          arguments) for PrintFault, result 20
 # The release image (make amiga-release), its own symbols:
-#   release      tfh analogjoystick: both chosen, no key script
+#   release      analogjoystick: chosen, no key script
 #   release-keys a diagnostic argument (KEYS, MUSIC, BENCH): IoErr 118, result 20
 # A runtime stop (rt_stop, rt_unsupported) fails every case: the program's
 # result does not carry it.
@@ -22,7 +22,8 @@ mkdir -p tmp
 run=$(mktemp -d "$PWD/tmp/workbench-check.XXXXXX")
 export AMIGA_CPU="${AMIGA_CPU:-68030}" JOY0=none JOY1=none FSUAE_CLAIM_STRICT=1
 printf 'Diagnostic logs: %s\n' "$run"
-exit_keys='KEYS=300:enter,p300:enter,p200:u,p200:e,p200:y,1500:shot'
+# The game's own exit: Alt+X on the title (milestone mx1's route).
+exit_keys='KEYS=t2400:alt+x,d1500:shot'
 
 # $1 case, $2 expected result, $3 1 if a Workbench message is expected,
 # $4 1 if the game must run and restore first.
@@ -50,19 +51,15 @@ fixture() {
   } > "$run/$1.gdb"
 }
 
-# $1 case, $2 gdb condition at rt_start ($tfh: TFH chosen, the sample file opened
-# whether or not ref/ holds it).
+# $1 case, $2 gdb condition at rt_start.
 options() {
-  local line
-  line=$(grep -n '"sfx.rsc"' src/platform/amiga/amiga_platform.c | cut -d: -f1)
   {
     echo 'set pagination off'
     echo 'set confirm off'
-    printf 'set $tfh = 0\nbreak amiga_platform.c:%s\ncommands\n  silent\n  set $tfh = 1\n  continue\nend\n' "$line"
     printf 'break amiga_start_return\ncommands\n  silent\n  printf "WC2_WB_RESULT case=%s result=%%d\\n", result\n  detach\n  quit 1\nend\n' "$1"
     echo 'break rt_start'
     echo 'continue'
-    printf 'printf "WC2_WB_ARGS case=%s tfh=%%d music_skip=%%u bench=%%u keys=%%d\\n", $tfh, rt_music_skip, rt_bench, key_script != 0\n' "$1"
+    printf 'printf "WC2_WB_ARGS case=%s joystick=%%u music_skip=%%u bench=%%u keys=%%d\\n", rt_joystick, rt_music_skip, rt_bench, key_script != 0\n' "$1"
     printf 'if !(%s)\n  detach\n  quit 1\nend\n' "$2"
     echo 'printf "WC2_WB_OK\n"'
     echo 'detach'
@@ -111,15 +108,15 @@ fixture bench 20 1 0
 WC2_WORKBENCH=1 WC2_TOOLTYPES=BENCH check bench
 fixture shell 20 0 0
 WC2_ARGS=BENCH check shell
-options lower '$tfh == 1 && rt_music_skip == 0 && key_script != 0 && *key_script == 0x31'
-WC2_ARGS='tfh keys=1:shot' check lower
-options prompt '$tfh == 1'
-WC2_INPUT=tfh WC2_ARGS='?' check prompt
+options lower 'rt_joystick == 1 && key_script != 0 && *key_script == 0x31'
+WC2_ARGS='analogjoystick keys=1:shot' check lower
+options prompt 'rt_joystick == 1'
+WC2_INPUT=analogjoystick WC2_ARGS='?' check prompt
 fault bad 118
 WC2_ARGS=foo check bad
 release=(WC2_RELEASE=1 WC2_ELF="$PWD/build/amiga-release/out/Wc2.elf" WC2_EXE="$PWD/amiga/out/Wc2-release.exe")
-options release '$tfh == 1 && rt_joystick == 1 && key_script == 0'
-env "${release[@]}" WC2_ARGS='tfh analogjoystick' bash -c "$(declare -f check); run='$run'; check release"
+options release 'rt_joystick == 1 && key_script == 0'
+env "${release[@]}" WC2_ARGS='analogjoystick' bash -c "$(declare -f check); run='$run'; check release"
 for arg in 'KEYS=1:shot' MUSIC BENCH; do
   fault release-keys 118
   env "${release[@]}" WC2_ARGS="$arg" bash -c "$(declare -f check); run='$run'; check release-keys"
