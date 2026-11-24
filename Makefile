@@ -264,7 +264,7 @@ host: gen-check build/host/wc2.elf
 
 # Gate 5 (docs/port-plan.md P5): lockstep against the host references
 # (tools/reference.py --host), one run per milestone, in parallel.
-HOST_MILESTONES = m1 m1b m2 m3 m4 m5 m6
+HOST_MILESTONES = m1 m1b m2 m3 m4 m5 m5f m6
 t-host-%:
 	$(call RUN,host-$*,$(PYTHON) tests/host_run.py --milestone $* --timeout 20000)
 # The effect capture (src/runtime/sfx.c, HLE sfx_init at the game's sound init) against

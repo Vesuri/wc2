@@ -144,4 +144,5 @@ their RAM, VRAM and DAC are byte-identical (`tools/reference.py`).
 | m3 | 13,700 ticks after the click: the pilot file | |
 | m4 | the first flight frame (`WC2.EXE+813c#1`), then 50 frames later | `STRAX.DRV` resident |
 | m5 | debug mode; autopilot and Alt-Ins through Nav 1, a 20M-instruction dive and a 3M climb into Nav 2, Enter on Nav 3 in the nav map, autopilot home, landing request: the radio debriefing, then the landing approach | two snapshots advance |
+| m5f | debug mode; m5's route to its first autopilot, which drops out at Nav 1 into the Sartha attack, Backspace 600 ticks later; the first and the 50th flight frame (`WC2.EXE+813c`) after it, every frame between drawing 9–14 scaled objects (MEASURED on a probed run of the route) (P7.2: the meter's fight window) | `SUPERTM.DRV` resident |
 | m6 | m5's route, then the quarters terminal: Enter, S, Enter (slot 0), name, Enter (save); L, Enter, Enter (load) | `SAVEGAME.WC2` opened (the exploration runs saw it written to slot 0, then read back) |

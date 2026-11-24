@@ -33,6 +33,11 @@ static void stamp_file(uint8_t sft)
         file_time[sft] = (uint16_t)((t / 3600 % 24) << 11 |
                                   (t / 60 % 60) << 5 | (t % 60) / 2);
         file_stamped[sft] = 1;
+        /* DOSBox-X takes the stamp with INT 21h AH=2Ah and 2Ch from its own stub,
+         * nested on the call's INT frame (LocalFile::UpdateLocalDateTime): DOS
+         * saves that SS:SP, one frame below the call's (MEASURED, m5f's
+         * LOGFILE.TXT close). */
+        wr16(lin(rt_psp(), 0) + 0x2e, (uint16_t)(rt_r.sp - 6 - 6 - 18));
     }
 }
 
