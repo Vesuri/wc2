@@ -483,19 +483,17 @@ fixture cannot resolve a step and the meter decides.
    m6 found no problem besides the stale poll points, the five were re-recorded once, and
    `make test-host` passes m1–m6 on them. The meter's runs are lockstep checks, so its
    windows need current references.
-2. **Instruments** (C5), from X-Wing `0d20bcd`:
-   - `tools/cost_meter.py` with a C block hook (X-Wing `tests/host_meter.c`), its run the
-     lockstep check. Windows: m4 (the launch, quiet flight), m5's Nav 1 fight (frames
-     drawing 8 objects or more), m2's intro (P5.4's window), m3's pilot-file screen (a menu).
-   - `tools/cost_model.json` refit on a 68030 capture of WC2's flight (today SWOTL's 68020
-     fit).
-   - Frames fixtures on the Amiga image (X-Wing `amiga/perf_film.gdb`, `tools/perf_film.py`):
-     `play_walk.sh`'s keyed route with its steps counted in presents (X-Wing's `fN`), fields
-     per frame over 60 frames from a mark, then a 100-field profile, for quiet flight and
-     the Nav 1 fight. They replace SWOTL's `perf_frames`, `perf_flyby`, `bench_frames`,
-     `bench_palette` and `frame_pace` fixtures, which still name SWOTL labels.
-   - The cycle-exact 68030 model without its MMU (the profiler records nothing on the MMU
-     core), the FS-UAE build pinned; the 68040 by counts.
+2. **Instruments** (C5), from X-Wing `0d20bcd`. Done 2026-11-24
+   ([perf-method.md](perf-method.md)): `tools/cost_meter.py` on the lockstep check with
+   X-Wing's block hook, windows m4 (the launch), m5f (the Nav 1 fight, a milestone for it:
+   m5's route to the first autopilot, 49 frames drawing 8 objects or more), m2's intro and
+   m3's pilot-file screen; `tools/cost_model.json` refit on the 68030 model's fight capture;
+   the frames fixtures `tools/perf_flight.py` (quiet flight, the fight) on `KEYS` steps
+   counted in presents (`nN`), which replace SWOTL's `perf_frames`, `perf_flyby`,
+   `bench_frames`, `bench_palette` and `frame_pace`; the FS-UAE build pinned. The fight's
+   window found a site to sync (`irq-sync.csv` `WC2.EXE+068B8`), for which every host
+   reference was re-recorded once, and DOS's saved SS:SP after a file's write stamp
+   ([upstream.md](upstream.md) "P7.2").
 3. **Baseline and hot list** (W1, W2). Per window on the 68030: classes, the top routines by
    own and inclusive cycles, calls a frame, cycles per x86 instruction per module
    (`profile_tree.py`, `lowering_cost.py`), the waits, rows marked and c2p time a frame
@@ -514,7 +512,7 @@ fixture cannot resolve a step and the meter decides.
    - The 3DAh retrace spin. 3DAh follows the 50 Hz PAL beam, so a wait lasts up to 20 ms
      where the VGA's 70 Hz retrace ends it within 14.3 ms. If flight spins, a 70 Hz retrace
      from a CIA timer, as the PIT is modelled, keeps the game's wait at its PC length.
-   - The present's waits (`frame_pace`). If the present blocks, the Wing Commander slave's
+   - The present's waits (the frames fixture's profile). If the present blocks, the Wing Commander slave's
      queued buffers (`release_buffer.s`: the renderer waits only to reuse a buffer not yet
      shown; 6–7 ms a picture there).
    - The limiter passes at once when a frame is late (INFERRED; checked).
@@ -646,6 +644,8 @@ the other port's commit. Hashes as of X-Wing `0eec632`.
 | Amiga display and input | WC2 (P6b.1, P6b.3: SWOTL's display and input, the flight smoke with the game's calibration; `git log -S driver-slots`) | to X-Wing: the driver loader's slots in the driver-call bracket, the key script's `tN`, `alt+`/`ctrl+` and ReadArgs quoting |
 | Music on Paula through SWOTL's FM re-hoster with additive patches and `fm_check` on vibrato notes (`ba28410`); FM effects captured from the driver and prerendered (`0eda68f`, owner decision 2026-11-15, HLE `sfx_prerender`); effects played from the driver's players (`269828b`, `fx_play.c`, HLE `sfx_start`) | X-Wing P7 | taken (owner decisions D13, D15, [upstream.md](upstream.md) rows "D13", "D15"): two HLE rows (`sfx_init`, the capture at the game's sound init before the first scene; `sfx_start`, the start count); `t-amiga-sfx` checks each play and runs the host check; WC2's two render fixes, the counted-start rule and the input-keyed cache go back |
 | SB speech on Paula: `sb_play.c` on voice 3 from the DSP model's blocks, the block's end from the DSP's own time on a CIA-B timer | X-Wing P10 (`baea334`) | taken ([upstream.md](upstream.md)): the player and its test; WC2 keeps its block timer and retries (no pause in WC2's DSP model); the follow-on of back-to-back blocks without a restart goes back |
+| The meter on the lockstep check with a C block hook, the cost model refit on the 68030 model, a frames fixture on `KEYS` steps counted in presents (`0d20bcd`) | X-Wing P8 step 1 | taken at P7.2 ([upstream.md](upstream.md)); to X-Wing: the meter's own-host hook (the check's controls build hosts too) and the cold-section return labels in `profile_report.INSIDE` if its emitter has them |
+| Consecutive timer ticks counted onto one interrupt ring entry (`2029582`: a service holding the ticks past the 32-entry ring stopped the game) | X-Wing runtime | not yet here: check WC2's longest tick hold before P7.5 |
 
 ## Copy map (SWOTL `658fc60` → here)
 

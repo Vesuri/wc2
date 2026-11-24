@@ -589,8 +589,12 @@ void Wc2::present(const uint8_t* frame, const struct plat_rect* rects, int32_t n
     finishDisplayUpdate(back);
 }
 
+extern "C" volatile uint32_t amiga_presents;
+volatile uint32_t amiga_presents = 0;   // plat_present calls: the guest's published frames
+
 extern "C" void plat_present(const uint8_t* frame, const struct plat_rect* rects, int32_t n)
 {
+    ++amiga_presents;
     if (Wc2::application) Wc2::application->present(frame, rects, n);
 }
 

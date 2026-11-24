@@ -382,7 +382,7 @@ class LongArithmetic(unittest.TestCase):
                     f[2], f[1] = f[1], 0
                 with self.subTest(op=op, args=args, cached=cached):
                     want = 4.125 if measured else (
-                        4 * coef["loop_bytes" if cached else "bytes"] +
+                        coef["insns"] + 4 * coef["loop_bytes" if cached else "bytes"] +
                         M.accesses(op, args)[0] * coef["reads"] + coef["muldiv"])
                     self.assertAlmostEqual(M.model_cycles(f, 3, 0, coef), 3 * want)
                     self.assertEqual(f[1] + f[2], 4)  # raw byte accounting survives

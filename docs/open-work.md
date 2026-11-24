@@ -6,13 +6,12 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-29. Instruments (P7.2), from X-Wing `0d20bcd`: the meter over m2, m3, m4 and m5's Nav 1
-    fight with a 68030 cost model; frames fixtures for quiet flight and the fight on the
-    Amiga image. Acceptance: each meter equal in two runs, a plant adding exactly its cost,
-    two frames runs within one field, a planted slowdown seen in the profile.
 30. Baseline and hot list (P7.3): the windows profiled on the 68030 model, the 68040's
-    frame intervals, each hot routine's PC WC1 counterpart. Acceptance: speed-plan §1 and §9
-    re-derived for WC2 and feasibility's flight estimates replaced, MEASURED.
+    frame intervals (`tools/perf_flight.py --cpu 68040 --no-profile` stopped before its mark
+    in 3 runs of 3, while the same keys under a gdb script with flight breakpoints from the
+    start reached it in 2 of 2: MEASURED 2026-11-24, cause unknown), each hot routine's PC
+    WC1 counterpart. Acceptance: speed-plan §1 and §9 re-derived for WC2 and feasibility's
+    flight estimates replaced, MEASURED.
 31. The bar (P7.4): the owner's, from item 30's numbers (proposed tiers B1–B3 in port-plan
     P7.4). Acceptance: a row in `docs/design.md`.
 8. WC1 lineage on the Amiga (P7.10; desk work beside items 32–35): item 30's hot routines

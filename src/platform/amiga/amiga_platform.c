@@ -604,7 +604,9 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
  * kN: N guest keyboard polls after the previous step (rt_key_polls: a prompt
  * that reads keys, as pN for a screen that reads the mouse); dN: N frames after the previous step;
  * tN: N CIA ticks after the previous step (the guest timer's rate: a reference
- * milestone's WC2.EXE+fd10#N counts, reference/milestones.csv); fNAME: the guest opens file NAME
+ * milestone's WC2.EXE+fd10#N counts, reference/milestones.csv); nN: N frames the
+ * guest publishes after the previous step (plat_present calls, amiga_presents: the
+ * same point of a flight in every build, however long its frames take); fNAME: the guest opens file NAME
  * after the previous step (a screen's own data: the reference's open order);
  * uNAME:KEY: KEY now and every SCRIPT_REPEAT frames until the guest opens NAME
  * (Esc through a cinematic's scenes, however long each takes to load);
@@ -634,6 +636,8 @@ static ULONG step_reads = 0;    /* amiga_mouse_reads at the previous step */
 static ULONG step_frame = 0;    /* amiga_frames at the previous step */
 static ULONG step_polls = 0;    /* rt_key_polls at the previous step */
 static ULONG step_ticks = 0;    /* amiga_ticks at the previous step */
+static ULONG step_presents = 0; /* amiga_presents at the previous step */
+extern volatile uint32_t amiga_presents;
 #define SCRIPT_REPEAT 60
 static ULONG repeat_frame = 0;  /* amiga_frames at a u step's last press */
 static int key_up = -1;         /* the held raw key or SCRIPT_LMB/RMB */
@@ -826,6 +830,7 @@ static void script_skip(const char *p)
     step_frame = amiga_frames;
     step_polls = rt_key_polls;
     step_ticks = amiga_ticks;
+    step_presents = amiga_presents;
 }
 
 static void key_script_step(void)
@@ -888,6 +893,7 @@ static void key_script_step(void)
         if (kind == 'p' ? amiga_mouse_reads - step_reads < when :
                 kind == 'k' ? rt_key_polls - step_polls < when :
                 kind == 't' ? amiga_ticks - step_ticks < when :
+                kind == 'n' ? amiga_presents - step_presents < when :
                 kind == 'd' ? amiga_frames - step_frame < when : amiga_frames < when) {
             return;
         }
@@ -896,6 +902,7 @@ static void key_script_step(void)
     step_frame = amiga_frames;
     step_polls = rt_key_polls;
     step_ticks = amiga_ticks;
+    step_presents = amiga_presents;
     const char *name = *p == ':' ? ++p : p;
     while (*p > ' ' && *p != ',') {
         ++p;

@@ -1,33 +1,37 @@
 #!/usr/bin/env python3
-"""Deterministic cost meter (docs/speed-plan.md §3-4): the per-step acceptance.
+"""Deterministic cost meter (docs/perf-method.md): the per-step acceptance of P7.
 
-  cost_meter.py [MILESTONE] [--elf E] [--gen G] [--out JSON] [--trace DIR]
+  cost_meter.py [MILESTONE] [--out JSON]
   cost_meter.py --compare A.json B.json
   cost_meter.py --calibrate CAPTURE ELF [--write]
-  cost_meter.py --plant-check BASE_JSON
+  cost_meter.py --plant-check BASE_JSON --label L [--nops N]
 
-Run: the host run (tests/host_run.py, the reference's interrupts replayed;
---trace: another capture of the milestone, e.g. one recorded with a changed sync
-set before the references are re-recorded) from the milestone's first snapshot to its last (default m4-demo-frames: 49
-drawn frames of the demo flight). A Unicorn block hook counts executions of
-every translated block and every taken transfer (and its target: `targets`,
-for R8's alignment); blocks expand to executed
-68k instructions over the disassembly of the image that ran. Features per
+From X-Wing's tools/cost_meter.py (0d20bcd; SWOTL's, adapted there): the run is
+tests/host_run.py's lockstep check of the milestone from boot, and any lockstep problem
+refuses the result. Its window (window()) is the milestone's first snapshot trigger to
+its last (reference/milestones.csv), or for m2 and m3, which have one snapshot, the last
+TAIL timer ticks before it. A C block hook (tests/host_meter.c) counts executions of
+every translated block and every taken transfer (and its target: `targets`); blocks
+expand to executed 68k instructions over the disassembly of the image that ran: the host
+image with tests/rep_replay.py's diagnostic REP hooks, whose REP lowering differs from
+the production image's only at the REP instructions an interrupt split in the
+reference. Features per
 instruction: encoded bytes and taken transfers, each split by whether the
 instruction lies in a loop of <= 256 bytes whose closing branch is taken
-in this workload (the 68020 i-cache); data reads; data writes; mul/div.
+in this workload (the instruction cache); data reads; data writes; mul/div.
 Unsigned register long arithmetic has a separately probed total cost. Model cycles =
 the features weighted by tools/cost_model.json. Exact and layout-blind: the
 same build gives the same numbers, and moving code changes nothing.
-Interrupt poll tests (`tst.b G_IRQ(a6)` and its bne; irq-plan I1) are
-counted per class: visits, taken branches and their model cycles.
+The image is the sync image: interrupt poll tests (`tst.b G_IRQ(a6)` and its bne),
+which production does not have, are counted per class: visits, taken branches and
+their model cycles.
 
 Calibrate: fit the weights (non-negative least squares) on an FS-UAE capture
 (tools/profile_report.py format) of the Amiga ELF of the same build: per-PC
 cycles against per-PC executions times features, taken counts from the
-capture's PC sequence. Compare: per class and per x86 form, the deltas the
-speed plan reports. Plant check: every `ror.w #8` tripled (flag-neutral)
-must add exactly its instructions and bytes, and their cost.
+capture's PC sequence. Compare: per class and per x86 form. Plant check: NOPs
+(flag-neutral) at one generated label must add exactly their instructions and bytes
+per execution, and their cost.
 """
 from __future__ import annotations
 
@@ -269,47 +273,127 @@ def load_model() -> dict:
 
 # --- the run -------------------------------------------------------------------
 
-def run(milestone: str, elf: Path, gen: Path, timeout: int,
-        trace: Path | None = None) -> tuple[Counter, Counter, dict]:
-    """Block counts {(addr, size): n}, taken counts {block: n} and taken transfers
-    {(block, target): n} (in meta["into"]) over the window."""
-    import host_run
-    import uc as U
-    host_run.ELF = elf
-    script = host_run.milestone_script(milestone)
-    trace = trace or REPO / f"tmp/pc-runs/ref-{milestone}/trace"
-    script["irqs"], script["releases"] = host_run.reference_inputs(trace)
-    h = host_run.Host(host_run.image.M.REF, None)
-    blocks, taken, into = Counter(), Counter(), Counter()
-    state = {"open": False, "prev": None}
-    first = h.syms[script["snapshots"][0][0]]
+# Meter windows of milestones whose snapshots do not bound one: the last TAIL counts of
+# the final snapshot trigger (the timer handler's entries, WC2.EXE+fd10). Others run
+# from their first snapshot trigger to their last.
+TAIL = {"m2": 600, "m3": 600}     # the intro's animation; the pilot-file screen
 
-    @U.CODE_CB
-    def opener(e, addr, size, user):
-        if h.step >= 1:
-            state["open"] = True
 
-    @U.CODE_CB
-    def block(e, addr, size, user):
-        if state["open"]:
-            prev = state["prev"]
-            if prev is not None and prev[0] + prev[1] != addr:
-                taken[prev] += 1
-                into[(prev, addr)] += 1
-            key = (addr, size)
-            blocks[key] += 1
-            state["prev"] = key
+def hook_library():
+    """The block hook (tests/host_meter.c), built into tmp on first use."""
+    import ctypes
+    import hashlib
+    src = REPO / "tests/host_meter.c"
+    out = REPO / "tmp/host-meter" / (hashlib.sha256(src.read_bytes()).hexdigest()[:16] + ".so")
+    if not out.exists():
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_suffix(f".{os.getpid()}.so")
+        subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-Wall", "-Wextra", "-Werror",
+                        str(src), "-o", str(tmp)], check=True)
+        tmp.rename(out)
+    return ctypes.CDLL(str(out))
 
-    h.e.hook_range(U.HOOK_CODE, opener, first, first)
-    h.e.hook_range(8, block, 1, 0)          # UC_HOOK_BLOCK, everywhere
+
+def window(milestone: str) -> tuple[tuple[int, int], tuple[int, int]]:
+    """The window as (step, hits) positions of host_run.Host.run's trigger walk: from
+    `open` (inclusive) to `close` (exclusive)."""
+    import host_run as H
+    script = H.milestone_script(milestone)
+    keys, snaps = len(script["keys"]), len(script["snapshots"])
+    close = (keys + snaps, 0)
+    if milestone in TAIL:
+        n = script["snapshots"][-1][2]
+        if TAIL[milestone] >= n:
+            raise SystemExit(f"{milestone}: a tail of {TAIL[milestone]} needs more than {n} counts")
+        return (keys + snaps - 1, n - TAIL[milestone]), close
+    if snaps < 2:
+        raise SystemExit(f"{milestone}: one snapshot and no TAIL window")
+    return (keys + 1, 0), close          # past the first snapshot trigger
+
+
+def run(milestone: str, timeout: int, elf: Path | None = None):
+    """The host lockstep check of the milestone (tests/host_run.py check) from boot, with
+    a block hook counting over window(). Block counts {(addr, size): n}, taken counts
+    {block: n}, taken transfers {(block, target): n} (meta["into"]) and the ELF that ran
+    (by default the host image with the diagnostic REP hooks of tests/rep_replay.py).
+    Any lockstep problem refuses the run."""
+    import ctypes
+    import host_run as H
+    lib = hook_library()
+    lib.meter_reset()
+    on = ctypes.c_uint8.in_dll(lib, "meter_on")
+    lo, hi = window(milestone)
+    ran = {}
+
+    class MeterHost(H.Host):
+        _step = _hits = 0
+        metered = False
+
+        def __init__(self, *args, **kw):
+            super().__init__(*args, **kw)
+            # the first host is the milestone's run; check()'s own controls
+            # (rearm_problems, overlay_problems) build others, not metered
+            if "host" not in ran:
+                ran["elf"], ran["host"], self.metered = kw.get("elf") or H.ELF, self, True
+                self.e.hook_range(8, lib.meter_block, 0x10000, self.code[1])   # UC_HOOK_BLOCK
+
+        def _gate(self):
+            if self.metered:
+                on.value = int(lo <= (self._step, self._hits) < hi)
+
+        @property
+        def step(self):
+            return self._step
+
+        @step.setter
+        def step(self, value):
+            self._step = value
+            self._gate()
+
+        @property
+        def hits(self):
+            return self._hits
+
+        @hits.setter
+        def hits(self, value):
+            self._hits = value
+            self._gate()
+
+    original = H.Host
+    H.Host = MeterHost
     t0 = time.time()
-    h.run(script, timeout)
+    try:
+        problems = H.check(milestone, timeout, None, None, elf=elf)
+    finally:
+        H.Host = original
+    h = ran["host"]
     meta = {"milestone": milestone, "stopped_at": h.stopped_at, "seconds": round(time.time() - t0),
-            "irq_lost": h.irq_lost, "label": script["snapshots"][-1][0]}
-    if h.stopped_at != meta["label"] or h.irq_lost:
-        raise SystemExit(f"meter run failed: {meta}")
+            "label": h.stopped_at, "window": [lo, hi], "elf": str(Path(ran["elf"]).resolve().relative_to(REPO))}
+    if problems or ctypes.c_uint32.in_dll(lib, "meter_lost").value:
+        raise SystemExit(f"meter run failed: {problems[:5] or 'a hook table filled up'}")
+    n = 1 << 20
+    view = lambda name, ty, k: (ty * k).from_address(ctypes.addressof(ty.in_dll(lib, name)))
+    addr, size = view("blk_addr", ctypes.c_uint32, n), view("blk_size", ctypes.c_uint32, n)
+    cnt, tak = view("blk_n", ctypes.c_uint64, n), view("blk_taken", ctypes.c_uint64, n)
+    blocks, taken, into = Counter(), Counter(), Counter()
+    slot = {}
+    for i in range(n):
+        if size[i]:
+            slot[i] = (addr[i], size[i])
+            if cnt[i]:
+                blocks[slot[i]] = cnt[i]
+            if tak[i]:
+                taken[slot[i]] = tak[i]
+    m = 1 << 21
+    ef, et, en = view("edge_from", ctypes.c_uint32, m), view("edge_to", ctypes.c_uint32, m), \
+        view("edge_n", ctypes.c_uint64, m)
+    for i in range(m):
+        if en[i]:
+            into[(slot[ef[i]], slot[et[i]][0])] = en[i]
+    if not blocks:
+        raise SystemExit("meter run failed: no block ran in the window")
     meta["into"] = into
-    return blocks, taken, meta
+    return blocks, taken, meta, REPO / meta["elf"]
 
 
 def expand(prog: Program, blocks: Counter, taken_blocks: Counter):
@@ -482,52 +566,64 @@ def compare(a: dict, b: dict, top: int = 25) -> str:
     return "\n".join(out)
 
 
-# --- the doubling plant -------------------------------------------------------
+# --- the plant ------------------------------------------------------------------
 
-def plant_check(base_json: Path, objdump: str) -> int:
-    """Every `ror.w #8,dN` tripled (flag-neutral: same result, N, Z, C; X
-    untouched): the meter must see exactly 2 more instructions and 4 more
-    bytes per executed `ror.w #8` and the model move by their cost."""
+def plant(gen: Path, label: str, nops: int) -> None:
+    """`nops` flag-neutral NOPs at the start of a generated guest label, in place."""
+    for s in gen.glob("*.s"):
+        text = s.read_text()
+        head = re.search(rf"^{re.escape(label)}:[^\n]*\n", text, flags=re.M)
+        if head:
+            s.write_text(text[:head.end()] + "\tnop\n" * nops + text[head.end():])
+            return
+    raise SystemExit(f"plant: no label {label} in {gen}")
+
+
+def plant_check(base_json: Path, objdump: str, label: str, nops: int) -> int:
+    """`nops` NOPs (2 bytes, no flags) at the start of one generated guest label in the
+    image the base ran: the meter must see exactly `nops` more instructions and 2*`nops`
+    more bytes per execution of the label, and the model move by their cost, in a run
+    whose lockstep check passes."""
     import shutil
     base = json.loads(base_json.read_text())
+    ran = REPO / base["meta"]["elf"]
     work = REPO / "tmp/meter-plant"
     if work.exists():
         shutil.rmtree(work)
-    shutil.copytree(REPO / "build/gen", work / "gen")
-    for s in (work / "gen").glob("*.s"):
-        text = s.read_text()
-        s.write_text(re.sub(r"^(\tror\.w #8,d[0-7])$", r"\1\n\1\n\1", text, flags=re.M))
+    shutil.copytree(ran.parent / "gen", work / "gen")
+    plant(work / "gen", label, nops)
+    subprocess.run([VASM, "-quiet", "-m68020", "-Felf", "-x", "-nowarn=62", "-DWC2_SYNC=1",
+                    "-o", str(work / "program.o"), "program.s"], cwd=work / "gen", check=True)
+    # tests/rep_replay.py host_image's link, with the planted program
     host = REPO / "build/host"
-    cross = CROSS
-    subprocess.run([VASM, "-quiet", "-m68020", "-Felf", "-x", "-DWC2_SYNC=1",   # as build/host
-                    "-nowarn=62", "-o", str(work / "program.o"), "program.s"],
-                   cwd=work / "gen", check=True)
-    order = ["host_s.o", "host.o", "rt_entry.o"]
-    runtime_c = sorted(p.stem for p in (REPO / "src/runtime").glob("*.c"))
-    objs = [host / o for o in order] + [host / f"{c}.o" for c in runtime_c] + [work / "program.o", host / "compute_projection.o", host / "compute_normalise.o", host / "compute_scenery.o", host / "compute_native.o"]
-    subprocess.run([cross + "ld", "-Ttext=0x10000", "-e", "_start", "-o", str(work / "wc2.elf")]
-                   + [str(o) for o in objs], check=True)
+    objs = [host / (c.stem + ".o") for c in sorted((REPO / "src/runtime").glob("*.c"))]
+    objs += [host / o for o in ("host_s.o", "host.o", "rt_entry.o")]
+    objs += [work / "program.o", ran.parent / "rep.o"]
     elf = work / "wc2.elf"
+    subprocess.run([CROSS + "ld", "-Ttext=0x10000", "-e", "_start", "-o", str(elf)]
+                   + [str(o) for o in objs], check=True)
     prog = Program(elf, objdump, (host / "host.o", host / "host_s.o"))
-    blocks, taken_blocks, meta = run(base["meta"]["milestone"], elf, work / "gen", 3600)
+    blocks, taken_blocks, meta, _ = run(base["meta"]["milestone"], 40000, elf)
     meta.pop("into")
     n, taken = expand(prog, blocks, taken_blocks)
     coef = load_model()
     res = report(prog, n, taken, coef, work / "gen")
-    rors = base["ops"].get("ror.w #8", {}).get("execs", 0)
+    execs = base["labels"].get(label, {}).get("execs", 0)
     g = lambda r, f: sum(r["classes"].get(k, {}).get(f, 0) for k in ("generated", "walk"))
-    ror = lambda r, f: r["ops"].get("ror.w #8", {}).get(f, 0)
+    nop = lambda r, f: r["ops"].get("nop", {}).get(f, 0)
     d_insns = g(res, "insns") - g(base, "insns")
-    d_bytes, d_cyc = ror(res, "bytes") - ror(base, "bytes"), ror(res, "cycles") - ror(base, "cycles")
-    rest = g(res, "cycles") - g(base, "cycles") - d_cyc
-    lo, hi = 4 * rors * min(coef["bytes"], coef["loop_bytes"]), 4 * rors * max(coef["bytes"],
-                                                                            coef["loop_bytes"])
-    ok = ror(res, "execs") == 3 * rors and d_insns == 2 * rors and d_bytes == 4 * rors and \
-        lo <= d_cyc <= hi
-    print(f"plant: {rors:,} ror.w #8 executed; instructions {d_insns:+,} (want {2 * rors:+,}), "
-          f"their bytes {d_bytes:+,} (want {4 * rors:+,}), their model cycles {d_cyc:+,.0f} "
-          f"(want {lo:,.0f}..{hi:,.0f}); other instructions {rest:+,.0f} (branch sizes, "
-          f"loops past {LOOP} bytes): {'ok' if ok else 'FAIL'}")
+    d_nops, d_bytes, d_cyc = (nop(res, f) - nop(base, f) for f in ("execs", "bytes", "cycles"))
+    d_label = res["labels"].get(label, {}).get("cycles", 0) - base["labels"].get(label, {}).get("cycles", 0)
+    want = nops * execs
+    lo, hi = (want * (coef["insns"] + 2 * coef[k]) for k in sorted(
+        ("bytes", "loop_bytes"), key=lambda k: coef[k]))
+    ok = execs > 0 and d_insns == want and d_nops == want and d_bytes == 2 * want and \
+        lo <= d_cyc <= hi and d_label >= d_cyc
+    total = lambda r: sum(c.get("cycles", 0) for c in r["classes"].values())
+    print(f"plant: {nops} NOPs at {label}, executed {execs:,} times; instructions {d_insns:+,} "
+          f"(want {want:+,}), NOP bytes {d_bytes:+,} (want {2 * want:+,}), their model cycles "
+          f"{d_cyc:+,.0f} (want {lo:,.0f}..{hi:,.0f}), the label's {d_label:+,.0f}; window "
+          f"{total(base):,.0f} -> {total(res):,.0f}: {'ok' if ok else 'FAIL'}")
     shutil.rmtree(work)
     return 0 if ok else 1
 
@@ -623,33 +719,34 @@ def calibrate(capture: Path, elf: Path, objdump: str, write: bool) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("milestone", nargs="?", default="m4-demo-frames")
-    ap.add_argument("--elf", type=Path, default=REPO / "build/host/wc2.elf")
-    ap.add_argument("--gen", type=Path, default=REPO / "build/gen")
+    ap.add_argument("milestone", nargs="?", default="m4")
     ap.add_argument("--out", type=Path, help="write the full result as JSON")
-    ap.add_argument("--timeout", type=int, default=3600)
-    ap.add_argument("--trace", type=Path, help="capture trace directory (default: the reference's)")
+    ap.add_argument("--timeout", type=int, default=40000)
     ap.add_argument("--objdump", default=OBJDUMP)
     ap.add_argument("--calibrate", nargs=2, type=Path, metavar=("CAPTURE", "ELF"))
     ap.add_argument("--write", action="store_true", help="with --calibrate: write cost_model.json")
     ap.add_argument("--compare", nargs=2, type=Path, metavar=("A", "B"))
     ap.add_argument("--plant-check", type=Path, metavar="BASE_JSON",
-                    help="meter a copy of build/gen with every ror.w #8 tripled against BASE_JSON")
+                    help="meter the base's image with --nops NOPs at --label against BASE_JSON")
+    ap.add_argument("--label", help="with --plant-check: the planted label")
+    ap.add_argument("--nops", type=int, default=8, help="with --plant-check: NOPs planted")
     args = ap.parse_args(argv)
     if args.compare:
         a, b = (json.loads(p.read_text()) for p in args.compare)
         print(compare(a, b))
         return 0
     if args.plant_check:
-        return plant_check(args.plant_check, args.objdump)
+        if not args.label:
+            raise SystemExit("--plant-check needs --label")
+        return plant_check(args.plant_check, args.objdump, args.label, args.nops)
     if args.calibrate:
         calibrate(*args.calibrate, args.objdump, args.write)
         return 0
-    host = args.elf.parent
-    prog = Program(args.elf, args.objdump, (host / "host.o", host / "host_s.o"))
-    blocks, taken_blocks, meta = run(args.milestone, args.elf.resolve(), args.gen, args.timeout, args.trace)
+    host = REPO / "build/host"
+    blocks, taken_blocks, meta, elf = run(args.milestone, args.timeout)
+    prog = Program(elf, args.objdump, (host / "host.o", host / "host_s.o"))
     n, taken = expand(prog, blocks, taken_blocks)
-    res = report(prog, n, taken, load_model(), args.gen)
+    res = report(prog, n, taken, load_model(), elf.parent / "gen")
     res["targets"] = targets(prog, meta.pop("into"))
     res["meta"] = meta
     res["static"] = static_size(prog)

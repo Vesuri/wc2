@@ -34,8 +34,10 @@ _TAGS = "|".join(sorted(PREFIX, key=len, reverse=True))
 GUEST = re.compile(rf"^({_TAGS})_([0-9A-F]{{5}})(\w*)$")
 # labels inside their instruction X: after a poll point (emit.poll), a segment
 # check, CS store hook, far push (R29), repeated segment load (R30), stack run
-# (R31, reuse.stack_runs) or string direction join (lower.py)
-INSIDE = re.compile(r"_(np|sr\d+|hr\d+|pr\d+|gr\d+|kr\d+|dfend|dispatchend)$")
+# (R31, reuse.stack_runs), string direction join, or the return from a cold
+# section: rr (rf), er (ex), et (es), dfback (lower.py; X-Wing 0d20bcd)
+INSIDE = re.compile(r"_(np|sr\d+|hr\d+|pr\d+|gr\d+|kr\d+|rr\d+|er\d+|et\d+|dfend|dfback|"
+                    r"dispatchend)$")
 # return-check trampolines (translator/emit.py mismatch_stub): generated code
 TRAMPOLINE = re.compile(rf"^({_TAGS})_rm\d+$")
 DEFAULT_GEN = Path(__file__).resolve().parents[1] / "build/gen"

@@ -311,7 +311,7 @@ call; its estimate was −45–60% of the replaceable ~300K cycles per call).
 ## Steps
 
 - **I1 Measure** (tooling). `cost_meter.py` counts poll tests (labels × the model cost of
-  `tst.b d16(a6)`/`bne.w`) as a share of m4; flyby capture (`perf_flyby.gdb`,
+  `tst.b d16(a6)`/`bne.w`) as a share of m4; flight capture (`perf_flight.py`,
   `profile_tree.py`): poll share, SPAZ handler cycles per tick (mean, max),
   `plat_service` and present cycles per call, native stack depth on the handler path.
   Numbers into Facts. Checks: cost-tool tests and their sabotage.
