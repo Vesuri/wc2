@@ -139,6 +139,13 @@ call; its estimate was −45–60% of the replaceable ~300K cycles per call).
   p99 552,934 → 21,491; handler mean 2,184 → 2,280; 2,339 of 2,370 ticks at the
   interrupt, `rt_irq_interrupt` mean 3,845 with entry and exit, supervisor stack 280
   bytes; ms/frame equal (454.5). Meter m4 +43,558 model cycles (+0.0282%), runtime only.
+  WC2 (2026-11-24): "the vertical blank preempts a long tick" fails when the tick
+  interrupts the blank itself, before its VERTB acknowledge: the mask lowered to 2 let
+  VERTB in again nested, and the interrupted blank resumed after the guest handler, the
+  field counted twice and its sprites late (MEASURED: two blank entries at line 0 in one
+  field, the interrupted one resumed at line 42; display audit 68030, late in about one
+  run in three). The tick and the DSP block timer now post or retry while the blank runs
+  or VERTB is requested (`amiga_platform.c` `vblank_owed`); EXTER is written twice.
 - I7 (2026-10-25, evidence `tmp/irq/I7/`). No keyboard interrupt: `Input::begin` disables
   CIA-A SP with `AbleICR` (keyboard.device's vector stays registered, never runs) and
   clears a stale byte; each vertical blank samples SP with `SetICR(0)`, clears it, reads

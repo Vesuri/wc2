@@ -31,6 +31,8 @@ volatile uint16_t* amiga_sprites = 0;
 volatile int16_t amiga_sprite_stolen = -1;
 // Control words written at or after line 25, where sprite DMA fetches them.
 volatile uint32_t amiga_sprite_late = 0;
+// The last late write's line and its blank's entry line (display_audit.gdb).
+volatile uint16_t amiga_sprite_late_line = 0, amiga_sprite_late_entry = 0;
 // After each vertical blank's sprite write (display checks wait on it).
 void __attribute__((noinline)) amiga_sprite_placed(void) {
     __asm__ volatile("" : : : "memory");
@@ -174,7 +176,12 @@ void Pointer::verticalBlank(uint16_t b, int32_t dx, int32_t dy)
         place(p.sprite[SPRITE_OTHER], visible && p.stolen >= 0, h, v);
         amiga_sprites = p.sprite[SPRITE_OTHER];
         amiga_sprite_stolen = p.stolen;
-        if (((*(volatile uint32_t*)vposrPointer >> 8) & 511) >= SPRITE_DEADLINE) ++amiga_sprite_late;
+        uint16_t line = (uint16_t)((*(volatile uint32_t*)vposrPointer >> 8) & 511);
+        if (line >= SPRITE_DEADLINE) {
+            ++amiga_sprite_late;
+            amiga_sprite_late_line = line;
+            amiga_sprite_late_entry = amiga_vblank_entry;
+        }
     }
     amiga_sprite_placed();
 }

@@ -58,7 +58,7 @@ break *amiga_display_shown
 commands
   silent
   if *(unsigned int *)($sp+4) != $queued || amiga_display_late || amiga_display_line >= 16 || amiga_sprite_late
-    printf "DISPLAY_AUDIT bad handoff serial or beam deadline\n"
+    printf "DISPLAY_AUDIT bad handoff serial or beam deadline: shown=%u queued=%u line=%u late=%u sprite_late=%u (line %u, blank entered at %u) present=%d\n", *(unsigned int *)($sp+4), $queued, amiga_display_line, amiga_display_late, amiga_sprite_late, amiga_sprite_late_line, amiga_sprite_late_entry, $n
     detach
     quit 1
   end
@@ -84,8 +84,9 @@ commands
     printf "HANDOFF serial=%u line=%u late=%u sprite_late=%u stolen=%d\n", $queued, amiga_display_line, amiga_display_late, amiga_sprite_late, amiga_sprite_stolen
     set $k = $k + 1
     if $k == 40
-      printf "TICKS posted=%u async=%u runs=%u bios=%u pending=%u\n", amiga_ticks, amiga_ticks_async, rt_irq0_runs, rt_irq0_bios, (unsigned char)(rt_irq_tail - irq_head)
-      set $handled = rt_irq0_runs + rt_irq0_bios
+      printf "TICKS posted=%u async=%u runs=%u bios=%u pending=%u held=%u\n", amiga_ticks, amiga_ticks_async, rt_irq0_runs, rt_irq0_bios, (unsigned char)(rt_irq_tail - irq_head), amiga_ticks_held
+      # Ticks the effect capture held are never delivered (game time pauses).
+      set $handled = rt_irq0_runs + rt_irq0_bios + amiga_ticks_held
       if amiga_ticks < $handled || amiga_ticks > $handled + (unsigned char)(rt_irq_tail - irq_head) || amiga_ticks_async == 0
         printf "DISPLAY_AUDIT_TICKS posted ticks not handled, or none run at once\n"
         detach

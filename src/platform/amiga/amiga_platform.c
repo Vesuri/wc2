@@ -306,29 +306,51 @@ int32_t plat_file_info(const char *path, struct plat_file_info *info)
  * interrupt runs the guest handler at once when the runtime allows it
  * (docs/irq-plan.md I6), with EXTER acknowledged and the mask lowered to 2 so
  * the vertical blank preempts a long tick (a nested tick is posted); else it
- * posts vector 08h for the next poll point. Replay builds post only
- * (deliveries at the recorded polls). */
+ * posts vector 08h for the next poll point, as it does while the vertical
+ * blank runs or is requested (vblank_owed); the next tick runs it first.
+ * Replay builds post only (deliveries at the recorded polls). */
 #define CIAB ((volatile struct CIA *)0xbfd000)
 static struct Library *cia_base = 0;
 static struct Interrupt cia_interrupt;
 static WORD cia_bit = -1;
 
-/* CIA ticks, and of them those run at once (fixtures: amiga/display_audit.gdb). */
-volatile ULONG amiga_ticks = 0, amiga_ticks_async = 0;
+/* CIA ticks, of them those run at once and those the effect capture held (never
+ * delivered: game time pauses) (fixtures: amiga/display_audit.gdb). */
+volatile ULONG amiga_ticks = 0, amiga_ticks_async = 0, amiga_ticks_held = 0;
+volatile uint8_t amiga_vblank_busy = 0;
+
+#ifndef WC2_SYNC
+/* The vertical blank runs or is requested (Exec's level-3 entry, before
+ * vbiHandler sets the flag): a guest handler run at once would lower the mask
+ * below the interrupted blank (amiga_platform.h amiga_vblank_busy). */
+static int vblank_owed(void)
+{
+    return amiga_vblank_busy || (*(volatile UWORD *)0xdff01e & INTF_VERTB);
+}
+
+/* EXTER, written twice: the first write may still be in flight when the mask
+ * drops (framework AmigaHardware::clearInterruptRequests). */
+static void exter_ack(void)
+{
+    *(volatile UWORD *)0xdff09c = INTF_EXTER;
+    *(volatile UWORD *)0xdff09c = INTF_EXTER;
+}
+#endif
 
 static ULONG cia_tick(void)
 {
     ++amiga_ticks;
     if (rt_sfx_capturing) {
+        ++amiga_ticks_held;
         return 0;               /* the effect capture holds the tick: game time pauses */
     }
 #ifndef WC2_SYNC
     /* Production has no poll checks (docs/irq-plan.md I8): ticks posted while
      * IRQ0 could not run go first, then this one. */
     int current = rt_irq0_ready();  /* else this tick waits behind posted ones */
-    if (current || rt_irq0_take()) {
+    if (!vblank_owed() && (current || rt_irq0_take())) {
         UWORD sr;
-        *(volatile UWORD *)0xdff09c = INTF_EXTER;
+        exter_ack();
         __asm__ volatile("move.w %%sr,%0" : "=d"(sr) : : "memory");
         __asm__ volatile("move.w %0,%%sr" : : "d"((UWORD)((sr & ~0x0700) | 0x0200)) : "memory");
         for (;;) {
@@ -372,9 +394,9 @@ static void cia_load(uint32_t divisor)
  * runs of at most FFFFh E-clocks: length / rate after the 14h command (the
  * reference acknowledged IRQ 7 within 3.0 ms of it, docs/pc-reference-loop.md).
  * Production then runs INT 0Fh's guest handler at once when the runtime allows
- * it (machine.c rt_irq7_ready), as cia_tick runs IRQ0's, else retries after
- * SB_RETRY E-clocks (about 1 ms); the sync bench posts vector 0Fh for the next
- * poll point. The samples play on Paula (plat_sb_block, sb_play.c). */
+ * it (machine.c rt_irq7_ready) and no vertical blank is owed (vblank_owed),
+ * as cia_tick runs IRQ0's, else retries after SB_RETRY E-clocks (about 1 ms);
+ * the sync bench posts vector 0Fh for the next poll point. The samples play on Paula (plat_sb_block, sb_play.c). */
 #define SB_RETRY 709u
 static struct Interrupt sb_interrupt;
 static WORD sb_bit = -1;
@@ -423,7 +445,7 @@ static ULONG sb_timer(void)
     ++rt_irq_tail;
     RT_RAISE_IRQ();
 #else
-    if (!rt_irq7_ready()) {
+    if (vblank_owed() || !rt_irq7_ready()) {
         ++amiga_sb_retries;
         ++sb_tries;
         sb_load(SB_RETRY);
@@ -435,7 +457,7 @@ static ULONG sb_timer(void)
     sb_tries = 0;
     sb_due = 0;
     UWORD sr;
-    *(volatile UWORD *)0xdff09c = INTF_EXTER;
+    exter_ack();
     __asm__ volatile("move.w %%sr,%0" : "=d"(sr) : : "memory");
     __asm__ volatile("move.w %0,%%sr" : : "d"((UWORD)((sr & ~0x0700) | 0x0200)) : "memory");
     rt_irq0_running = 1;

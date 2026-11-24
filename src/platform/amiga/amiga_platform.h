@@ -49,6 +49,19 @@ extern uint8_t amiga_ntsc;
 extern volatile uint32_t amiga_frames;
 extern volatile uint32_t amiga_io_frames;
 extern volatile uint32_t amiga_mouse_reads;
+/* 1 from the VERTB handler's first statement (before its acknowledge) to its
+ * end. While it is set or VERTB is requested, a CIA tick posts and the DSP
+ * block's IRQ 7 retries (amiga_platform.c vblank_owed). Their guest handlers
+ * run with the mask lowered to 2; run over an interrupted blank, VERTB was
+ * taken again nested and the interrupted blank resumed after the guest
+ * handler: the field counted twice, its sprites past the deadline (MEASURED:
+ * two entries at line 0 in one field, the interrupted one resumed at line 42;
+ * amiga/display_audit.sh). */
+extern volatile uint8_t amiga_vblank_busy;
+/* The blank's entry line (Wc2::verticalBlank) and, at the last late sprite
+ * write, its line and the entry line (Pointer.cpp; display_audit.gdb). */
+extern volatile uint16_t amiga_vblank_entry;
+extern volatile uint16_t amiga_sprite_late_line, amiga_sprite_late_entry;
 
 #ifdef __cplusplus
 }

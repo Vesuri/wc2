@@ -83,6 +83,7 @@ volatile uint32_t amiga_display_count = 0;
 volatile uint32_t amiga_display_late = 0;
 volatile uint32_t amiga_display_deferred = 0;
 volatile uint16_t amiga_display_line = 0;
+volatile uint16_t amiga_vblank_entry = 0;
 // Audit seams: queue snapshot before re-enabling interrupts, and actual
 // handoff after updating the shown-frame metadata. Neither runs guest code.
 void __attribute__((noinline)) amiga_display_queued(uint32_t serial) {
@@ -107,10 +108,12 @@ static struct Interrupt vbiInterrupt, fieldInterrupt, ioKeyboardInterrupt;
 // Owns the level-3 VERTB vector, so it acknowledges INTREQ itself (L11).
 static uint32_t vbiHandler()
 {
+    amiga_vblank_busy = 1;      // before the acknowledge: see amiga_platform.h
     AmigaHardware::clearInterruptRequests(INTF_VERTB);
     if (Wc2::active) {
         Wc2::active->verticalBlank();
     }
+    amiga_vblank_busy = 0;
     return 0;
 }
 
@@ -406,6 +409,7 @@ void Wc2::verticalBlank()
     // Publish first. A delayed VBI must leave the completed buffer queued,
     // never restart the copper in the visible window. Exclude higher-level
     // IRQs across the beam check and the pointer/strobe pair only.
+    amiga_vblank_entry = beamLine();
     Disable();
     int16_t next = display->queue.pending;
     bool shown = next >= 0 && beamLine() < 8;
