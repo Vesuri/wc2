@@ -72,6 +72,7 @@ GUEST_BYTES = 0x110000
 TOP = BLOCK + GUEST_BYTES - 1   # rt_guest: guest linear L at TOP - L (reversed)
 STATE = TOP + 1           # state block (translator/lower.py STATE_EQU)
 G_IRQ = TOP + 9
+G_DS = TOP + 1            # lower.py STATE_EQU: G_DS(a6)
 # Key names of the reference key script (tracer KeyByName): scan << 8 | ASCII
 # as the BIOS INT 09h handler stores them.
 KEYS = {"enter": 0x1C0D, "esc": 0x011B, "space": 0x3920, "tab": 0x0F09, "backspace": 0x0E08,
@@ -337,6 +338,7 @@ SABOTAGE = {
     "int16-zf": "the first INT 16h AH=01h that finds a key reports none (ZF set)",
     "idle": "rt_idle returns at once: DOS's console wait takes no interrupt",
     "idle-stack": "the console wait's SP two bytes lower at its first rt_idle (RT_IDLE_DEPTH)",
+    "ems-irq": "an interrupt's handler leaves the EMS frame pages as it found them (ems.c rt_ems_irq_leave returns at once)",
     "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
              "spins with no service or interrupt (the run's watchdog, at 20 s)",
 }
@@ -539,6 +541,8 @@ class Host:
             else:                           # move.l #$b0008000,d7 -> #$b0008002
                 k = code.index(bytes.fromhex("2e3cb0008000"))
                 e.write(a + k + 2, bytes.fromhex("b0008002"))
+        if sabotage == "ems-irq":
+            e.write(self.syms["rt_ems_irq_leave"], b"\x4e\x75")  # rts
         if sabotage == "key-hook":
             e.write(self.syms["rt_key_hook"], bytes.fromhex("4e75"))   # rts
         if sabotage == "idle":   # moveq #0,d0; rts
@@ -1877,6 +1881,8 @@ def check_capture(tag, regs, state, ram, dac, ref_regs, ref, snap, h, irq=None) 
         problems += [f"{tag}: {p}" for p in compare_frame(ram, dac, snap)]
     reads = sorted(a for a in h.machine_reads if a < len(ref) and ram[a] != ref[a])
     print(f"{tag}: machine bytes read by the guest {len(h.machine_reads)}, {len(reads)} differ")
+    print(f"{tag}: EMS mapping changed over an interrupt's handler "
+          f"{int.from_bytes(h.mem(h.syms['rt_ems_irq_remaps'], 4), 'big')} times (ems.c rt_ems_irq_leave)")
     for a in reads[:20]:
         pc, n = h.machine_reads[a]
         problems.append(f"{tag}: machine byte {a:05X} read by the guest: ours {ram[a]:02x} "
@@ -2103,6 +2109,8 @@ def reference_clocks(trace):
 
 
 EMS_FRAME, EMS_PAGE = 0xE0000, 0x4000
+EMS_STORE, EMS_STORE_PAGES = STATE + 16, 64   # ems.c store(): RT_STATE_BYTES, RT_EMS_STORE_PAGES
+IRQ0_HANDLER = 0x17F50000                     # CS:IP of INT 08h's handler on m4-m6 (irq monitor)
 
 
 def host_ems_pages(h) -> dict:
@@ -2111,8 +2119,81 @@ def host_ems_pages(h) -> dict:
     mapped = struct.unpack(">4H", h.mem(h.syms["rt_ems_mapped"], 8))
     live = h.mem(h.syms["rt_ems_live"], 4)
     # ems.c store(): slot s at RT_EMS_STORE_PAGES (64) - s pages after the state block
-    return {k: h.mem(STATE + 16 + (64 - mapped[k]) * EMS_PAGE, EMS_PAGE)[::-1]
+    return {k: h.mem(EMS_STORE + (EMS_STORE_PAGES - mapped[k]) * EMS_PAGE, EMS_PAGE)[::-1]
             for k in range(4) if mapped[k] and not live[k]}
+
+
+def ems_irq_problems(elf: Path | None, sabotage: str | None = None) -> list[str]:
+    """The EMS frame pages over an interrupt's handler (ems.c rt_ems_irq_enter,
+    rt_ems_irq_leave), which production runs at any instruction, also between a
+    guard and its access (lockstep delivers at poll points only, so it cannot
+    see this): on the run's own image, a page mapped by the real INT 67h, then
+    rt_irq0_enter, the handler's own DS at the frame (rt_ems_seg copies the page
+    in) and a write there, the interrupted state back and rt_irq0_leave. With
+    the interrupted DS at E030h in listed code (rt_ems_ds: the base on the store
+    page) the page is in the store again with the handler's byte; with DS at
+    E030h outside listed code (rt_ems_seg: live) the handler remaps the page
+    away and back with its DS elsewhere, and the page is live again."""
+    problems = []
+    plain = TOP - 0x7FFF - 0xE0300
+    frame0 = TOP - (EMS_FRAME + EMS_PAGE) + 1
+    for listed in (True, False):
+        h = Host(image.M.REF, sabotage, elf=elf)
+        ret = h.syms["plat_exit"]  # stop address, never executed
+        h.e.write(h.syms["rt_guest"], TOP.to_bytes(4, "big"))
+        rr = h.syms["rt_r"]        # runtime.h struct rt_regs: ax, cx, dx, bx
+
+        def call(fn, d6=0, d7=0):
+            h.e.reg_write(U.M68K["sr"], 0x2700)  # first: it selects which a7
+            h.e.reg_write(U.M68K["a7"], STACK_TOP - 8)
+            h.e.write(STACK_TOP - 8, ret.to_bytes(4, "big"))
+            h.e.reg_write(U.M68K["a6"], TOP)
+            h.e.reg_write(U.M68K["d6"], d6)
+            h.e.reg_write(U.M68K["d7"], d7)
+            h.e.start(h.syms[fn], ret, timeout_us=1_000_000)
+            return h.r("pc") == ret
+
+        def int67(ax, bx=0, dx=0):
+            h.e.write(rr, ax.to_bytes(2, "big") + bytes(2) + dx.to_bytes(2, "big") + bx.to_bytes(2, "big"))
+            ok = call("rt_int67")
+            return ok, int.from_bytes(h.mem(rr + 4, 2), "big")
+
+        def ds(seg):
+            h.e.write(G_DS, seg.to_bytes(2, "big"))
+
+        def live():
+            return h.mem(h.syms["rt_ems_live"], 1)[0]
+
+        ok, handle = int67(0x4300, bx=2)
+        ok = ok and int67(0x4400, bx=0, dx=handle)[0]
+        store = EMS_STORE + (EMS_STORE_PAGES - int.from_bytes(h.mem(h.syms["rt_ems_mapped"], 2), "big")) * EMS_PAGE
+        ds(0xE030)
+        if listed:
+            ok = ok and call("rt_ems_ds", 0x40, 0x0100)
+            base = h.r("a3")
+            ok = ok and base == plain + store - frame0 and not live()
+        else:
+            ok = ok and call("rt_ems_seg") and live()
+        before = live()
+        # IVT 08h (guest 20h..23h: IP, CS) a handler the dispatcher knows; guest bytes
+        # run down from TOP, so CS then IP big-endian end at guest 20h
+        h.e.write(TOP - 0x23, IRQ0_HANDLER.to_bytes(4, "big"))
+        ok = ok and call("rt_irq0_enter") and h.mem(h.syms["rt_irq0_running"], 1) == b"\1"
+        if listed:
+            ds(0xE000)
+            ok = ok and call("rt_ems_seg") and live()
+            h.e.write(frame0 + EMS_PAGE - 1 - 0x0400, b"\x5a")   # guest E000:0400
+        else:
+            ds(0x1000)
+            ok = ok and int67(0x4400, bx=1, dx=handle)[0] and int67(0x4400, bx=0, dx=handle)[0] and not live()
+        ds(0xE030)
+        ok = ok and call("rt_irq0_leave")
+        byte = h.mem(store + EMS_PAGE - 1 - 0x0400, 1)
+        if not ok or live() != before or (listed and byte != b"\x5a"):
+            problems.append(f"EMS over an interrupt's handler ({'listed' if listed else 'unlisted'} DS E030h): "
+                            f"frame page live {live()}, want {before}; store byte {byte.hex()} "
+                            f"(pc={h.r('pc'):x})")
+    return problems
 
 
 def frame_view(ram: bytes, pages: dict) -> bytes:
@@ -2135,7 +2216,8 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     chunks = rep_replay.read(trace, required=True)
     rep = rep_replay.Replay(chunks)
     script["rep"] = rep
-    h = Host(image.M.REF, sabotage, elf=elf or rep_replay.host_image(rep.labels),
+    elf = elf or rep_replay.host_image(rep.labels)
+    h = Host(image.M.REF, sabotage, elf=elf,
              retrace=port_runs(trace, (0x3DA,)), pit=port_runs(trace, (0x40,)),
              dsp={port: port_runs(trace, (port,)) for port in (0x22C, 0x22E)})
     h.calendar_date, h.file_clock = reference_clocks(trace)
@@ -2146,7 +2228,7 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     script["repeats"] = typematic(trace, script["keys"])
     script["idle"] = idle_stacks(trace)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
-    problems = rearm_problems() + overlay_problems(sabotage)
+    problems = rearm_problems() + overlay_problems(sabotage) + ems_irq_problems(elf, sabotage)
     stale = int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes())
     if stale and not stale_polls:
         problems.append("reference recorded with other poll points: rerun tools/reference.py --host")

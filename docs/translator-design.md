@@ -254,8 +254,14 @@ diffs directly); relocated words in instructions are emitted as
     one, but in a range that covers its whole module (TM.DRV, SUPERTM.DRV: their near
     transfers stay in their own CS);
   - elsewhere DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
-    service's return and an interrupt's (`rt_ems_segments`) copy in the pages their
-    windows meet, and a map copies in at once a page DS or SS addresses;
+    service's return (`rt_ems_segments`) copy in the pages their windows meet, and a
+    map copies in at once a page DS or SS addresses;
+  - an interrupt's handler, which production runs at any instruction (also between a
+    guard and its access), leaves the frame pages as it found them when the mapping is
+    the same (`rt_ems_irq_enter`/`rt_ems_irq_leave`: a page it left live is written back
+    and hidden, one it hid copied in again); a changed mapping is the guest's, DS and SS
+    then get their pages (`rt_ems_irq_remaps`, 0 at m4 and m5, MEASURED);
+    `host_run.ems_irq_problems` checks it on the run's image (plant `ems-irq`);
   - the runtime's accessors copy in (`runtime.h` `rt_frame`: DOS reads into the frame).
   Captures show a page not yet copied in from its store page (`host_run.frame_view`).
   To m1b (MEASURED, same tool, copies by cause): lazy pages alone copied 20.7 MB (ES

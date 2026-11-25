@@ -618,6 +618,7 @@ uint8_t rt_irq_saved[RT_STATE_BYTES + sizeof(struct rt_regs)];
 
 void rt_irq0_enter(void)
 {
+    rt_ems_irq_enter();
     deliver(8, RT_IRQ_SS, RT_IRQ_SP);
     G_IRQ = 0;
     rt_irq0_running = 1;
@@ -666,6 +667,7 @@ int rt_irq7_ready(void)
 void rt_irq7_enter(void)
 {
     rt_sb_playing = 0;
+    rt_ems_irq_enter();
     deliver(0x0f, RT_IRQ_SS, RT_IRQ_SP);
     G_IRQ = 0;
     rt_irq0_running = 1;
@@ -675,7 +677,7 @@ void rt_irq7_enter(void)
 /* After the restore: re-arm from what is posted (runtime.h). */
 void rt_irq0_leave(void)
 {
-    rt_ems_segments();      /* the interrupted DS and SS are back; maps may have run */
+    rt_ems_irq_leave();     /* the interrupted DS and SS are back: their frame pages as they were */
     rt_irq0_running = 0;
     *(volatile uint8_t *)&G_IRQ = G_IF && rt_irq_pending;
 }

@@ -271,6 +271,50 @@ void rt_ems_segments(void)
     }
 }
 
+/* An interrupt's handler (IRQ0, IRQ 7), which production runs at any
+ * instruction (irq-plan I6), may copy pages in (its DS loads, rt_ems_seg) and
+ * map (WC2's INT 08h handler calls the EMS resolver). Between a guard and its
+ * access (rt_ems_es, rt_ems_ds: the base on the store page, across a REP
+ * string) the interrupted code needs the frame pages as they were, so with the
+ * mapping as it was they are put back: a page the handler left live is written
+ * back to the store and hidden, one it hid is copied in again. A mapping the
+ * handler changed is the guest's, as on the PC: DS and SS then get their pages
+ * (rt_ems_segments), counted in rt_ems_irq_remaps. */
+static uint16_t irq_mapped[EMS_PHYS];
+static uint8_t irq_live[EMS_PHYS];
+uint32_t rt_ems_irq_remaps;
+
+void rt_ems_irq_enter(void)
+{
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        irq_mapped[k] = mapped[k];
+        irq_live[k] = live[k];
+    }
+}
+
+/* Separate and not inlined: host_run.py's sabotage "ems-irq" returns at once. */
+void __attribute__((noinline)) rt_ems_irq_leave(void)
+{
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        if (mapped[k] != irq_mapped[k]) {
+            ++rt_ems_irq_remaps;
+            rt_ems_segments();
+            return;
+        }
+    }
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        if (live[k] && !irq_live[k]) {
+            copy(store(mapped[k]), frame_page(k));
+            live[k] = 0;
+        }
+    }
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        if (irq_live[k]) {
+            expose(k);
+        }
+    }
+}
+
 /* Every frame page shows its mapped page (a capture). */
 void rt_ems_sync(void)
 {
