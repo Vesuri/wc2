@@ -17,11 +17,11 @@ better recommended) by translation? The verdict comes first, then its measured i
 - **Speed misses on the 68030 before P7** (MEASURED, P7.3, [speed-plan.md](speed-plan.md)
   §1). On the 50 MHz 68030 model the game visits its flight frame every 160 ms and draws
   every other visit: a picture every 280 ms in quiet flight and 300 ms in the Nav 1 fight,
-  where the original draws one every 66.7 ms (15 fps): 4.2× and 4.5× over. A visit is
+  against the bar's 100 ms (D16, the original's correct game speed): 2.8× and 3.0× over. A visit is
   154–167 ms of work, two thirds of it runtime, platform and c2p (EMS page copies 37–41
   ms, present 24 ms, c2p 18 ms), a third generated code. The 68030 minimum holds for
-  running the game, not for its original frame rate: P7 must cut a visit's cost by
-  2.3–2.5× and have every visit draw.
+  running the game, not for its original game speed: P7 must cut a visit's cost by
+  1.5–1.7× and have every visit draw.
 - **Unmeasured:** larger fights (capital ships, many fighters, the asteroid field), whose
   frames cost more than Nav 1's 10–13 objects; flight's own instruction mix on the target.
 

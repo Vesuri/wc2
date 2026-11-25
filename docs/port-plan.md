@@ -445,7 +445,7 @@ WC1 with the owner's improvements to it, enter at P7.3, P7.10 and P7.11 (the own
 **Where it stands** (MEASURED, P7.3, [speed-plan.md](speed-plan.md) §1 and §9). On the
 50 MHz 68030 model the game visits its flight frame label every 160 ms and draws every
 other visit: a picture every 280 ms in quiet flight, 300 ms in the Nav 1 fight, against the
-original's 66.7 ms (4 ticks of its 60 Hz limiter, 15 fps). A fight visit (167 ms): EMS page
+bar's 100 ms (D16: the original's correct game speed; its default limiter gives 66.7 ms). A fight visit (167 ms): EMS page
 copies and maps 41 ms (48 16 KB copies), generated code 49 ms (10.8 cycles an x86
 instruction; `TM.DRV` and `SUPERTM.DRV` 22), present 24 ms (half of it the palette, rebuilt
 every frame), the c2p about 18 ms, PIT and port I/O 17 ms, the field wait 8 ms. No retrace
@@ -480,7 +480,7 @@ steps 6 and 7, the guard cache and the cache over runs of frame pages, `b5dda4c`
 per-access costs (PIT counts at 0.44 ms each, port calls); the second INT 33h read's field
 wait; then generated code (a third) and native routines for the 3D maths module and the
 sprite drivers, where WC1 helps most. Every second visit drawing nothing doubles the
-picture time: cutting a visit's cost to 66.7 ms is the bar's first half (INFERRED: the
+picture time: cutting a visit's cost to 100 ms is the bar's first half (INFERRED: the
 game drops a late frame's drawing).
 
 Steps: each is one commit or a short series with its meter and frames figures, the biggest
@@ -513,8 +513,9 @@ fixture cannot resolve a step and the meter decides.
    resumes ([upstream.md](upstream.md) "P7.3").
 4. **The bar** (owner, from P7.3's numbers). Done 2026-11-25: B1 ([design.md](design.md) D16).
    The tiers proposed on the 50 MHz 68030 model:
-   - B1: 66.7 ms (15 fps) in quiet flight and the median Nav 1 fight frame (4.2–4.5× from
-     280–300 ms a drawn frame, MEASURED);
+   - B1: as proposed 66.7 ms (15 fps), set by the owner at 100 ms (10 fps, the correct game
+     speed) in quiet flight and the median Nav 1 fight frame (2.8–3.0× from 280–300 ms a
+     drawn frame, MEASURED);
    - B2: the same at the fight's p90 and in a heavier fight, and B1 on the 25 MHz 68040
      (about 3×);
    - B3, the CD32's: 40 ms of work a flight frame, its original rate on the same machine

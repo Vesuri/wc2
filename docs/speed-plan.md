@@ -18,14 +18,15 @@ WC2's own (P7.3, 2026-11-25, MEASURED unless marked); SWOTL's §1 history is at 
 `658fc60`. Method and instruments: [perf-method.md](perf-method.md); the numbers' files are
 `tools/perf_flight.py` runs on the image at `1367440` plus P7.3's tool fixes.
 
-- **Bar** ([design.md](design.md) D16, B1): a drawn frame every 66.7 ms in quiet flight and
-  at the median Nav 1 fight frame on the 50 MHz 68030 model. 66.7 ms is the original's
-  default frame duration: `WC2.EXE+10642` sets a minimum of `DS:00B6` ticks of its 60 Hz
+- **Bar** ([design.md](design.md) D16, B1): a drawn frame every 100 ms in quiet flight and
+  at the median Nav 1 fight frame on the 50 MHz 68030 model: the original's correct game
+  speed ("World rate" below). The limiter: `WC2.EXE+10642` sets a minimum of `DS:00B6` ticks of its 60 Hz
   timer at each frame start, which `+10636` waits out at the end; `DS:00B6` starts at 4
   and Alt+keypad +/− changes it from 1 to 19 ("%d/60th SEC FRAME DURATION." with
   `DS:00B6`+1, so the default reads 5/60; MEASURED by reading, 4 ticks a frame MEASURED). At
   12000 cycles every flight frame waits in it ([feasibility.md](feasibility.md)
-  "Combat frame cost"). Below the setting the game runs as fast as the machine allows.
+  "Combat frame cost"): the original's default, 66.7 ms. Below the setting the game runs
+  as fast as the machine allows.
 - **World rate:** the world moves one fixed step a frame, WC1's units, so game speed is the
   frame rate. At m4 (SET 200, KPS 199 on the reference's screen) the player's velocity is
   (2940, 0, 4200) a visit of `R_0813C`, magnitude 5126.75 in 1/256 km (the nav range is
@@ -430,9 +431,10 @@ items left.
 ## 9. Gap
 
 WC2's own (P7.3, 2026-11-25, MEASURED); SWOTL's §9 is at its `658fc60`. Against the
-original's 66.7 ms a drawn frame the model draws one every 280 ms (quiet) and 300 ms
-(fight): 4.2× and 4.5×. A visit costs 154–167 ms of work and every second one draws,
-so the gap to 66.7 ms a visit is 2.3–2.5× (§1).
+bar's 100 ms a drawn frame (D16) the model draws one every 280 ms (quiet) and 300 ms
+(fight): 2.8× and 3.0×. A visit costs 154–167 ms of work and every second one draws,
+so the gap to 100 ms a visit is 1.5–1.7× (§1). The PC's default 66.7 ms would be 4.2× and
+4.5×.
 
 The runtime, the platform and the c2p carry about two thirds of a visit (§1 table: EMS
 37–41 ms, present 24 ms, c2p 18 ms, I/O 11–17 ms, the field wait 8 ms); generated code
