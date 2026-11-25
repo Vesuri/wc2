@@ -48,7 +48,7 @@ RET, UNKNOWN, SMC = "ret", "unknown", "smc"
 TERMINAL = {"jmp", "jmpf", "ret", "retf", "iret", "hlt"}
 RUNTIME = ("rt_int", "rt_irq", "rt_fault", "rt_halt", "rt_trap", "rt_in8", "rt_in16", "rt_out8", "rt_out16",
            "rt_ret_mismatch", "rt_ret_far_mismatch", "rt_dispatch_near", "rt_dispatch_far", "rt_stop_unknown",
-           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg",
+           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg", "rt_ems_ds", "rt_ems_ds_leave",
            "rt_irq_hold")
 # G3 native replacements (annotations/hle.csv): runtime service rt_hle_<service>
 # at a range's first instruction; NE skips the range to the instruction after
@@ -388,6 +388,13 @@ class Program:
         self.align = {r["label"]: int(r["residue"]) for r in image.rows("align.csv")}
         self.outline = {r["label"] for r in image.rows("outline.csv")}
         self.seg_repeat = {r["label"] for r in image.rows("seg-repeat.csv")}
+        # EMS model: code whose DS accesses are guarded (annotations/ems-ds.csv;
+        # lower.py ems_guard, putseg; X-Wing 5f720a2)
+        self.ems_ds: dict[str, list[tuple[int, int]]] = {}
+        for r in image.rows("ems-ds.csv"):
+            if r["kind"] != "guard":
+                raise LowerError(f"ems-ds.csv: kind {r['kind']!r}")
+            self.ems_ds.setdefault(r["module"], []).append((int(r["first"], 16), int(r["last"], 16)))
         # calls on a deferred interrupt-level path (irq-stops.csv): the call stops
         self.irq_stops = {(r["module"], int(r["offset"], 16)) for r in image.rows("irq-stops.csv")}
         self.outline_sites: dict[str, tuple] = {}  # R27, outline_cold
@@ -1049,10 +1056,44 @@ class Program:
                 i.operands[0].width, "cs", None, None, u.ip_of(off) + i.size - w, True)))
         return i
 
+    def ems_guarded(self, mod: str, off: int) -> bool:
+        return any(lo <= off <= hi for lo, hi in self.ems_ds.get(mod, ()))
+
+    def ems_whole(self, mod: str) -> bool:
+        """A guard range covers every instruction of the module (a driver): its
+        near and indirect near transfers stay in its own CS, so inside."""
+        u = self.units[mod]
+        return any(lo <= min(u.insns) and max(u.insns) <= hi for lo, hi in self.ems_ds.get(mod, ()))
+
+    def ems_ctx(self, mod: str, off: int, i, cs: int) -> dict:
+        """ems-ds.csv: listed code guards its DS accesses and checks DS at every
+        transfer that may leave it (lower.py EMS_EXITS, ems_exit). A near RET in
+        listed code returns inside it, so no near call from outside enters it and
+        no direct near transfer leaves it; an indirect near transfer is refused
+        but in a range that covers its whole module. Jumps in are safe: the pages
+        of a DS at the frame are live outside, or guarded."""
+        u = self.units[mod]
+        guarded = self.ems_guarded(mod, off)
+        if i.operands and isinstance(i.operands[0], Rel):
+            inside = self.ems_guarded(mod, u.off_of(cs, i.operands[0].target))
+            if guarded and not inside or i.op == "call" and inside and not guarded:
+                raise LowerError(f"ems-ds.csv: {mod}+{off:05X} {i} "
+                                 f"{'leaves' if guarded else 'enters'} the guarded code")
+        if guarded and i.op in ("jmp", "call") and not isinstance(i.operands[0], Rel) \
+                and not self.ems_whole(mod):
+            raise LowerError(f"ems-ds.csv: {mod}+{off:05X} indirect {i} in guarded code")
+        far_inside = False
+        if guarded and i.op in ("callf", "jmpf") and isinstance(i.operands[0], Far) \
+                and i.operands[0].seg == cs:
+            far_inside = self.ems_guarded(mod, u.off_of(cs, i.operands[0].off))
+        exit_after = guarded and any(hi == off for lo, hi in self.ems_ds[mod])
+        return dict(ems_ds=guarded, ems_far_inside=far_inside, ems_exit_after=exit_after)
+
     def ctx(self, mod: str, off: int, stats: Counter, insn=None) -> Ctx:
         u = self.units[mod]
         i = insn or u.insns[off]
         cs = u.cs[off] if off in u.cs else u.segment(off)
+        ems = self.ems_ctx(mod, off, i, cs)
 
         def near(ip):
             t = u.off_of(cs, ip)
@@ -1117,7 +1158,7 @@ class Program:
                                             for lo, hi in smc_t)),
                    code_regions=() if slot else self.code_regions(cs), seg_limit=self.smc_limit,
                    seg_repeat=label(mod, off) in self.seg_repeat,
-                   program=True, vram=mod in VRAM_MODULES, ems=True,
+                   program=True, vram=mod in VRAM_MODULES, ems=True, **ems,
                    far_return=i.op == "call" and (mod, off) in self.far_calls,
                    jump_return=(mod, off) in self.jump_returns,
                    push_call=(mod, off) in self.push_calls,

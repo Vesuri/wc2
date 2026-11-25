@@ -240,7 +240,20 @@ diffs directly); relocated words in instructions are emitted as
     while ES is below D001h; the access follows its guard's return label, which no
     register formation crosses (`reuse.py`). X kept, the CCR saved where flags
     enter in it;
-  - DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
+  - a string instruction passes the lowest of its operands through the segment and
+    the bytes to the last one's end (size times CX, plus the SI-DI distance; 0 with DF
+    set: the whole window), and lods/xlat with ES: are guarded; an access across frame
+    pages runs on the store when their pages lie as the frame pages do (the store is
+    reversed, as guest RAM: `ems.c store()`); from X-Wing `5f720a2`;
+  - listed code (`annotations/ems-ds.csv`, D17) guards its DS accesses the same way
+    (`rt_ems_ds`, a3), its DS loads copy nothing, and before every transfer that may
+    leave it (RETF, IRET, INT, INTO, a far CALL or JMP not into listed code) and after a
+    range's last instruction a DS still at D001h or above has its pages copied in
+    (`rt_ems_ds_leave`, counted in `rt_ems_ds_exits`). `emit.py` refuses a near call
+    into a range, a direct near transfer out of one and an indirect near one inside
+    one, but in a range that covers its whole module (TM.DRV, SUPERTM.DRV: their near
+    transfers stay in their own CS);
+  - elsewhere DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
     service's return and an interrupt's (`rt_ems_segments`) copy in the pages their
     windows meet, and a map copies in at once a page DS or SS addresses;
   - the runtime's accessors copy in (`runtime.h` `rt_frame`: DOS reads into the frame).

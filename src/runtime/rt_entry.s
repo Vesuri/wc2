@@ -46,6 +46,8 @@ G_DS	equ	1
 	xdef	rt_vram_mark
 	xdef	rt_ems_es
 	xdef	rt_ems_seg
+	xdef	rt_ems_ds
+	xdef	rt_ems_ds_leave
 	xdef	rt_vdrv_return
 
 	xref	rt_r
@@ -75,6 +77,8 @@ G_DS	equ	1
 	xref	rt_vram_rows
 	xref	rt_ems_es_c
 	xref	rt_ems_segments
+	xref	rt_ems_ds_c
+	xref	rt_ems_ds_left
 	xref	rt_vram_top
 	xref	rt_vram_bottom
 	xref	rt_vdrv_depth
@@ -665,6 +669,38 @@ rt_ems_es:
 	lea	-$7fff(a6),a1
 	suba.l	d7,a1
 	adda.l	d6,a1
+	rts
+; The same for a DS access in listed code (annotations/ems-ds.csv): a3.
+rt_ems_ds:
+	movem.l	d0-d1/a0-a1,-(a7)
+	addq.b	#1,rt_irq_mask
+	move.l	d6,-(a7)
+	move.l	d7,-(a7)
+	jsr	rt_ems_ds_c
+	addq.l	#8,a7
+	subq.b	#1,rt_irq_mask
+	move.l	d0,d6
+	movem.l	(a7)+,d0-d1/a0-a1
+	moveq	#0,d7
+	move.w	G_DS(a6),d7
+	lsl.l	#4,d7
+	lea	-$7fff(a6),a3
+	suba.l	d7,a3
+	adda.l	d6,a3
+	rts
+; Listed code left with DS at D001h or above (lower.py ems_exit): its frame
+; pages copied in, a3 the plain DS base. Every other register kept.
+rt_ems_ds_leave:
+	movem.l	d0-d1/d7/a0-a1,-(a7)
+	addq.b	#1,rt_irq_mask
+	jsr	rt_ems_ds_left
+	subq.b	#1,rt_irq_mask
+	moveq	#0,d7
+	move.w	G_DS(a6),d7
+	lsl.l	#4,d7
+	lea	-$7fff(a6),a3
+	suba.l	d7,a3
+	movem.l	(a7)+,d0-d1/d7/a0-a1
 	rts
 rt_ems_seg:
 	movem.l	d0-d1/a0-a1,-(a7)

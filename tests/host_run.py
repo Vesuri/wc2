@@ -2110,7 +2110,8 @@ def host_ems_pages(h) -> dict:
     their mapped store pages show them, guest order."""
     mapped = struct.unpack(">4H", h.mem(h.syms["rt_ems_mapped"], 8))
     live = h.mem(h.syms["rt_ems_live"], 4)
-    return {k: h.mem(STATE + 16 + (mapped[k] - 1) * EMS_PAGE, EMS_PAGE)[::-1]
+    # ems.c store(): slot s at RT_EMS_STORE_PAGES (64) - s pages after the state block
+    return {k: h.mem(STATE + 16 + (64 - mapped[k]) * EMS_PAGE, EMS_PAGE)[::-1]
             for k in range(4) if mapped[k] and not live[k]}
 
 

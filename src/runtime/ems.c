@@ -6,14 +6,15 @@
 #define EMS_HANDLES 16
 #define EMS_PHYS 4
 
-/* Store pages live after the state block (RT_EMS_PAGES): they are the truth.
- * A frame page holds its mapped page's bytes only while it is live (EMS model,
- * docs/translator-design.md): a map writes a live page back and leaves the new
- * one in the store. An ES access to a page in the store goes there directly
- * (rt_ems_es_c); other accesses copy it in first, which the
- * runtime's own accessors (rt_ems_touch, runtime.h) and the translator's guard
- * before every ES access (rt_ems_es) report, or at once while DS or SS
- * addresses it (their accesses are not guarded: rt_ems_segments). A page mapped
+/* Store pages live after the state block (RT_EMS_PAGES), reversed (store()):
+ * they are the truth. A frame page holds its mapped page's bytes only while it
+ * is live (EMS model, docs/translator-design.md): a map writes a live page back
+ * and leaves the new one in the store. An ES access, and a DS access in listed
+ * code (annotations/ems-ds.csv), to pages in the store goes there directly
+ * (guard(): the translator's guards rt_ems_es and rt_ems_ds); other accesses
+ * copy them in first, which the runtime's own accessors (rt_ems_touch,
+ * runtime.h) report, or at once while DS outside listed code, or SS, addresses
+ * them (their accesses are not guarded: rt_ems_segments, rt_ems_ds_left). A page mapped
  * at two frame pages is two copies (writes through one are not seen through
  * the other): the game's only map site slides a 4-page window, which aliases
  * one page only until the next call. Handles take store pages as DOSBox-X's
@@ -35,9 +36,13 @@ uint8_t rt_ems_live[EMS_PHYS];        /* the frame page holds the mapped page's 
 static uint16_t saved_map[EMS_HANDLES][EMS_PHYS];
 static uint8_t saved[EMS_HANDLES];
 
+/* Store slot s at RT_EMS_STORE_PAGES - s pages after the state block: reversed,
+ * as guest memory is, so consecutive store pages mapped at consecutive frame
+ * pages lie as those frame pages do and share one displacement (guard(); X-Wing
+ * 5f720a2). */
 static uint8_t *store(uint16_t slot)
 {
-    return rt_guest + 1 + RT_STATE_BYTES + (uint32_t)(slot - 1) * RT_EMS_PAGE;
+    return rt_guest + 1 + RT_STATE_BYTES + (uint32_t)(RT_EMS_STORE_PAGES - slot) * RT_EMS_PAGE;
 }
 
 /* DOSBox-X BestMatch(1): the first free run of one page, else the first of
@@ -71,7 +76,9 @@ static uint8_t *frame_page(uint8_t phys)
 }
 
 /* One page. Frame pages and the store share their address mod 4 (both are
- * rt_guest + 1 mod 4), so after the head bytes both run long-aligned. */
+ * rt_guest + 1 mod 4), so after the head bytes both run long-aligned. Writing
+ * only the longs that differ was slower on the 68030 model (P7.6, MEASURED:
+ * docs/speed-plan.md §1): it reads twice as much past the 256-byte cache. */
 static void copy(uint8_t *d, const uint8_t *s)
 {
     uint32_t n = RT_EMS_PAGE;
@@ -189,27 +196,35 @@ void rt_ems_touch(uint32_t a, uint32_t n)
     }
 }
 
-/* Translator guard (lower.py ems_guard): ES >= D001h before an access of `bytes`
- * at ES:offset; bytes 0: a string instruction, the whole ES window. Returns the
- * displacement the access adds to the ES base (rt_entry.s rt_ems_es): an access
- * that lies within one frame page whose mapped page is in the store only (not
- * live, no live alias) goes to the store page itself, without a copy; anything
- * else has its frame pages copied in and runs on the frame (0). */
-int32_t rt_ems_es_c(uint32_t offset, uint32_t bytes)
+/* Translator guard (lower.py ems_guard): the segment >= D001h before an access
+ * of `bytes` at segment:offset; bytes 0: the whole window (a string with DF
+ * set). Returns the displacement the access adds to the segment's base
+ * (rt_entry.s rt_ems_es, rt_ems_ds): an access within frame pages whose mapped
+ * pages are in the store only (not live, no live alias) and lie as their frame
+ * pages do (one displacement: consecutive slots, store()) goes to the store
+ * itself, without a copy; anything else has its frame pages copied in and runs
+ * on the frame (0). From X-Wing 5f720a2, on this model's aliases. */
+static int32_t guard(uint16_t seg, uint32_t offset, uint32_t bytes)
 {
-    uint32_t base = lin(G_ES, 0), first = lin(EMS_FRAME, 0);
+    uint32_t base = lin(seg, 0), first = lin(EMS_FRAME, 0);
     offset &= 0xffff;
     if (bytes && offset + bytes <= 0x10000) {
         uint32_t a = base + offset, z = a + bytes - 1;
-        if (a >= first && z < first + EMS_PHYS * RT_EMS_PAGE &&
-            (a - first) / RT_EMS_PAGE == (z - first) / RT_EMS_PAGE) {
-            uint8_t k = (uint8_t)((a - first) / RT_EMS_PAGE);
-            int alias = 0;
-            for (int j = 0; j < EMS_PHYS; ++j) {
-                alias |= j != k && mapped[j] == mapped[k] && live[j];
+        if (a >= first && z < first + EMS_PHYS * RT_EMS_PAGE) {
+            uint8_t k = (uint8_t)((a - first) / RT_EMS_PAGE), last = (uint8_t)((z - first) / RT_EMS_PAGE);
+            int32_t d = 0;
+            int same = 1;
+            for (uint8_t p = k; same && p <= last; ++p) {
+                int alias = 0;
+                for (int j = 0; j < EMS_PHYS; ++j) {
+                    alias |= j != p && mapped[j] == mapped[p] && live[j];
+                }
+                int32_t dp = mapped[p] ? (int32_t)(store(mapped[p]) - frame_page(p)) : 0;
+                same = mapped[p] && !live[p] && !alias && (p == k || dp == d);
+                d = dp;
             }
-            if (mapped[k] && !live[k] && !alias) {
-                return (int32_t)(store(mapped[k]) - frame_page(k));
+            if (same) {
+                return d;
             }
         }
     }
@@ -222,6 +237,27 @@ int32_t rt_ems_es_c(uint32_t offset, uint32_t bytes)
         rt_ems_touch(base + offset, bytes);
     }
     return 0;
+}
+
+int32_t rt_ems_es_c(uint32_t offset, uint32_t bytes)
+{
+    return guard(G_ES, offset, bytes);
+}
+
+/* DS in listed code (annotations/ems-ds.csv), whose DS loads copy nothing in */
+int32_t rt_ems_ds_c(uint32_t offset, uint32_t bytes)
+{
+    return guard(G_DS, offset, bytes);
+}
+
+/* Listed code left with DS at D001h or above (lower.py ems_exit): the pages
+ * its window meets are copied in, as at an unlisted load (a counted fallback). */
+uint32_t rt_ems_ds_exits;
+
+void rt_ems_ds_left(void)
+{
+    ++rt_ems_ds_exits;
+    rt_ems_segments();
 }
 
 /* DS or SS may address the frame (a load of D001h or above, a service, an

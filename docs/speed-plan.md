@@ -70,6 +70,12 @@ costs unless inclusive is said):
 Not in flight: the 3DAh retrace spin (no `plat_vga_status` in either profile; it was 28.4%
 of the intro, P5.4) and the frame limiter (`WC2.EXE+10636`, 0.38%: it passes at once).
 
+P7.6 steps (open-work 33; MEASURED, the image of each commit):
+
+| Step | Change | Fight fixture (visit, drawn medians) | Meter |
+|---|---|---|---|
+| E1 | the EMS frame through DS guarded in listed code (D17, `annotations/ems-ds.csv`, X-Wing `5f720a2`): page copies 2,683 → 32 in 50 m5f frames (host probe), `copy` 21.2% → 5.1% | 160 → 140 ms, 300 → 280 ms (one image, two runs: means 294.5, 304.1) | m5f −1.69% (445.77 M → 438.25 M: runtime −20.03 M, generated +12.52 M), m4 −5.81% (424.52 M → 399.86 M: runtime −32.10 M, generated +7.43 M); both lockstep, 0 problems |
+
 ## 2. Hard rules
 
 Breaking any of these voids the step, whatever it measures.
@@ -483,6 +489,10 @@ form is more than 2% of a visit.
 
 (One line each: step, change, measured Δ, reason. Round 1 is in git
 history at `781975e` and §5.)
+
+- WC2 P7.6 "EMS `copy` writes only the longs that differ": `copy` 21.25% → 31.59% of the
+  fight profile, visit 160 → 200 ms, drawn 300 → 340 ms; m5f meter +8.69% (runtime
+  +38.7 M). Reading both pages costs more than the writes it saves; reverted.
 
 - S1 shape "compare each present against a shadow copy to find changed
   rows": rejected by the user before building; every present would read

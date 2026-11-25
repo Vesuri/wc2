@@ -12,11 +12,12 @@ Items are in work order; numbers are identifiers and are not reused.
    R:077E) and `SUPERTM.DRV` first. Acceptance: `docs/wc1-cross-reference.md` with each hot routine's
    PC WC1 and CD32 counterparts and their evidence, and the CD32 routine's cost on the
    68030 model where the Wing Commander project measured it.
-33. Runtime access costs (P7.6), the largest first (speed-plan §1): the EMS model's page
-    copies (37–41 ms a visit, 48 16 KB copies from INT 67h maps and segment loads; X-Wing's
-    `b9ebd7b` cache over runs of frame pages and `b5dda4c` inline guard hit, after its
-    `4c50051`), the PIT counts (0.44 ms each), the port call path. Acceptance: the meter's
-    change for each; `ems_guard_problems` and its sabotages; lockstep at m4 and m5.
+33. Runtime access costs (P7.6), the largest first (speed-plan §1): the EMS guard's own cost
+    (`guard`, `rt_ems_ds` and `rt_ems_ds_c` 11.0% of the fight fixture inclusive, 15,326
+    DS guard calls in 14 visits; X-Wing's `4c50051` guard cache, `b5dda4c` inline hit and
+    `b9ebd7b` runs of frame pages), the 32 copies left at INT 67h maps, the PIT counts
+    (0.44 ms each), the port call path. Acceptance: the meter's change for each; the EMS
+    test, the differential's EMS plants and their sabotages; lockstep at m4 and m5.
 32. Waits and the present (P7.5): the field wait in `rt_video_frame` (7.7–8.1 ms a visit),
     the palette rebuilt at every present (11.6 ms: the DAC is written every frame), the
     present's copy and c2p; the 3DAh spin outside flight. Acceptance: frames ranges that do
