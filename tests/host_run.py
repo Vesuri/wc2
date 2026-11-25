@@ -73,6 +73,7 @@ TOP = BLOCK + GUEST_BYTES - 1   # rt_guest: guest linear L at TOP - L (reversed)
 STATE = TOP + 1           # state block (translator/lower.py STATE_EQU)
 G_IRQ = TOP + 9
 G_DS = TOP + 1            # lower.py STATE_EQU: G_DS(a6)
+G_ES = TOP + 5
 # Key names of the reference key script (tracer KeyByName): scan << 8 | ASCII
 # as the BIOS INT 09h handler stores them.
 KEYS = {"enter": 0x1C0D, "esc": 0x011B, "space": 0x3920, "tab": 0x0F09, "backspace": 0x0E08,
@@ -338,6 +339,7 @@ SABOTAGE = {
     "int16-zf": "the first INT 16h AH=01h that finds a key reports none (ZF set)",
     "idle": "rt_idle returns at once: DOS's console wait takes no interrupt",
     "idle-stack": "the console wait's SP two bytes lower at its first rt_idle (RT_IDLE_DEPTH)",
+    "ems-fast": "the EMS guard's table never refreshed (ems.c refresh returns at once)",
     "ems-irq": "an interrupt's handler leaves the EMS frame pages as it found them (ems.c rt_ems_irq_leave returns at once)",
     "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
              "spins with no service or interrupt (the run's watchdog, at 20 s)",
@@ -541,6 +543,8 @@ class Host:
             else:                           # move.l #$b0008000,d7 -> #$b0008002
                 k = code.index(bytes.fromhex("2e3cb0008000"))
                 e.write(a + k + 2, bytes.fromhex("b0008002"))
+        if sabotage == "ems-fast":
+            e.write(self.syms["refresh"], b"\x4e\x75")  # rts
         if sabotage == "ems-irq":
             e.write(self.syms["rt_ems_irq_leave"], b"\x4e\x75")  # rts
         if sabotage == "key-hook":
@@ -2123,6 +2127,63 @@ def host_ems_pages(h) -> dict:
             for k in range(4) if mapped[k] and not live[k]}
 
 
+def ems_guard_problems(elf: Path | None, sabotage: str | None = None) -> list[str]:
+    """The EMS guard's routing on the run's own image (rt_entry.s EMS_GUARD,
+    ems.c guard and refresh), where the m68k differential stubs it: frame
+    pages mapped by the real INT 67h, then rt_ems_es and rt_ems_ds with ES or
+    DS E030h. A range across two frame pages (DI 3C00h, 140h bytes: a REP row)
+    runs on the store when they map consecutive store pages (one displacement,
+    ems.c store), and otherwise takes the C path with its byte count, so both
+    pages are copied in and the base is plain; a range within one page runs on
+    its store page; with the pages live (DS E000h's load, rt_ems_seg) on the
+    frame. From X-Wing 5f720a2."""
+    problems = []
+    plain = TOP - 0x7FFF - 0xE0300
+    frame0 = TOP - (EMS_FRAME + EMS_PAGE) + 1
+    for name, slot in (("rt_ems_es", G_ES), ("rt_ems_ds", G_DS)):
+        for d7, d6, order, want_live, expose in (
+                (0x3C00, 0x140, (0, 1), (0, 0), False), (0x3C00, 0x140, (1, 0), (1, 1), False),
+                (0x0100, 0x140, (1, 0), (0, 0), False), (0x0100, 0x140, (1, 0), (1, 1), True)):
+            h = Host(image.M.REF, sabotage, elf=elf)
+            ret = h.syms["plat_exit"]  # stop address, never executed
+            h.e.write(h.syms["rt_guest"], TOP.to_bytes(4, "big"))
+            rr = h.syms["rt_r"]        # runtime.h struct rt_regs: ax, cx, dx, bx
+
+            def call(fn, d6=0, d7=0):
+                h.e.reg_write(U.M68K["sr"], 0x2700)  # first: it selects which a7
+                h.e.reg_write(U.M68K["a7"], STACK_TOP - 8)
+                h.e.write(STACK_TOP - 8, ret.to_bytes(4, "big"))
+                h.e.reg_write(U.M68K["a6"], TOP)
+                h.e.reg_write(U.M68K["d6"], d6)
+                h.e.reg_write(U.M68K["d7"], d7)
+                h.e.start(h.syms[fn], ret, timeout_us=1_000_000)
+                return h.r("pc") == ret
+
+            def int67(ax, bx=0, dx=0):
+                h.e.write(rr, ax.to_bytes(2, "big") + bytes(2) + dx.to_bytes(2, "big") + bx.to_bytes(2, "big"))
+                ok = call("rt_int67")
+                return ok, int.from_bytes(h.mem(rr + 4, 2), "big")
+
+            ok, handle = int67(0x4300, bx=4)
+            for phys in (0, 1):
+                ok = ok and int67(0x4400 | phys, bx=order[phys], dx=handle)[0]
+            if expose:
+                h.e.write(G_DS, (0xE000).to_bytes(2, "big"))
+                ok = ok and call("rt_ems_seg")
+                h.e.write(G_DS, (0x1000).to_bytes(2, "big"))
+            h.e.write(slot, (0xE030).to_bytes(2, "big"))
+            ok = ok and call(name, d6, d7)
+            a = h.r({"rt_ems_es": "a1", "rt_ems_ds": "a3"}[name])
+            live = tuple(h.mem(h.syms["rt_ems_live"], 2))
+            store = EMS_STORE + (EMS_STORE_PAGES - int.from_bytes(h.mem(h.syms["rt_ems_mapped"], 2), "big")) * EMS_PAGE
+            want_a = plain if want_live[0] else plain + store - frame0
+            if not ok or live != want_live or a != want_a:
+                problems.append(f"EMS guard {name} d7={d7:04x} d6={d6:x} pages {order}"
+                                f"{' page 0 live' if expose else ''}: frame pages live {live}, "
+                                f"want {want_live}; base {a:x}, want {want_a:x} (pc={h.r('pc'):x})")
+    return problems
+
+
 def ems_irq_problems(elf: Path | None, sabotage: str | None = None) -> list[str]:
     """The EMS frame pages over an interrupt's handler (ems.c rt_ems_irq_enter,
     rt_ems_irq_leave), which production runs at any instruction, also between a
@@ -2228,7 +2289,7 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     script["repeats"] = typematic(trace, script["keys"])
     script["idle"] = idle_stacks(trace)
     summary = dict(kv.split("=", 1) for kv in (trace / "summary.txt").read_text().split())
-    problems = rearm_problems() + overlay_problems(sabotage) + ems_irq_problems(elf, sabotage)
+    problems = rearm_problems() + overlay_problems(sabotage) + ems_guard_problems(elf, sabotage) + ems_irq_problems(elf, sabotage)
     stale = int(summary.get("polls", "0"), 16) != fnv(POLLS.read_bytes())
     if stale and not stale_polls:
         problems.append("reference recorded with other poll points: rerun tools/reference.py --host")

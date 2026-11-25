@@ -30,6 +30,10 @@ static uint16_t pages[EMS_HANDLES];   /* 0: free; handle 0 is the operating syst
 static uint8_t page_of[EMS_HANDLES][RT_EMS_PAGES], used[RT_EMS_PAGES];
 uint16_t rt_ems_mapped[EMS_PHYS];     /* store page + 1, 0: none */
 uint8_t rt_ems_live[EMS_PHYS];        /* the frame page holds the mapped page's bytes */
+/* rt_entry.s EMS_GUARD's table (X-Wing 5f720a2), per frame page: the store
+ * displacement (mapped, not live, no live alias: guard()'s rule), 0 (live or
+ * unmapped: the frame), or 1 (a live alias: the C path copies it in). */
+int32_t rt_ems_fast[EMS_PHYS];
 #define mapped rt_ems_mapped
 #define live rt_ems_live
 /* AH=47h/48h: a handle's saved frame mappings (DOSBox-X EMM_SavePageMap) */
@@ -101,6 +105,20 @@ static void copy(uint8_t *d, const uint8_t *s)
     }
 }
 
+/* rt_ems_fast after every change of mapped or live. Separate and not inlined:
+ * host_run.py's sabotage "ems-fast" returns at once. */
+static void __attribute__((noinline)) refresh(void)
+{
+    for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        int alias = 0;
+        for (int j = 0; j < EMS_PHYS; ++j) {
+            alias |= j != k && mapped[j] == mapped[k] && live[j];
+        }
+        rt_ems_fast[k] = live[k] || !mapped[k] ? 0 : alias ? 1
+                         : (int32_t)(store(mapped[k]) - frame_page(k));
+    }
+}
+
 static uint8_t map_slot(uint8_t phys, uint16_t slot);
 
 static uint8_t map(uint8_t phys, uint16_t page, uint16_t handle)
@@ -130,6 +148,7 @@ static void expose(uint8_t phys)
     rt_wrote(lin(EMS_FRAME, 0) + phys * RT_EMS_PAGE, RT_EMS_PAGE);
     copy(frame_page(phys), store(mapped[phys]));
     live[phys] = 1;
+    refresh();
 }
 
 static int addresses(uint16_t seg, uint8_t phys)
@@ -165,6 +184,7 @@ static uint8_t map_slot(uint8_t phys, uint16_t slot)
     }
     live[phys] = 0;
     if (!slot) {
+        refresh();
         return 0;
     }
     for (int k = 0; k < EMS_PHYS; ++k) {
@@ -178,6 +198,7 @@ static uint8_t map_slot(uint8_t phys, uint16_t slot)
             expose((uint8_t)k);
         }
     }
+    refresh();
     return 0;
 }
 
@@ -308,6 +329,7 @@ void __attribute__((noinline)) rt_ems_irq_leave(void)
             live[k] = 0;
         }
     }
+    refresh();
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         if (irq_live[k]) {
             expose(k);

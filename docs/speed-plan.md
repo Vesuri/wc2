@@ -76,6 +76,7 @@ P7.6 steps (open-work 33; MEASURED, the image of each commit):
 |---|---|---|---|
 | E1 | the EMS frame through DS guarded in listed code (D17, `annotations/ems-ds.csv`, X-Wing `5f720a2`): page copies 2,683 → 32 in 50 m5f frames (host probe), `copy` 21.2% → 5.1% | 160 → 140 ms, 300 → 280 ms (one image, two runs: means 294.5, 304.1) | m5f −1.69% (445.77 M → 438.25 M: runtime −20.03 M, generated +12.52 M), m4 −5.81% (424.52 M → 399.86 M: runtime −32.10 M, generated +7.43 M); both lockstep, 0 problems |
 | E2 | an interrupt's handler leaves the frame pages as it found them (`ems.c` `rt_ems_irq_leave`): a correctness fix, as production runs IRQ0 between a guard and its access; host lockstep copies m4 25.36 → 8.65 MB, m5 55.03 → 38.16 MB (the irq monitor's count) | 140 ms, 280 ms (one run: means 150.8, 300.0) | not run: no speed claim |
+| E3 | the guard's table in asm (`rt_entry.s` `EMS_GUARD`, `ems.c` `rt_ems_fast`, X-Wing `5f720a2`): one frame page, or two with one displacement, decided without the C call | 140 ms, 260 ms (one run: means 149.5, 301.4; runtime and platform 49.7% → 44.8% of the profile) | with E2 against E1: m5f 438.25 M → 398.73 M (−9.02%), m4 399.86 M → 376.20 M (−5.92%); runtime only, generated unchanged; lockstep m5f, m4 and m5 0 problems |
 
 ## 2. Hard rules
 

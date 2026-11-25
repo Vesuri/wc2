@@ -239,7 +239,10 @@ diffs directly); relocated words in instructions are emitted as
     gets the plain base with the pages copied in. So a1 is the plain ES base only
     while ES is below D001h; the access follows its guard's return label, which no
     register formation crosses (`reuse.py`). X kept, the CCR saved where flags
-    enter in it;
+    enter in it. An access within one frame page, or two with one displacement,
+    decides in `rt_entry.s` `EMS_GUARD` from `rt_ems_fast` (`ems.c refresh`, after
+    every change of a mapping or a live page: the displacement, 0 for the frame, 1
+    for the C path), the rest in `ems.c guard` (X-Wing `5f720a2`);
   - a string instruction passes the lowest of its operands through the segment and
     the bytes to the last one's end (size times CX, plus the SI-DI distance; 0 with DF
     set: the whole window), and lods/xlat with ES: are guarded; an access across frame
@@ -277,7 +280,8 @@ diffs directly); relocated words in instructions are emitted as
   bytes, so an access that does not use the a1 it leaves fails. Plants "EMS guard
   misses ES D001h", "EMS access ignores the base rt_ems_es gives", "EMS DS/SS load
   check misses D001h"; dropping the displacement in `rt_entry.s` fails the m1b
-  lockstep. Whether the DS/SS copies matter is the first target profile's (P5.4).
+  lockstep. The stubbed guard itself is checked on the run's image before every
+  lockstep run (`host_run.ems_guard_problems`, plant `ems-fast`). Whether the DS/SS copies matter is the first target profile's (P5.4).
 - Memory (D15 = b): Fast RAM required (1.36 MB code at R34 + 1.06 MiB guest RAM);
   the A1200 model runs with 8 MiB Fast; development runs set `--cpu=68030`
   (`AMIGA_CPU`, ~3× the 68020: logo at 80 vs 252 frames); timing runs
