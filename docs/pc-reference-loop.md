@@ -103,7 +103,9 @@ put there, or lies in a read's trailing paragraph outside the module.
   (`tools/frame_time.py`, [feasibility.md](feasibility.md)). Each frame blits five
   cockpit windows through `WC2.EXE+7626` (window index) and `WC2.EXE+7400` (rectangle
   to the `TM.DRV` table); the first returns to `WC2.EXE+813C`, which runs once a frame
-  and only in flight (335 times in 335 frames).
+  and only in flight (335 times in 335 frames). The world moves one fixed step a frame:
+  20.03 km at 200 kps, true at 10 frames a second ([speed-plan.md](speed-plan.md) §1).
+  At the default 15 fps it runs 1.5× fast.
 - Mission 1 (MEASURED): the Caernarvon refuses landing ("Negative, do not land.") until
   Nav 1–3 are flown. A Sartha attack at Nav 1 kills a passive or firing Ferret; the nav
   is done only when flown within about 1600 km (Nav 2 from 2000 km stays open, and after

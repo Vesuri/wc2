@@ -442,14 +442,15 @@ ahead; each instrument starts from its commit. Code shared with PC WC1, and the 
 WC1 with the owner's improvements to it, enter at P7.3, P7.10 and P7.11 (the owner's plan,
 2026-10-28; part of this phase since 2026-11-23).
 
-**Where it stands** ([feasibility.md](feasibility.md)). On the 50 MHz 68030 model quiet
-flight costs about 148 ms a frame (6.7 fps), the Nav 1 fight 163 ms median and 185 ms p90
-(DERIVED from the intro's profile); the original asks for 66.7 ms, 4 ticks of its 60 Hz
-limiter (15 fps). The one target profile, the intro's (P5.4, MEASURED), is runtime and
-platform 50.7% (the 3DAh retrace spin 28.4%, port reads at 364 cycles each, PIT reads 5.5%,
-present 7.4%) and generated code 41.1% (21.5 cycles per x86 instruction in `TM.DRV`, 14.0 in
-`WC2.EXE`). There is no flight profile on the target yet. SWOTL's system steps are in: the
-slave's CACHE, guest RAM in Fast, changed-row c2p (P6b).
+**Where it stands** (MEASURED, P7.3, [speed-plan.md](speed-plan.md) §1 and §9). On the
+50 MHz 68030 model the game visits its flight frame label every 160 ms and draws every
+other visit: a picture every 280 ms in quiet flight, 300 ms in the Nav 1 fight, against the
+original's 66.7 ms (4 ticks of its 60 Hz limiter, 15 fps). A fight visit (167 ms): EMS page
+copies and maps 41 ms (48 16 KB copies), generated code 49 ms (10.8 cycles an x86
+instruction; `TM.DRV` and `SUPERTM.DRV` 22), present 24 ms (half of it the palette, rebuilt
+every frame), the c2p about 18 ms, PIT and port I/O 17 ms, the field wait 8 ms. No retrace
+spin and no limiter wait in flight. SWOTL's system steps are in: the slave's CACHE, guest RAM
+in Fast, changed-row c2p (P6b).
 
 **The inspiration: the CD32 WC1.** The same engine family in native 68k, measured in FS-UAE
 by the Wing Commander project (its `docs/internals.md`: "Native speed/range anchor",
@@ -462,18 +463,25 @@ by the Wing Commander project (its `docs/internals.md`: "Native speed/range anch
   field (20 ms) of work a picture (composition 3.8 ms, HUD 2.8, geometry 1.9, conversion
   2.2).
 
-WC2 keeps its own limiter (game logic), so here the CD32's figure is a cost a frame, not a
-frame rate: 40 ms is 3.7× below today's quiet flight, 20 ms 7.4×. Under 66.7 ms the gain
-shows as the original frame rate held in heavier scenes and on slower machines (68030 boards
-from 25 MHz, the 25 MHz 68040). A WC2 "Enhanced framerate" (world time decoupled from the
-frame, as in the Wing Commander slave) changes game logic: an owner decision, not this plan.
+WC2 keeps its own limiter (game logic): a minimum frame duration, 4/60 s by default and
+1–19 ticks with Alt+keypad +/− (speed-plan §1). Its world moves one fixed step a frame, so the
+frame rate is the game speed: 200 kps is true at 10 frames a second, and the default 15 fps
+is 1.5× fast (speed-plan §1 "World rate"). The CD32's figure is a cost a frame: 40 ms is 3.7×
+below today's quiet flight, 20 ms 7.4×. Under 66.7 ms the gain shows as the default rate held
+in heavier scenes and on slower machines (68030 boards from 25 MHz, the 25 MHz 68040), or as
+a higher rate when the player shortens the frame duration. A WC2 "Enhanced framerate" (world
+time decoupled from the frame, as in the Wing Commander slave) changes game logic: an owner
+decision, not this plan.
 
-**Where the time can come from** (INFERRED until P7.3), largest expected first: waits that
-are not work; the runtime's per-access costs; c2p (the CD32's largest cost, while only
-0.03–1.4% of its frame's bytes change a picture); generated code per x86 instruction; native
-routines for the hot guest code, where WC1 helps most. X-Wing expects about 1.4–1.6× from the
-first four kinds (360 → 230–260 ms, INFERRED there). B1 below needs 2.2–2.5×, so the native
-routines (P7.11) carry the rest, as in X-Wing (its step 12).
+**Where the time can come from** (MEASURED shares, P7.3; the savings are INFERRED until each
+step's meter and frames): the EMS model's page copies (a quarter of a visit; X-Wing's
+steps 6 and 7, the guard cache and the cache over runs of frame pages, `b5dda4c`,
+`b9ebd7b`); the present (the palette rebuilt every frame, the c2p); the runtime's
+per-access costs (PIT counts at 0.44 ms each, port calls); the second INT 33h read's field
+wait; then generated code (a third) and native routines for the 3D maths module and the
+sprite drivers, where WC1 helps most. Every second visit drawing nothing doubles the
+picture time: cutting a visit's cost to 66.7 ms is the bar's first half (INFERRED: the
+game drops a late frame's drawing).
 
 Steps: each is one commit or a short series with its meter and frames figures, the biggest
 priced win first once the instruments exist (X-Wing's order). Below about 5% the frames
@@ -494,29 +502,39 @@ fixture cannot resolve a step and the meter decides.
    window found a site to sync (`irq-sync.csv` `WC2.EXE+068B8`), for which every host
    reference was re-recorded once, and DOS's saved SS:SP after a file's write stamp
    ([upstream.md](upstream.md) "P7.2").
-3. **Baseline and hot list** (W1, W2). Per window on the 68030: classes, the top routines by
-   own and inclusive cycles, calls a frame, cycles per x86 instruction per module
-   (`profile_tree.py`, `lowering_cost.py`), the waits, rows marked and c2p time a frame
-   (`host_census.py --vram`), and the 68040's frame intervals. Each hot routine's PC WC1
-   counterpart and similarity (`make compare`); `SUPERTM.DRV`'s two entries are
-   byte-identical in PC WC1 (MEASURED, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)).
-   Output: speed-plan §1 and §9 re-derived for WC2; feasibility's flight estimates replaced
-   by measurements.
-4. **The bar** (owner, from P7.3's numbers). Proposed tiers on the 50 MHz 68030 model:
-   - B1: 66.7 ms (15 fps) in quiet flight and the median Nav 1 fight frame (2.2–2.5×);
+3. **Baseline and hot list** (W1, W2). Done 2026-11-25 ([speed-plan.md](speed-plan.md) §1
+   and §9, [feasibility.md](feasibility.md) "Combat frame cost"): both frames scenes
+   profiled on the 68030 model with their call trees and x86 forms, the waits, the rows
+   marked (`host_census.py --vram` on m5f, 50 frames: 178–192 of 200 rows written a frame, median 180; 31.6 KB a frame, 88% of it `SUPERTM.DRV+074BE`), each hot routine's PC WC1 counterpart
+   (`tools/wc1_counterparts.py` on `make compare`). The 68040's frame intervals are dropped
+   from this step (owner, 2026-11-25: profile the 68030 and fix what it shows; open-work 38
+   keeps the 68040 fixture's stall). Tool fixes on the way: `host_census.py` on the meter's
+   run and window (`cost_meter.windowed`), `lowering_cost.py`'s far-call returns and IRET
+   resumes ([upstream.md](upstream.md) "P7.3").
+4. **The bar** (owner, from P7.3's numbers). Done 2026-11-25: B1 ([design.md](design.md) D16).
+   The tiers proposed on the 50 MHz 68030 model:
+   - B1: 66.7 ms (15 fps) in quiet flight and the median Nav 1 fight frame (4.2–4.5× from
+     280–300 ms a drawn frame, MEASURED);
    - B2: the same at the fight's p90 and in a heavier fight, and B1 on the 25 MHz 68040
      (about 3×);
    - B3, the CD32's: 40 ms of work a flight frame, its original rate on the same machine
-     (3.7×).
+     (4× a visit's 154–167 ms, MEASURED).
 5. **Waits** (runtime).
-   - The 3DAh retrace spin. 3DAh follows the 50 Hz PAL beam, so a wait lasts up to 20 ms
-     where the VGA's 70 Hz retrace ends it within 14.3 ms. If flight spins, a 70 Hz retrace
-     from a CIA timer, as the PIT is modelled, keeps the game's wait at its PC length.
+   - The 3DAh retrace spin: not in flight (P7.3: no `plat_vga_status` in either profile);
+     the intro and menus spin (P5.4: 28.4% of the intro). 3DAh follows the 50 Hz PAL beam,
+     so a wait lasts up to 20 ms where the VGA's 70 Hz retrace ends it within 14.3 ms.
+   - The field wait in `rt_video_frame` (P7.3: 7.7–8.1 ms a visit, MEASURED): INT 33h is
+     called twice a visit (24 calls in 12), and an AX=3 read in the field of the previous
+     one waits for the next field (`rt_frame_cap`; that the second call is that read is
+     INFERRED).
    - The present's waits (the frames fixture's profile). If the present blocks, the Wing Commander slave's
      queued buffers (`release_buffer.s`: the renderer waits only to reuse a buffer not yet
      shown; 6–7 ms a picture there).
-   - The limiter passes at once when a frame is late (INFERRED; checked).
+   - The limiter passes at once when a frame is late (P7.3: `WC2.EXE+10636` 0.38% of the fight, MEASURED).
 6. **Runtime access costs.**
+   - The EMS model's page copies (P7.3: 37–41 ms a visit, 48 16 KB copies from INT 67h maps
+     and segment loads): X-Wing's cache over runs of frame pages (`b9ebd7b`) and inline guard
+     hit (`b5dda4c`) start here.
    - The EMS guard's one-entry cache with the IRQ0 hold (X-Wing `4c50051`: its meter −10%,
      360 → 320 ms a frame); WC2's generated code has 2,253 guard calls (`jsr rt_ems_es`).
    - The port read path (364 cycles a read): constant-port sites to direct calls.

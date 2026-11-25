@@ -14,13 +14,14 @@ better recommended) by translation? The verdict comes first, then its measured i
   and the WHDLoad slave runs in 5.44 MiB of Fast and 1.31 MiB of Chip with 0.5 MB of Fast
   and 0.42 MB of Chip to spare with the effects and speech, in attract mode and in flight
   ("Memory" below).
-- **Speed misses on the 68030 before P7.** On the 50 MHz 68030 the frame the original
-  draws in 4 timer ticks (15 fps) takes about 9 ticks in quiet flight and 10–12 in the
-  Nav 1 fight: 2.2× over in flight, 2.4× (median) to 2.8× (p90) in that fight. A 40 MHz
-  68040 meets quiet flight and the median fight frame. The 68030 minimum therefore holds
-  for running the game, not for its original frame rate: P7 must cut the translated cost
-  by about 2.5–3× to reach 15 fps there (DERIVED below; P7's targets come from the P5.4
-  profile).
+- **Speed misses on the 68030 before P7** (MEASURED, P7.3, [speed-plan.md](speed-plan.md)
+  §1). On the 50 MHz 68030 model the game visits its flight frame every 160 ms and draws
+  every other visit: a picture every 280 ms in quiet flight and 300 ms in the Nav 1 fight,
+  where the original draws one every 66.7 ms (15 fps): 4.2× and 4.5× over. A visit is
+  154–167 ms of work, two thirds of it runtime, platform and c2p (EMS page copies 37–41
+  ms, present 24 ms, c2p 18 ms), a third generated code. The 68030 minimum holds for
+  running the game, not for its original frame rate: P7 must cut a visit's cost by
+  2.3–2.5× and have every visit draw.
 - **Unmeasured:** larger fights (capital ships, many fighters, the asteroid field), whose
   frames cost more than Nav 1's 10–13 objects; flight's own instruction mix on the target.
 
@@ -36,16 +37,8 @@ the Caernarvon, no enemies):
 | Limiter wait | median 43.4 ms (p10 42.1, p90 44.5) |
 | Work per frame | 23.3 ms, about 280,000 cycles |
 
-Estimate (DERIVED; SWOTL's ratio, its fixtures and WC2's not matched):
-
-- SWOTL's translated 68020 frames run 4–8× its 12000-cycle reference (port-plan P1.5), so
-  this scene's work would take 93–187 ms on the 68020 model: 6–12 timer ticks a frame
-  instead of 4, about 5–10 frames per second.
-- The 68030 model runs about 3× the 68020: 31–62 ms, inside the 66.7 ms the game asks
-  for: this scene is consistent with D1's 68030 minimum.
-- Unknown: combat scenes (more ships, lasers, explosions) and the asteroid field cost
-  more. The same measurement on a combat fixture, and the translated code's own cost
-  (P5.4, P7), decide it.
+The target's cost of this flight is measured in "Combat frame cost" below (P7.3); the
+estimate from SWOTL's ratio that stood here (31–62 ms on the 68030) was 4–5× low.
 
 ## Translated cost on the target (port-plan P5.4)
 
@@ -72,24 +65,9 @@ Target (MEASURED): the real image (`make amiga`) on FS-UAE's A1200 with a cycle-
 | Present and c2p | 7.4% (`present`, inclusive) and 6.1% (outside the first hunk) |
 | Generated code per x86 instruction | TM.DRV 4.7 68k instructions, 21.5 cycles; WC2.EXE 3.0, 14.0; STRAX.DRV 2.3, 11.6 |
 
-Estimate (DERIVED; the instruction mix of flight is not measured, INFERRED to be alike):
-
-- Outside the retrace wait the target spends 177 ms per presented frame; the reference's
-  frame is 175 k x86 instructions outside its own wait (12.97 M less 3 instructions per
-  3DAh poll, 68 frames): about 50 cycles per x86 instruction all in. This scene runs at
-  one eighth of the reference's frame rate.
-- Flight (above: 280 k DOSBox cycles of work a frame, about 148 k x86 instructions at this
-  scene's ratio): about 7.4 M cycles, 148 ms on the 50 MHz 68030: 9 timer ticks a frame
-  (6.7 fps) instead of 4 (15 fps), 2.2× over the frame the game asks for.
-- 68040: FS-UAE's 040 timing is an instruction count and its profiler records nothing on
-  that path, so it is priced from counts: 9.9 68k instructions per x86 instruction all in
-  outside the wait (13.8 M over 1.40 M). At 1.3–1.5 cycles per instruction (INFERRED,
-  cached integer code) a 25 MHz 68040 runs flight in 78–87 ms (11–13 fps), a 40 MHz one in
-  49–55 ms, inside the 66.7 ms frame.
-- Against D1 (68030 minimum, 68040 recommended): before P7 the translated build misses
-  flight's frame rate by about 2× on the 50 MHz 68030 and by 1.2–1.3× on a 25 MHz 68040.
-  P7's targets, by this profile: the drawing driver's cost per x86 instruction, the port
-  read path (364 cycles a read), PIT reads, and present.
+The P5.4 estimates of flight (148 ms a frame on the 68030, 78–87 ms on a 25 MHz 68040)
+are replaced by P7.3's measurements of flight ("Combat frame cost" below, speed-plan §1):
+the intro's mix did not carry over (no retrace spin in flight; EMS copies instead).
 
 ## FM music (port-plan P1.5, D6)
 
@@ -125,17 +103,17 @@ an object. An earlier run on the same route without the probe on objects (1,445 
 the fighters on radar, never in view) gave work median 22.8, p90 27.8, max 78.5 ms (one
 frame over budget).
 
-Estimate (DERIVED, the P5.4 ratio: 148 ms on the target for flight's 23.3 ms, 6.35×;
-SUPERTM.DRV's own cost per instruction not measured, INFERRED alike):
+On the target (MEASURED, P7.3: `tools/perf_flight.py`, the 50 MHz 68030 model, the
+image at `1367440`; three runs a scene, speed-plan §1):
 
-| | Quiet flight | Fight, median | Fight, p90 |
-|---|---|---|---|
-| 12000-cycle reference | 23.3 ms | 25.6 ms | 29.2 ms |
-| 50 MHz 68030 | 148 ms (9 ticks, 6.7 fps) | 163 ms (10 ticks, 6 fps) | 185 ms (12 ticks, 5 fps) |
-| 25 MHz 68040 | 78–87 ms | 86–96 ms | 98–109 ms |
-| 40 MHz 68040 | 49–55 ms | 54–60 ms | 61–69 ms |
+| | Quiet flight | Nav 1 fight (11–13 objects) |
+|---|---|---|
+| 12000-cycle reference, work a frame | 23.3 ms | 25.6 ms (p90 29.2) |
+| 12000-cycle reference, a drawn frame | 66.7 ms | 66.6 ms |
+| 50 MHz 68030, a visit to the frame label | 160 ms median | 160 ms median |
+| 50 MHz 68030, a drawn frame | 280 ms median | 300 ms median |
 
-The 66.7 ms frame is met where the figure is below it.
+The 68040 models are not measured (open-work 38).
 
 ## Code size (MEASURED, `make amiga-release`, `tools/hunk_size.py`, `tools/code_size.py`, 2026-11-23)
 

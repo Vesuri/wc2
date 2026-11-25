@@ -1,8 +1,9 @@
 # Speed plan (phase 7)
 
 > Copied from Secret Weapons of Luftwaffe `658fc60` ([upstream.md](upstream.md)). Its rules
-> and methods apply here; its addresses, measurements, step history and decisions are
-> SWOTL's, kept for reference until a WC2 phase re-derives them.
+> and methods apply here; §1 and §9 are WC2's (P7.3); the other sections' addresses,
+> measurements, step history and decisions are SWOTL's, kept for reference until a WC2
+> phase re-derives them.
 
 Rules, measurement and work order for all speed work on the A1200 build.
 An implementing agent follows it literally, one step at a time. Step
@@ -13,238 +14,60 @@ Method background: [perf-method.md](perf-method.md). Open-work item: 14b.
 
 ## 1. Target and state
 
-- **Bar (user, 2026-10-07):** a 14 MHz 80286's frame rate on the 68020 +
-  8 MB Fast model (`AMIGA_CPU` unset): frames 4–11 median ≤ 12 fields
-  (240 ms); stretch ≤ 10. A guide, not an absolute target (user 2026-10-28): the ReadMe
-  recommends a 68030 or better.
-- **Status:** R16 alignment repair, R17 palette validity, R18 flag extraction kept; R20 cell
-  cache, R21 string layout, R22 call layout, R24 REP STOSW fill, R25 BP as data, R26 REPE CMPSW, R27 cold
-  branch sides, R28 carry in X, R29 far push, R30 repeated segment loads,
-  R31 push/pop runs, R32 conditional-over-jump fusion and R33 packed far returns
-  kept; R34 FM continuity accepted as a quality tradeoff. Item 14b's 240 ms target
-  remains unmet. R35 enables the authorized N1 transform pilot. R36 enables
-  B017’s authorized B393 projection long path; R37 enables the authorized
-  B4E2 perspective divide; R38 enables D5A6’s normalization loop.
-  R40 enables the guarded scenery clears with proved BP-region re-entry.
-  R42 enables the guarded sprite packet loop, R44 the guarded line pixel loops, R48
-  guarded edge ordering and merging (all with exact original polls until irq-plan I9).
-  F3a replaces `B017` with its divide `B4E2` whole (folding R36 and R37);
-  F3b replaces `B52D` with `B54B` whole; F5 `BFD1`'s scanline loop (folds R48); F9
-  SPAZ's OPL delay loops. [irq-plan](irq-plan.md) I8–I10 (user 2026-10-24): no poll
-  checks in production, rows poll-free (RC5), and the deferred rows re-opened (§7 I10).
-  Paused under U7, resumed under U9 (2026-10-23): [native-plan.md](native-plan.md#f-flyby-plan).
-- **Frames fixture** (Z1, `9afe0b8`, 2026-10-23): medians 340, 340 and
-  350 ms; run-median span 340–350 ms. Frames 4–11 intervals (fields):
-  `[21,19,15,17,17,23,17,16]`, `[24,15,25,17,17,17,19,16]`,
-  `[21,18,17,20,17,20,17,16]`; interval spans 15–23, 15–25 and 16–21.
-  Same-session parent `6855468`: medians 350, 360 and 340 ms (340–360 span),
-  intervals `[21,19,15,17,17,23,18,16]`, `[21,18,15,17,18,23,18,16]`,
-  `[20,19,16,17,17,24,17,16]`; spans 15–23, 15–23 and 16–24.
-  Three unchanged 68020/8 MB Fast runs per arm, each followed by 100-field
-  profiling; frozen executables and tool versions match R48 validation.
-  Ranges overlap: no frame-rate gain established. Target remains unmet;
-  340 ms needs 100 ms (29.4%) less to reach 240 ms. Evidence:
-  `tmp/native/N4-raster-remaining/z1-summary.json`; raw captures deleted.
-- **Frames checkpoint after F3/F4** (ZF3, `130bd18`, 2026-10-24, arm64):
-  medians 330, 300 and 300 ms; run range 300–330 ms. Intervals (fields)
-  `[20,17,14,18,16,18,15,15]`, `[19,18,14,15,14,23,15,15]`,
-  `[20,18,14,15,14,23,15,15]`. Same session: pre-F3 arm (`f0b93f8`) 360,
-  350, 360 ms (`[24,15,25,18,17,18,19,16]`, `[24,15,25,18,17,17,19,16]`,
-  `[23,16,25,18,17,18,19,16]`); F3 arm 350, 340, 330 ms
-  (`[20,18,15,20,16,19,17,15]`, `[20,17,15,21,15,19,17,15]`,
-  `[20,18,14,16,16,23,17,16]`). F3+F4 against pre-F3: ranges 300–330 and
-  350–360 do not overlap, a frame-rate gain (−60 ms median, −16.7%). F3
-  alone and F4 alone overlap their parents. 300 ms needs 60 ms (20%) less
-  to reach 240 ms. `tools/ab_runs.py frames`, three runs per arm,
-  interleaved. Evidence: `tmp/speed/zf3/`.
-- **Frames checkpoint after irq-plan** (ZI, irq-plan I11, 2026-10-27, arm64, production
-  images): head `c21d035` medians 300, 290, 300 ms (`[19,17,13,14,15,21,15,14]`,
-  `[19,17,14,13,14,22,14,15]`, `[19,16,13,16,14,17,14,13]`) against pre-irq-plan
-  `5d82dad` (F5, F9 kept) 330, 330, 320 ms (`[20,17,14,18,16,18,15,15]`,
-  `[20,18,13,19,15,18,15,15]`, `[24,15,17,16,20,14,16,14]`). Ranges 290–300 and 320–330
-  do not overlap: a frame-rate gain (−30 ms median, −9.1%). 300 ms needs 60 ms (20%)
-  less to reach 240 ms. `tools/ab_runs.py frames`, three interleaved runs per arm.
-  Evidence: `tmp/irq/I11/`.
-- **F1 measurements** (2026-10-23): EMS map copy. Meter m4 unchanged
-  (161,346,464; no maps in its window). Meter c12 (B-17 bombing, 715 frames,
-  10.3 maps/frame): 10,719,598,079 → 7,748,395,558 (−27.72%), runtime
-  4,469,615,307 → 1,498,412,785. Flyby target cost per map: base 242,524 and
-  242,459 cycles (12, 15 maps); F1 622 (36 maps, all identical remaps) and
-  12,138 (108 maps, copies and skips). Runtime +316 bytes, executable +392.
-  Evidence: `tmp/speed/f1/`.
-- **arm64 baseline** (2026-10-24, `f0b93f8`, `$FSUAE_ARM`): every FS-UAE
-  number before this entry is from the x86_64 build and does not compare
-  with later ones (§4). Bench frames 4–11: 68,366 lines median (68,345–68,374;
-  RAM hash `951adbe5…6c63` in all three). Frames fixture 370, 370, 380 ms
-  (an earlier same-build session 370, 360, 350). Flyby: 22 and 20 drawn
-  frames in 500 fields (455, 500 ms/frame); `3B9A` 4.19% inclusive.
-  Evidence: `tmp/speed/arm64-base/`.
-- **F2 measurements** (2026-10-23): REP MOVSW by longs (translator). The
-  flyby profile puts `3B9A`'s cost in its REP instructions (`repe cmpsw`
-  `03BE9`, `repne cmpsw` `03C0F`, `rep movsw` `03C2D`), not its glue
-  (≈0.3%), so a lowering replaces the native. Censuses (`--strops`) per
-  frame: `03C2D` m4 151 words (5.8/run), c12 177 (4.1/run), c13 110; the long
-  spans are the outside-view flyby's. Meter m4 161,346,464 → 161,335,708
-  (−0.0067%; `rep movsw` −11,809); generated code +1,446 bytes. Flyby pairs
-  (two runs per arm): `03C2D` cycles per `03C0F` cycle (same words) 0.866,
-  0.842 → 0.625, 0.583 (−29%); `03C2D` 0.88–1.17% → 0.77% of the clip.
-  Evidence: `tmp/speed/f2/`.
-- **F3a measurements** (2026-10-24, `$FSUAE_ARM`): `B017` whole with `B4E2`.
-  Price (m4 meter, F2 arm): `B017`+`B4E2` generated 4.31% of the meter
-  (9,539 calls: 441 16-bit path, 9,098 32-bit; flyby mostly 16-bit). Meter
-  161,335,708 → 158,939,203 (−1.4854%; generated −6,145,705, runtime
-  +3,749,200). Bench 68,395 (68,365–68,434) → 68,332 (68,280–68,359), RAM hash
-  `951adbe5…6c63` in all six runs. Flyby, exact cycles per `B017` call (both
-  arms' captures): inclusive 1,083 → 837 (−22.7%); `D5A6` inclusive 1,522 →
-  1,249. Runtime +938 bytes. Evidence: `tmp/speed/f3/`.
-- **F3b measurements** (2026-10-24, `$FSUAE_ARM`): `B52D` whole with `B54B`.
-  Price (m4 meter, F3a arm): wrapper and hook 1.84% of the meter (14,455 calls).
-  Meter 158,939,203 → 156,420,369 (−1.5848%; generated −2,262,443, runtime
-  −256,391). Bench, 8 interleaved runs per arm: medians 68,333 → 68,350
-  (+0.025%), spans 68,275–68,371 and 68,307–68,389, RAM hash `951adbe5…6c63`
-  in all 16; user 2026-10-24: "16 lines is noise. Accepted." Flyby, exact
-  cycles per `B52D` call: 820 → 629 (−23.3%).
-  Evidence: `tmp/speed/f3/`.
-- **F4 measurements** (2026-10-24, `$FSUAE_ARM`): FM loop cache and render
-  loop, same slots, pages and samples (`t-fm-cache`, `t-fm-render`). Flyby,
-  exact cycles per call: `fm_field` inclusive 31,380 → 23,719 (−24.4%; 10.75%
-  → 8.11% of the clip), `render` 23,194 → 13,546, `loop_for` 9,667 → 5,224.
-  Bench, 5 interleaved runs per arm: medians 68,307 → 68,445 (+0.20%), spans
-  68,290–68,354 and 68,397–68,482, RAM hash `951adbe5…6c63` in all. Frames
-  4–11 render no loops: there only FM code placement counts (`eg_advance`
-  unchanged, +4–9% per call) and frame 3 comes ~3 fields earlier; generated
-  code moves 0x434 bytes; with it padded back to the base mod 256 the bench is
-  still +0.12%. After frame 12 the guest executes +0.9% instructions per 100
-  fields. User 2026-10-24: bench accepted as noise. Evidence: `tmp/speed/f4/`.
-- **F9 measurements** (2026-10-24, `$FSUAE_ARM`, clean worktree arms at
-  `184414d`): SPAZ OPL delay loops `D03..D05` and `D0F..D15` as exact-poll
-  rows: every iteration, poll visit and stack-slot store kept (loop count
-  unchanged, no §2.9 shortening); the PUSH/POP reloads and SP updates go.
-  Meter m4 156,392,185 → 154,046,871 (−1.4996%; generated −5,117,342,
-  runtime +2,772,028; code +150 generated, +76 runtime bytes); 568,080 fewer
-  guest instructions. Bench, 5 interleaved runs per arm: medians 68,387 →
-  68,425 (+0.056%, D8 noise: meter −1.5%), spans 68,339–68,431 and
-  68,341–68,451, RAM hash `951adbe5…6c63` in all 10. Flyby: `0CEE`
-  inclusive 1,840 → 1,171 cycles/call (−36.4%; 2.83% → 1.82% of the clip),
-  callers `07CC` 2,762 → 2,160, `0A8B` 21,118 → 13,737. O(1) loops (§2.9
-  exception) follow irq-plan I9, at I10.
-  Evidence: `tmp/speed/f9/`, `tmp/native/F9/`.
-- **F5 measurements** (2026-10-24, `$FSUAE_ARM`, clean worktree arms at
-  `4d4272d`): `BFD1` scanline loop `C000..C42C` one exact-poll row, guest
-  calls as continuation exits; folds R48. Meter m4 156,420,369 → 156,394,228
-  (−0.0167%; generated −11,656,496, runtime +11,630,355; code +1,612
-  generated, +1,260 runtime bytes); 1,509,262 fewer guest instructions.
-  Bench, 5 interleaved runs per arm: medians 68,421 → 68,391 (−0.044%), spans
-  68,365–68,461 and 68,351–68,449, RAM hash `951adbe5…6c63` in all 10. Flyby
-  (23 frames each): `BFD1` inclusive 632,281 → 618,740 cycles/call (−2.1%);
-  without `CD99` 6.63% → 6.58% of the clip. The S2 estimate (−45–60% of
-  ~300K/call) missed: exact polls and byte histories leave the native close
-  to the generated code, and 6,264 m4 entries pay guards, hooks and the
-  generated segments between an exit and the next poll. Two fixes found
-  here: native dispatch onto a poll's execution alias (`*_native_np`)
-  double-counted host visits (lost IRQ at `C3A4` in the meter; entries now
-  start below the alias; probably R46's c13/c27 failure at `C32D`); hooks
-  with five or more resume ids dispatch through a PC-relative table (the
-  chain cost 375K m4 cycles). Evidence: `tmp/speed/f5/`, `tmp/native/F5/`.
-- **Flyby profile** (F0, frozen R48 build `8b46b6a5…`, 2026-10-23): attract
-  demo, fields 1144–1648 after drawn frame 12, five consecutive 100-field
-  captures; 142,101,991 cycles, 18 drawn frames (555 ms/frame). Drawn frames
-  per 100 fields 5, 5, 3 (distant fighters, terrain), 3, 2 (close B-17s).
-  Inclusive shares, clip (w0–w2 / w3–w4): EMS map `rt_int67` 10.30%
-  (0–0.9 / 25.6, 24.8; 61 maps, 240K cycles each, two byte-wise 16 KB copies),
-  FM `fm_field` 10.97%, `BFD1` 9.16%, `109D6` 9.20%, `FDE0` 6.92%, sprites
-  `4D7D` 4.57% (0.8–1.4 / 7.6, 12.0), present+C2P 5.22%, SPAZ timer driver
-  4.55%, `RTSVGA+3B9A` 4.11%, simulation `FLIGHT+012E6` 15.66%. The frames
-  fixture's 100-field window misses the EMS-bound section. Second run
-  (`4838add` rebuilt, start field 1126, 20 frames, 500 ms/frame) caught close
-  fighters and smoke instead: sprites `4D7D` 15.46%, EMS 1.83% (9 maps,
-  288K cycles each), `BFD1` 7.85%, `109D6` 7.64%, `FDE0` 5.89%, FM 10.89%,
-  `3B9A` 4.53%, present 3.88%. The window's content follows the start field:
-  rank on several runs. Plan:
-  [native-plan.md](native-plan.md#f-flyby-plan). Evidence: `tmp/flyby/`.
-- **Bench** (A3, `6bf8aef`, 2026-10-21): opening frames 4–11 sums 68,525,
-  68,536 and 68,493 lines; median 68,525, span 43 lines (0.063%). Corresponding
-  profiler cycles: 62,220,700; 62,230,688; 62,191,644 (908/line).
-  All three final guest RAM hashes match the established bench endpoint
-  (`951adbe5…39b6c63`). This spread exceeds the introduction's two-line observation
-  (§4); no build-to-build claim. Palette window 38,392–38,405 lines (R17).
-- **Meter** (R48, m4, A4 weights): generated + walk + runtime
-  161,344,429 model cycles, down 0.100064% from the parent’s 161,506,038; unchanged host
-  platform adds 2,035. Three identical runs per arm. Native callbacks bypass
-  body labels, so label-derived guest counts are not semantic work counts.
-- **N1 measurements** (2026-10-21): transform 1,182.182 → 634.432 target
-  cycles/call (−46.334%). Opening-bench medians 68,526 → 68,540 lines
-  (+0.0204%; user accepted), spans 68,495–68,553 → 68,502–68,540; all six
-  final RAM hashes match. Single frames captures: `[25,16,21,19,21,19,19,16]`
-  → `[21,19,16,17,18,26,17,17]`, medians 380 → 350 ms, spans 16–25 →
-  16–26 fields. These per-call captures do not establish a frame-rate gain;
-  Z1 reports the current three-run checkpoint above. Payload +446 bytes; full gates green.
-- **R36 measurements** (2026-10-22): B393 long path
-  809.612 → 596.125 target cycles/call (−26.3690%). Opening-bench medians
-  68,538 → 68,567 lines (+0.0423%), spans 68,527–68,558 → 68,551–68,621;
-  all six final RAM hashes match. User accepts the initial +0.0598% layout
-  difference as noise; no general no-slowdown exemption. Payload +432 bytes.
-  Single S7 profiles do not establish a frame-rate gain; Z1 is the latest
-  three-run frames checkpoint. Evidence: `tmp/native/N2-projection/`.
-- **R37 measurements** (2026-10-22): divide 251.151 → 153.673 target
-  cycles/call (−38.8126%). Bench medians 68,580 → 68,565 lines (−0.0219%),
-  spans 68,577–68,609 → 68,565–68,598; all six RAM hashes match.
-  Host payload +110 bytes; Amiga executable +152 bytes. Single frames
-  captures both have 350 ms medians; no frame-rate gain claimed.
-  Evidence: `tmp/native/N2-divide/`.
-- **R38 measurements** (2026-10-22): normalization loop plus poll
-  427.549 → 138.246 target cycles/call (−67.6654%). Bench medians
-  68,584 → 68,581 lines (−0.0044%), spans 68,537–68,584 → 68,557–68,590;
-  all six RAM hashes match. Host payload +102 bytes; Amiga executable +188.
-  Single frames captures have 340 → 350 ms medians; no frame-rate gain claimed.
-  Evidence: `tmp/native/N4-normalise/`.
-- **R40 measurements** (2026-10-23): scenery clear plus endpoint poll
-  606.930 → 405.636 target cycles/call (−33.1659%). Bench medians
-  68,385 → 68,406 lines (+0.030708%, user accepts this specific difference
-  as noise); spans 68,380–68,408 → 68,394–68,411, all six RAM hashes match.
-  Host payload +346 bytes; Amiga executable +656 bytes. Single frames captures:
-  `[24,16,26,16,17,17,18,16]` → `[25,15,20,17,20,16,17,16]`; both
-  medians 340 ms, spans 16–26 → 15–25 fields. No frame-rate gain claimed.
-  Both arms use checked matching tool versions; earlier mixed-version target
-  comparisons are excluded. Evidence: `tmp/native/N4-scenery/`.
-- **R42 measurements** (2026-10-23): sprite packet work
-  815.176 → 782.000 target cycles/packet (535 packets / 2,908 iterations
-  in each capture); exact host-instruction weighting −5.261052%.
-  Bench medians 68,385 → 68,380 lines (−0.007312%), spans
-  68,351–68,386 → 68,379–68,383; all six RAM hashes match.
-  Host payload +240 bytes; Amiga executable +580 bytes. Single frames
-  captures `[21,18,15,17,16,24,19,16]` → `[21,18,16,21,17,21,16,16]`:
-  both medians 350 ms, spans 15–24 → 16–21 fields. No frame-rate gain
-  claimed. Evidence: `tmp/native/N4-sprite/`; investigation in the R42 commit.
-- **R44 measurements** (2026-10-23): line pixels
-  2,821.121 → 2,709.515 target cycles/entry (66 entries each, 4,662/4,747
-  pixels); exact host-instruction weighting −5.866799%. Meter
-  161,572,185 → 161,506,038 (−0.040939%), three identical runs per arm.
-  Bench medians 68,395 → 68,384 lines (−0.016083%), spans
-  68,352–68,408 → 68,328–68,393; all six RAM hashes match.
-  Host payload +420 bytes; Amiga executable +1,344 bytes. Single frames
-  captures `[21,18,17,20,17,20,17,15]` → `[20,19,16,16,17,24,17,17]`:
-  medians 350 → 340 ms, spans 15–21 → 16–24 fields. No frame-rate gain
-  claimed. Evidence: `tmp/native/N4-line/`.
-- **R48 measurements** (2026-10-23): edge ordering/merging target cost
-  1,106.530 → 857.514 cycles/entry (381 entries in each initial capture);
-  exact host-instruction weighting −10.780077%, including rare IRQ handoffs
-  from user-approved targeted captures. Bench medians 68,383 → 68,384 lines
-  (+0.001462%, user accepts this specific difference as noise), spans
-  68,361–68,393 → 68,372–68,400; all six RAM hashes match.
-  Host payload +1,162 bytes; Amiga executable +3,300 bytes. Initial frames
-  captures `[21,19,15,17,17,23,18,16]` → `[21,19,15,17,17,23,17,16]`,
-  medians 350 → 340 ms; both spans 15–23 fields. No frame-rate gain claimed.
-  Evidence: `tmp/native/N4-raster-remaining/`.
-- **Capture** (A3, second frames run, 100 fields): generated code 76.18%
-  (cell walk 3.75%), runtime/platform 19.52% (`render`, `fm_field`, `loop_for`
-  12.11%), no PC 2.23%, Kickstart 1.03%, IRQ transition 1.03%.
-  2,183,599 semantic guest instructions (10,765 recovered zero-code entries),
-  5,130,676 generated 68k instructions: 2.35 per guest instruction,
-  9.92 cycles/guest instruction, 6.59 weighted static code bytes/guest instruction.
-  Run 1's semantic count fails loudly on an unknown capture-start predecessor;
-  run 2 is the first complete accounting. Run 3: 2,211,424 guest instructions,
-  9.61 cycles each. All three timing/share reports retained in `tmp/native/A3/`.
+WC2's own (P7.3, 2026-11-25, MEASURED unless marked); SWOTL's §1 history is at its
+`658fc60`. Method and instruments: [perf-method.md](perf-method.md); the numbers' files are
+`tools/perf_flight.py` runs on the image at `1367440` plus P7.3's tool fixes.
+
+- **Bar** ([design.md](design.md) D16, B1): a drawn frame every 66.7 ms in quiet flight and
+  at the median Nav 1 fight frame on the 50 MHz 68030 model. 66.7 ms is the original's
+  default frame duration: `WC2.EXE+10642` sets a minimum of `DS:00B6` ticks of its 60 Hz
+  timer at each frame start, which `+10636` waits out at the end; `DS:00B6` starts at 4
+  and Alt+keypad +/− changes it from 1 to 19 ("%d/60th SEC FRAME DURATION." with
+  `DS:00B6`+1, so the default reads 5/60; MEASURED by reading, 4 ticks a frame MEASURED). At
+  12000 cycles every flight frame waits in it ([feasibility.md](feasibility.md)
+  "Combat frame cost"). Below the setting the game runs as fast as the machine allows.
+- **World rate:** the world moves one fixed step a frame, WC1's units, so game speed is the
+  frame rate. At m4 (SET 200, KPS 199 on the reference's screen) the player's velocity is
+  (2940, 0, 4200) a visit of `R_0813C`, magnitude 5126.75 in 1/256 km (the nav range is
+  that distance >> 8, `WC2.EXE+092D8`): 20.03 km a frame. Each visit's position change is
+  the previous visit's velocity, at 4 ticks a visit throughout (MEASURED, DGROUP at 50
+  visits of the m4 window). No reader of the tick counters `DS:D130`/`D134` in the motion
+  path (INFERRED from the readers' list: input repeat, timed callbacks, the limiter). So
+  200 kps is true at 10 frames a second (100 ms, `DS:00B6` = 6, read as 7/60), as in WC1 (the Wing Commander
+  project's `docs/internals.md`, "PC speed calibration": 5120 at 200 kps). The default 15
+  fps runs the world 1.5× fast. The nav range readout uses the 3D maths module's
+  approximate magnitude (`0E9B:040D`, WC1 `R:077E:0461`). With Nav 1 31° off the nose it
+  fell 23.33 km a frame, so it calibrates only when flying straight at the point.
+- **Where it stands** (50 MHz 68030 model, the frames fixtures, 60 visits of the flight
+  frame label `R_0813C`, P7.2's two runs and P7.3's third, each with a 100-field profile):
+
+  | Scene | A visit to `R_0813C` | Between frames that drew | Objects a drawn frame |
+  |---|---|---|---|
+  | quiet flight | 160 ms median (mean 143.7) | 280 ms median (means 284.8, 285.5, 285.5) | 4 |
+  | the Nav 1 fight | 160 ms median (mean 153.6) | 300 ms median (means 300.0, 303.6, 306.2) | 11–13 |
+
+  Every other visit draws no object on the model, every visit in the reference: the
+  picture rate is the drawn frames' (3.3–3.6 a second against 15). That the game drops a
+  late frame's drawing is INFERRED.
+- **Meter** (the host lockstep windows, model cycles; perf-method "Baseline"): m4 424.9 M
+  over 49 frames (7.14 M a frame without poll tests), m5f 446.0 M (7.68 M).
+
+Where a visit's time goes (the profiles' cycle shares over the window's visits: fight 12
+visits in 99 fields, 166.7 ms each; quiet 13, 153.8 ms; `tools/profile_tree.py` self
+costs unless inclusive is said):
+
+| Cost | Fight | Quiet | What |
+|---|---:|---:|---|
+| EMS page copies and mapping | 40.9 ms (24.5%) | 36.8 ms (23.9%) | `copy` 21.2%, 48 16 KB page copies a visit (0.51 ms each), from INT 67h maps (`rt_int67` 5.7% inclusive) and segment loads that expose a page (`rt_ems_seg` 10.7% inclusive, 188 a visit); `src/runtime/ems.c` |
+| generated guest code | 48.8 ms (29.3%) | 48.5 ms (31.5%) | 226 K x86 instructions a visit, 10.8 cycle units each (2.5 68k instructions): `WC2.EXE` 9.0, `STRAX.DRV` 11.7, `TM.DRV` 21.9, `SUPERTM.DRV` 22.6 (`lowering_cost.py`, `profile_report.py`) |
+| present (inclusive) | 23.8 ms (14.3%) | 23.8 ms (15.5%) | the palette 11.6 ms (`plat_palette`: the DAC is written every frame, so every present rebuilds 256 colours and the copper list), the copy and c2p call 9.6 ms (`plat_present`), `present` itself 2.6 ms |
+| other hunks: the c2p | 17.6 ms (10.5%) | 18.7 ms (12.2%) | the c2p (`c2p1x1_8_c5_bm`, the only code in its own section, MEASURED by the map) and OS calls; that it is mostly the c2p is INFERRED. The game writes 178–192 of the 200 rows a frame (m5f census, median 180; 31.6 KB, 88% from `SUPERTM.DRV+074BE`), so the changed-row marks convert about 90% of the screen |
+| PIT and port I/O | 17.4 ms (10.5%) | 11.3 ms (7.4%) | `plat_pit_count` 8.3 ms (224 counts in the window, 0.44 ms each: more than its CIA reads; cause open), `rt_port_in`/`rt_port_out` 9.1 ms |
+| the field wait (`pace`) | 7.7 ms (4.6%) | 8.1 ms (5.3%) | `rt_video_frame`'s spin (`rt_frame_cap`): INT 33h is called twice a visit (24 in 12), and an AX=3 read in the previous one's field waits for the next (that the second call is that read is INFERRED) |
+| marks, FM, effects, IRQ | 16.8 ms | 13.6 ms | `rt_vram_mark` and `vram_span` 4.1 ms, `fm_field` and `render` 5.2 ms (fight), `rt_sfx_read` 2.1 ms, IRQ transitions 3.5 ms |
+
+Not in flight: the 3DAh retrace spin (no `plat_vga_status` in either profile; it was 28.4%
+of the intro, P5.4) and the frame limiter (`WC2.EXE+10636`, 0.38%: it passes at once).
 
 ## 2. Hard rules
 
@@ -606,49 +429,53 @@ items left.
 
 ## 9. Gap
 
-ZI's frames-fixture medians (arm64, irq-plan I11) are 300, 290 and 300 ms: 60 ms (20%)
-more to cut to reach 240 ms; the run range needs 50–60 ms less. Against the same-session
-pre-irq-plan arm (320–330 ms) the ranges do not overlap, as F3+F4 did against pre-F3
-(ZF3). The user
-resumed speed work under U9 on 2026-10-23: plan F in native-plan.
-No priced translator candidate remains (§7). N1, N2’s B393 projection and B4E2 divide,
-and N4’s scenery clear and line pixel loops are kept; F5's whole `BFD1` scanline loop replaces R48's ordering row; irq-plan I10's rows are in §7. Rows are poll-free since irq-plan I9
-([native-compute.md](native-compute.md#loops-and-the-sync-set-rc5); U5 retired), with the U8
-extensions (C4). Active candidates and user deferrals: open-work 14b and
-[native-plan.md](native-plan.md).
+WC2's own (P7.3, 2026-11-25, MEASURED); SWOTL's §9 is at its `658fc60`. Against the
+original's 66.7 ms a drawn frame the model draws one every 280 ms (quiet) and 300 ms
+(fight): 4.2× and 4.5×. A visit costs 154–167 ms of work and every second one draws,
+so the gap to 66.7 ms a visit is 2.3–2.5× (§1).
 
-Historical candidate costs, A3 run 2 (`6bf8aef`, 100 fields, 28,420,399 profiler cycle
-units). Own cost groups generated instructions by call-target boundary; inclusive
-cost follows completed A7 call scopes, excluding hardware and guest interrupt
-delivery (`tools/profile_tree.py` method). All listed observed calls finish inside
-this window. `B8A1` is an explicit extra boundary; neither it nor `CE3C` executes.
-Zero here does not prove a routine unreachable. Inclusive rows overlap; do not add them.
+The runtime, the platform and the c2p carry about two thirds of a visit (§1 table: EMS
+37–41 ms, present 24 ms, c2p 18 ms, I/O 11–17 ms, the field wait 8 ms); generated code
+29–32%. No translator step
+alone reaches the bar: generated code twice as fast saves about 24 ms a visit (15%).
 
-| SWOTL | Function | Own share | Calls/100 fields | Own cycles/call | Inclusive cycles/call |
-|---|---|---:|---:|---:|---:|
-| `B52D` | transform wrapper | 1.02% | 1,483 | 196 | 1,378 |
-| `B54B` | point transform | 6.17% | 1,483 | 1,182 | 1,182 |
-| `B4E2` | perspective divide | 1.82% | 2,072 | 249 | 249 |
-| `B017` | projection | 2.99% | 1,036 | 819 | 1,318 |
-| `D5A6` | normalise/project | 2.07% | 836 | 703 | 2,048 |
-| `B8A1` | face-facing test | 0% | 0 | — | — |
-| `BB70` | polygon bounds/classify | 1.33% | 177 | 2,140 | 2,140 |
-| `109D6` | ground objects | 2.64% | 109 | 6,893 | 24,164 |
-| `4DAE` | sprite decoder | 7.98% | 49 | 46,282 | 60,771 |
-| `D69C` | clipped line | 0.99% | 130 | 2,171 | 2,781 |
-| `BD68` | edge submission | 0.67% | 94 | 2,013 | 4,988 |
-| `FDE0` | terrain polygons | 1.59% | 5 | 90,482 | 525,717 |
-| `F290` | terrain/scenery selection | 1.10% | 5 | 62,641 | 102,471 |
-| `BFD1` | rasterizer | 6.57% | 5 | 373,600 | 568,646 |
-| `CE3C` | background fill | 0% | 0 | — | — |
+Hot guest routines in the fight (`tools/profile_tree.py` on the 100-field capture, 12
+visits; cycle units, 1.01 M a field; WC1 counterpart from `tools/wc1_counterparts.py` on
+`make compare`, similarity of normalised code; drivers are not compared, `SUPERTM.DRV`'s
+entries are byte-identical in PC WC1, [wc1-wc2-comparison.md](wc1-wc2-comparison.md)).
+Inclusive rows overlap; do not add them.
 
-Across the three captures, sprite share is 2.88–7.98% (9–49 calls), rasterizer
-5.02–6.57% (4–5 calls); generated code 74.78–76.91%. Retain this trajectory
-variation when pricing candidates. Per-run counts and costs: `tmp/native/A3/frames-*/`.
-The rendering map consolidates these costs with source availability, admission
-and adaptation prices. U0/U2/U3 approve the transform pilot with complete
-byte-write history; U4 authorizes B017’s B393 long path and B4E2, U6 the
-remaining N4 routines under S1–S9. Current decisions: native-plan U4/U6.
+| Routine | Own | Inclusive | Calls a visit | Own a call | Inclusive a call | PC WC1 |
+|---|---:|---:|---:|---:|---:|---|
+| `WC2.EXE+0E9B4` (3D maths module R:0E9B) | 4.00% | 4.00% | 118 | 2,851 | 2,851 | R:077E:0000, 0.930 |
+| `WC2.EXE+0EA42` | 1.81% | 1.81% | 382 | 398 | 398 | R:077E:009A, identical bytes |
+| `WC2.EXE+0ECEE` | 1.41% | 1.41% | 160 | 739 | 739 | R:077E:0330, 0.944 |
+| `WC2.EXE+0EBF8` | 0.77% | 0.77% | 10 | 6,453 | 6,453 | none (best 0.661) |
+| `WC2.EXE+0EDBD` | 0.53% | 2.37% | 80 | 561 | 2,488 | R:077E:0461, identical bytes |
+| `WC2.EXE+0ED8E` | 0.43% | 0.43% | 160 | 225 | 225 | R:077E:0330, 0.944 |
+| `WC2.EXE+0C5F2` | 0.52% | 1.54% | 73 | 594 | 1,776 | WC1 overlay O:110B+0924, same code |
+| `WC2.EXE+0C35F` | 0.38% | 0.38% | 76 | 422 | 422 | O:110B+0568, 0.923 |
+| `WC2.EXE+0E7E1`, `+0E902` (R:0E78) | 0.46% | 3.25% | 0.5 | 77,377 | 545,795 | R:0758:0041, 0.961 |
+| `WC2.EXE+0DE57` | 0.29% | 4.75% | 0.5 | 48,613 | 798,810 | O:110B+22AB, 0.749 |
+| `SUPERTM.DRV+07460` (scaled sprites) | 2.01% | 2.99% | 0.5 | 337,905 | 501,800 | PC WC1's `SUPERTM.DRV`, identical |
+| `SUPERTM.DRV+015F5` | — | 2.88% | 6.5 | — | 37,297 | identical |
+| `TM.DRV+00E93` (sprite blit) | 1.73% | 9.32% | 16.7 | 8,702 | 47,014 | no shared entry |
+| `TM.DRV+02C07` | 0.91% | 1.69% | 13 | 5,861 | 10,950 | no shared entry |
+| `STRAX.DRV+0129B`, `+00714`, `+00B82`, `+00747` (FM) | 3.44% | — | 2–9 | 8–54 K | — | 1 of 3 entries shared |
+| `WC2.EXE+0364A` | 0.47% | 3.21% | 61 | 648 | 4,416 | none |
+| `WC2.EXE+15831` | 0.42% | 6.59% | 45 | 798 | 12,390 | none (its inclusive cost is EMS maps) |
+| `WC2.EXE+04C58`, `+04846`, `+05739`, `+106CD`, `+10851` (the frame) | ≤ 0.01% | 14–19% | 1 | — | 1.2–1.6 M | none |
+
+Quiet flight ranks the same routines (`WC2.EXE+0E9B4` 4.05%, 117 a visit, 2,684 a call;
+`SUPERTM.DRV+01A5B` 1.32%, 78 a visit). The 3D maths module (R:0E9B, WC1 R:077E) is the
+largest guest code, about 8% of a visit, and is WC1's nearly unchanged: the CD32
+counterpart (port-plan P7.10, open-work 8) prices its native version. The frame's own
+routines (R:03CA, R:073C, R:106C) have no WC1 counterpart.
+
+The x86 forms with the most cycles (fight, `lowering_cost.py`): `rep movsw` 1.66% (289
+units a run), `push r16` 1.45%, `rcl r16, imm` 1.28% (139 K runs, the maths module's long
+shifts), `callf` 0.94%, `pop r16` 0.85%, `mul r16` 0.80%, `rep movsb` 0.79%: no single
+form is more than 2% of a visit.
 
 ## 10. Rejected and not built
 
