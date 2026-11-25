@@ -67,6 +67,8 @@ void rt_ems_segments(void);
 void rt_ems_irq_enter(void);           /* around an interrupt's handler (ems.c) */
 void rt_ems_irq_leave(void);
 extern uint32_t rt_ems_irq_remaps;
+void rt_ems_cache_clear(void);
+void rt_ems_cache_restore(void);
 extern uint32_t rt_ems_ds_exits;   /* listed code left with DS at the frame (ems.c) */
 void rt_ems_sync(void);
 extern uint16_t rt_ems_mapped[4];

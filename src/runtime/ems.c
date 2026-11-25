@@ -34,6 +34,18 @@ uint8_t rt_ems_live[EMS_PHYS];        /* the frame page holds the mapped page's 
  * displacement (mapped, not live, no live alias: guard()'s rule), 0 (live or
  * unmapped: the frame), or 1 (a live alias: the C path copies it in). */
 int32_t rt_ems_fast[EMS_PHYS];
+/* rt_entry.s EMS_GUARD's one-entry caches (ES, DS; X-Wing 4c50051): the
+ * segment (its upper word; 0: empty), the lowest offset (its lower word) and
+ * the end of the offsets within the frame page the last displaced access lay
+ * in, and the base register's value for them. Emptied by every refresh. */
+uint32_t rt_ems_cache_es[3], rt_ems_cache_ds[3];
+
+/* Separate and not inlined: host_run.py's sabotage "ems-cache" returns at once. */
+void __attribute__((noinline)) rt_ems_cache_clear(void)
+{
+    rt_ems_cache_es[0] = 0;
+    rt_ems_cache_ds[0] = 0;
+}
 #define mapped rt_ems_mapped
 #define live rt_ems_live
 /* AH=47h/48h: a handle's saved frame mappings (DOSBox-X EMM_SavePageMap) */
@@ -109,6 +121,7 @@ static void copy(uint8_t *d, const uint8_t *s)
  * host_run.py's sabotage "ems-fast" returns at once. */
 static void __attribute__((noinline)) refresh(void)
 {
+    rt_ems_cache_clear();
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         int alias = 0;
         for (int j = 0; j < EMS_PHYS; ++j) {
@@ -304,12 +317,30 @@ void rt_ems_segments(void)
 static uint16_t irq_mapped[EMS_PHYS];
 static uint8_t irq_live[EMS_PHYS];
 uint32_t rt_ems_irq_remaps;
+/* The guard caches too: the handler may fill them with its own segments
+ * between an interrupted guard's reads of them (X-Wing 4c50051), and its maps
+ * and copies empty them (refresh). With the pages put back they are right
+ * again and are put back; after a changed mapping they stay empty. */
+static uint32_t cache_held[6];
 
 void rt_ems_irq_enter(void)
 {
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         irq_mapped[k] = mapped[k];
         irq_live[k] = live[k];
+    }
+    for (int i = 0; i < 3; ++i) {
+        cache_held[i] = rt_ems_cache_es[i];
+        cache_held[3 + i] = rt_ems_cache_ds[i];
+    }
+}
+
+/* Separate and not inlined: host_run.py's sabotage "ems-cache-irq" returns at once. */
+void __attribute__((noinline)) rt_ems_cache_restore(void)
+{
+    for (int i = 0; i < 3; ++i) {
+        rt_ems_cache_es[i] = cache_held[i];
+        rt_ems_cache_ds[i] = cache_held[3 + i];
     }
 }
 
@@ -335,6 +366,7 @@ void __attribute__((noinline)) rt_ems_irq_leave(void)
             expose(k);
         }
     }
+    rt_ems_cache_restore();
 }
 
 /* Every frame page shows its mapped page (a capture). */

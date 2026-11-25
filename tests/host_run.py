@@ -340,6 +340,8 @@ SABOTAGE = {
     "idle": "rt_idle returns at once: DOS's console wait takes no interrupt",
     "idle-stack": "the console wait's SP two bytes lower at its first rt_idle (RT_IDLE_DEPTH)",
     "ems-fast": "the EMS guard's table never refreshed (ems.c refresh returns at once)",
+    "ems-cache": "the EMS guard caches never emptied (ems.c rt_ems_cache_clear returns at once)",
+    "ems-cache-irq": "an interrupt's handler leaves its EMS guard caches (ems.c rt_ems_cache_restore returns at once)",
     "ems-irq": "an interrupt's handler leaves the EMS frame pages as it found them (ems.c rt_ems_irq_leave returns at once)",
     "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
              "spins with no service or interrupt (the run's watchdog, at 20 s)",
@@ -545,6 +547,10 @@ class Host:
                 e.write(a + k + 2, bytes.fromhex("b0008002"))
         if sabotage == "ems-fast":
             e.write(self.syms["refresh"], b"\x4e\x75")  # rts
+        if sabotage == "ems-cache":
+            e.write(self.syms["rt_ems_cache_clear"], b"\x4e\x75")  # rts
+        if sabotage == "ems-cache-irq":
+            e.write(self.syms["rt_ems_cache_restore"], b"\x4e\x75")  # rts
         if sabotage == "ems-irq":
             e.write(self.syms["rt_ems_irq_leave"], b"\x4e\x75")  # rts
         if sabotage == "key-hook":
@@ -2136,7 +2142,10 @@ def ems_guard_problems(elf: Path | None, sabotage: str | None = None) -> list[st
     ems.c store), and otherwise takes the C path with its byte count, so both
     pages are copied in and the base is plain; a range within one page runs on
     its store page; with the pages live (DS E000h's load, rt_ems_seg) on the
-    frame. From X-Wing 5f720a2."""
+    frame. From X-Wing 5f720a2. Then the one-entry caches (X-Wing 4c50051):
+    another access within the page hits (the same base), a remap empties them
+    (the new page's base), and over IRQ0's handler, which fills them with its
+    own segment, they come back as they were."""
     problems = []
     plain = TOP - 0x7FFF - 0xE0300
     frame0 = TOP - (EMS_FRAME + EMS_PAGE) + 1
@@ -2181,6 +2190,32 @@ def ems_guard_problems(elf: Path | None, sabotage: str | None = None) -> list[st
                 problems.append(f"EMS guard {name} d7={d7:04x} d6={d6:x} pages {order}"
                                 f"{' page 0 live' if expose else ''}: frame pages live {live}, "
                                 f"want {want_live}; base {a:x}, want {want_a:x} (pc={h.r('pc'):x})")
+            if d7 != 0x0100 or expose:
+                continue
+            for remap, (cd7, cd6) in ((False, (0x3B00, 0x100)), (True, (0x0100, 0x140))):
+                if remap:
+                    ok = int67(0x4400, bx=order[1], dx=handle)[0]
+                ok = ok and call(name, cd6, cd7)
+                a = h.r({"rt_ems_es": "a1", "rt_ems_ds": "a3"}[name])
+                live = tuple(h.mem(h.syms["rt_ems_live"], 2))
+                store = EMS_STORE + (EMS_STORE_PAGES - int.from_bytes(h.mem(h.syms["rt_ems_mapped"], 2),
+                                                                      "big")) * EMS_PAGE
+                want_a = plain if live[0] else plain + store - frame0
+                if not ok or a != want_a:
+                    problems.append(f"EMS guard cache {name} d7={cd7:04x} d6={cd6:x} "
+                                    f"{'after a remap' if remap else 'hit'}: base {a:x}, want {want_a:x} "
+                                    f"(pc={h.r('pc'):x})")
+            caches = h.syms["rt_ems_cache_es"], h.syms["rt_ems_cache_ds"]
+            held = [h.mem(c, 12) for c in caches]
+            h.e.write(TOP - 0x23, IRQ0_HANDLER.to_bytes(4, "big"))   # IVT 08h, as ems_irq_problems
+            ok = call("rt_irq0_enter") and h.mem(h.syms["rt_irq0_running"], 1) == b"\1"
+            h.e.write(slot, (0xE430).to_bytes(2, "big"))
+            ok = ok and call(name, 0x40, 0x0100) and call("rt_irq0_leave")
+            h.e.write(slot, (0xE030).to_bytes(2, "big"))
+            back = [h.mem(c, 12) for c in caches]
+            if not ok or back != held or not any(any(b) for b in held):
+                problems.append(f"EMS guard cache {name} around IRQ0's handler: {[b.hex() for b in back]}, "
+                                f"want {[b.hex() for b in held]} (pc={h.r('pc'):x})")
     return problems
 
 
