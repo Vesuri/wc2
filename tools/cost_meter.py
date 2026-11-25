@@ -311,35 +311,29 @@ def window(milestone: str) -> tuple[tuple[int, int], tuple[int, int]]:
     return (keys + 1, 0), close          # past the first snapshot trigger
 
 
-def run(milestone: str, timeout: int, elf: Path | None = None):
-    """The host lockstep check of the milestone (tests/host_run.py check) from boot, with
-    a block hook counting over window(). Block counts {(addr, size): n}, taken counts
-    {block: n}, taken transfers {(block, target): n} (meta["into"]) and the ELF that ran
-    (by default the host image with the diagnostic REP hooks of tests/rep_replay.py).
-    Any lockstep problem refuses the run."""
-    import ctypes
+def windowed(milestone: str, timeout: int, attach, gate, elf: Path | None = None):
+    """The host lockstep check of the milestone (tests/host_run.py check) from boot.
+    attach(host) runs once, on the milestone's own host (check()'s controls,
+    rearm_problems and overlay_problems, build others); gate(inside) runs at every
+    step of its trigger walk, inside window(). Returns (host, the ELF that ran, check's
+    problems, seconds)."""
     import host_run as H
-    lib = hook_library()
-    lib.meter_reset()
-    on = ctypes.c_uint8.in_dll(lib, "meter_on")
     lo, hi = window(milestone)
     ran = {}
 
-    class MeterHost(H.Host):
+    class WindowHost(H.Host):
         _step = _hits = 0
-        metered = False
+        windowed = False
 
         def __init__(self, *args, **kw):
             super().__init__(*args, **kw)
-            # the first host is the milestone's run; check()'s own controls
-            # (rearm_problems, overlay_problems) build others, not metered
             if "host" not in ran:
-                ran["elf"], ran["host"], self.metered = kw.get("elf") or H.ELF, self, True
-                self.e.hook_range(8, lib.meter_block, 0x10000, self.code[1])   # UC_HOOK_BLOCK
+                ran["elf"], ran["host"], self.windowed = kw.get("elf") or H.ELF, self, True
+                attach(self)
 
         def _gate(self):
-            if self.metered:
-                on.value = int(lo <= (self._step, self._hits) < hi)
+            if self.windowed:
+                gate(lo <= (self._step, self._hits) < hi)
 
         @property
         def step(self):
@@ -360,14 +354,37 @@ def run(milestone: str, timeout: int, elf: Path | None = None):
             self._gate()
 
     original = H.Host
-    H.Host = MeterHost
+    H.Host = WindowHost
     t0 = time.time()
     try:
         problems = H.check(milestone, timeout, None, None, elf=elf)
     finally:
         H.Host = original
-    h = ran["host"]
-    meta = {"milestone": milestone, "stopped_at": h.stopped_at, "seconds": round(time.time() - t0),
+    if "host" not in ran:
+        raise SystemExit(f"{milestone}: no host ran")
+    return ran["host"], ran["elf"], problems, round(time.time() - t0)
+
+
+def run(milestone: str, timeout: int, elf: Path | None = None):
+    """The meter's run (windowed()), with a block hook counting over window(). Block
+    counts {(addr, size): n}, taken counts {block: n}, taken transfers {(block,
+    target): n} (meta["into"]) and the ELF that ran (by default the host image with the
+    diagnostic REP hooks of tests/rep_replay.py). Any lockstep problem refuses the run."""
+    import ctypes
+    lib = hook_library()
+    lib.meter_reset()
+    on = ctypes.c_uint8.in_dll(lib, "meter_on")
+
+    def attach(host):
+        host.e.hook_range(8, lib.meter_block, 0x10000, host.code[1])   # UC_HOOK_BLOCK
+
+    def gate(inside):
+        on.value = int(inside)
+
+    h, ran_elf, problems, seconds = windowed(milestone, timeout, attach, gate, elf)
+    lo, hi = window(milestone)
+    ran = {"elf": ran_elf}
+    meta = {"milestone": milestone, "stopped_at": h.stopped_at, "seconds": seconds,
             "label": h.stopped_at, "window": [lo, hi], "elf": str(Path(ran["elf"]).resolve().relative_to(REPO))}
     if problems or ctypes.c_uint32.in_dll(lib, "meter_lost").value:
         raise SystemExit(f"meter run failed: {problems[:5] or 'a hook table filled up'}")

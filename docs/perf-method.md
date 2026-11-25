@@ -62,9 +62,14 @@ in the [port plan](port-plan.md#p7-performance-gate-7).
 - **Profile report** (`tools/profile_report.py CAPTURE ELF`): class, module, guest routine
   and instruction, and runtime shares of a `monitor profile` capture; up to 2% of a field
   without a record is reported as unattributed (SWOTL's rule), more refuses the capture.
-- **Lowering cost** (`tools/lowering_cost.py`) and **call tree** (`tools/profile_tree.py`):
-  per x86 form and per routine, inclusive. **Counts:** `tools/host_census.py`;
-  `amiga/perf_slice.gdb` (P5.4's intro window).
+- **Lowering cost** (`tools/lowering_cost.py CAPTURE ELF`) and **call tree**
+  (`tools/profile_tree.py ELF CAPTURE --frame R_0813C --json OUT`): per x86 form and per
+  routine, inclusive; on a `perf_flight.py --keep-capture` capture (2.1 GB: delete it after).
+- **Counts** (`tools/host_census.py MILESTONE --vram --strops --labels …`): the meter's run
+  and window (`cost_meter.windowed`), exact, never timing: per frame label visit the rows
+  of A0000h written, the bytes by writing label, each REP's elements.
+- **WC1 counterparts** (`tools/wc1_counterparts.py WC2.EXE+x …`): a profile name's function
+  in `make compare` and its PC WC1 match. `amiga/perf_slice.gdb`: P5.4's intro window.
 
 ## Cost model
 

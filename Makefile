@@ -178,7 +178,7 @@ UNIT_TESTS = test_align test_align_convergence test_amiga_input test_block_bound
 	test_gate_runner test_helper_branches test_hunk_size test_joystick_cli \
 	test_joystick_events test_joystick_link test_load_image test_joystick_recorder test_joystick_replay \
 	test_jump_fusion test_key_release test_m68k_assembly test_next_branch \
-	test_oracle_boundary test_oracle_exception_writes test_reglive test_rep_lowering \
+	test_oracle_boundary test_oracle_exception_writes test_profile_tools test_reglive test_rep_lowering \
 	test_rep_replay test_replay_chords test_replay_events test_smc_flow \
 	test_dos_sda test_dos_search test_ems test_far_return_protocol test_file_dates \
 	test_host_launch test_irq_footprint test_irq_in_service test_mouse_irq test_interrupt_frame_mask \

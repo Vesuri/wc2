@@ -131,6 +131,9 @@ class EntryMap:
         self.syms = syms
         self.mn = mn or {}
         self.indirect = set()
+        self.iret = set()       # guest IRETs: they resume at the interrupted poll point
+        self.polls = {m[1] for path in gen.glob("*.s")
+                      for m in re.finditer(r"^(\w+)_np:", path.read_text(), re.M)}
         emitted = defaultdict(list)
         self.address = dict((n, a) for a, n in syms)
         order = {}
@@ -171,7 +174,9 @@ class EntryMap:
                 op, *args = text.split(None, 1)
                 targets = []
                 if op in ("jmpf", "callf") and args and re.fullmatch(r"0x[0-9a-f]+:0x[0-9a-f]+", args[0]):
-                    far[base] = tuple(int(v, 16) for v in args[0].split(":"))
+                    # a far call's return lands after it, as a near call's does
+                    far[base] = (tuple(int(v, 16) for v in args[0].split(":")),
+                                 [f"{prefix}_{fall:05X}"] if op == "callf" else [])
                 elif op.startswith("j") or op.startswith("loop") or op == "call":
                     if args and re.fullmatch(r"0x[0-9a-f]+", args[0]):
                         targets.append(offset - ip + int(args[0], 16))
@@ -181,12 +186,14 @@ class EntryMap:
                     targets.append(fall)
                 for suffix in ("", "_bp"):
                     self.next[base + suffix] = [f"{prefix}_{t:05X}{suffix}" for t in targets]
+                    if op == "iret":
+                        self.iret.add(base + suffix)
                     if op in ("jmp", "jmpf", "call", "callf") and args and not args[0].startswith("0x"):
                         self.indirect.add(base + suffix)
                         self.next[base + suffix] = emitted[base + suffix]
-        for base, target in far.items():
+        for base, (target, after) in far.items():
             for suffix in ("", "_bp"):
-                self.next[base + suffix] = locations.get(target, [])
+                self.next[base + suffix] = locations.get(target, []) + [n + suffix for n in after]
         for name, successors in self.next.items():
             self.next[name] = list(dict.fromkeys(
                 variant for n in successors
@@ -240,7 +247,13 @@ class EntryMap:
                     target = re.match(r"([0-9a-f]+) <", arg)
                     if op.split(".")[0] not in ("jmp", "jsr", "bra", "bsr") or not target or int(target[1], 16) != addr:
                         raise ValueError(f"unknown indirect guest edge from {src:x} ({owner})")
-                paths = {p for nxt in self.next.get(owner, [])
+                starts = self.next.get(owner, [])
+                if owner in self.iret:
+                    # an interrupt is delivered at a poll point (a name with an `_np`
+                    # body, in the sync and production images) and its IRET resumes
+                    # there: the one name of the group that has one
+                    starts = [n for n in names if n in self.polls]
+                paths = {p for nxt in starts
                          if (p := self.path(nxt, addr)) is not None}
                 if len(paths) != 1:
                     raise ValueError(f"ambiguous/unknown guest edge {src:x} ({owner}) -> {names}")

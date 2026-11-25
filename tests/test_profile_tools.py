@@ -24,7 +24,7 @@ class ProfileTools(unittest.TestCase):
             try:
                 os.chdir(tmp)
                 entries = P.routine_entries(P.DEFAULT_GEN)
-                self.assertIn(0x06A4D, entries["SWOTL.EXE"])
+                self.assertIn(0x0E9B4, entries["WC2.EXE"])
             finally:
                 os.chdir(old)
 
@@ -36,10 +36,10 @@ class ProfileTools(unittest.TestCase):
     def test_call_sizes_and_comments(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "sample.s").write_text(
-                "; jsr R_99999\n\tjsr R_00100\n\tbsr.w FLT_00200\n"
+                "; jsr R_99999\n\tjsr R_00100\n\tbsr.w TM_00200\n"
                 "\tjsr rt_irq\n\tbsr.l R_00100\n")
             self.assertEqual(P.routine_entries(Path(tmp)),
-                             {"SWOTL.EXE": [0x100], "FLIGHT.OVL": [0x200]})
+                             {"WC2.EXE": [0x100], "TM.DRV": [0x200]})
 
     def test_labels_inside_an_instruction(self):
         # A poll's fall-through, a segment check's, a CS store hook's, a far
@@ -98,11 +98,11 @@ class SemanticEntries(unittest.TestCase):
             "R_00021_bp:\t; 0000:0021 inc bx\n\taddq.w #1,d3\n"
             "R_00030:\t; 0000:0030 jmp 0x20\n\tbra R_00020\n")
         Path(root, "sample.ir").write_text(
-            "SWOTL.EXE+00010 0000:0010 89d8 mov ax, bx\n"
-            "SWOTL.EXE+00012 0000:0012 eb0c jmp 0x20\n"
-            "SWOTL.EXE+00020 0000:0020 40 inc ax\n"
-            "SWOTL.EXE+00021 0000:0021 43 inc bx\n"
-            "SWOTL.EXE+00030 0000:0030 ebee jmp 0x20\n")
+            "WC2.EXE+00010 0000:0010 89d8 mov ax, bx\n"
+            "WC2.EXE+00012 0000:0012 eb0c jmp 0x20\n"
+            "WC2.EXE+00020 0000:0020 40 inc ax\n"
+            "WC2.EXE+00021 0000:0021 43 inc bx\n"
+            "WC2.EXE+00030 0000:0030 ebee jmp 0x20\n")
         syms = [(100, "R_00010"), (102, "R_00012"), (102, "R_00020"),
                 (104, "R_00021_bp"), (110, "R_00030"),
                 (120, "R_00020_irq"), (130, "R_00020_walk")]
@@ -123,6 +123,47 @@ class SemanticEntries(unittest.TestCase):
                 model.count({102: 8}, {(100, 102): 3})
             with self.assertRaisesRegex(ValueError, "ambiguous|unknown"):
                 model.count({102: 1}, {(-1, 102): 1})
+
+    def test_far_call_returns_after_itself(self):
+        # The far call's return lands on the next instruction, which shares its
+        # address with a zero-code jump to it (WC2.EXE+469A0's callf, P7.3).
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "sample.s").write_text(
+                "R_00010:\t; 0000:0010 mov ax, bx\n\tmove.w d3,d0\n"
+                "R_00040:\t; 0000:0040 callf 0x0:0x10\n\tjsr R_00010\n"
+                "R_00050:\t; 0000:0050 jmp 0x45\n"
+                "R_00045:\t; 0000:0045 pop si\n\tmovea.w (a2),a4\n")
+            Path(tmp, "sample.ir").write_text(
+                "WC2.EXE+00010 0000:0010 89d8 mov ax, bx\n"
+                "WC2.EXE+00040 0000:0040 9a10000000 callf 0x0:0x10\n"
+                "WC2.EXE+00045 0000:0045 5e pop si\n"
+                "WC2.EXE+00050 0000:0050 ebf3 jmp 0x45\n")
+            syms = [(100, "R_00010"), (200, "R_00040"), (210, "R_00050"), (210, "R_00045")]
+            entries = L.EntryMap(syms, Path(tmp)).count({210: 4}, {(204, 210): 4})
+            self.assertEqual(entries["R_00045"], 4)
+            self.assertNotIn("R_00050", entries)
+            # a jump (not a call) to the same far target has no return edge
+            p = Path(tmp, "sample.ir")
+            p.write_text(p.read_text().replace("9a10000000 callf", "ea10000000 jmpf"))
+            with self.assertRaisesRegex(ValueError, "ambiguous|unknown"):
+                L.EntryMap(syms, Path(tmp)).count({210: 4}, {(204, 210): 4})
+
+    def test_iret_resumes_at_the_poll_point(self):
+        # An interrupt delivered at R_00020's poll point returns into the group
+        # R_00012 (a zero-code jump) and R_00020 (P7.3, STRAX.DRV's IRET).
+        with tempfile.TemporaryDirectory() as tmp:
+            syms = self.fixture(tmp).syms + [(140, "R_00060")]
+            p = Path(tmp, "sample.s")
+            p.write_text(p.read_text() + "R_00060:\t; 0000:0060 iret\n\trts\n")
+            ir = Path(tmp, "sample.ir")
+            ir.write_text(ir.read_text() + "WC2.EXE+00060 0000:0060 cf iret\n")
+            with self.assertRaisesRegex(ValueError, "ambiguous|unknown"):
+                L.EntryMap(syms, Path(tmp)).count({102: 2}, {(140, 102): 2})
+            p.write_text(p.read_text().replace(
+                "R_00020:\t; 0000:0020 inc ax\n", "R_00020:\t; 0000:0020 inc ax\nR_00020_np:\n"))
+            entries = L.EntryMap(syms, Path(tmp)).count({102: 2}, {(140, 102): 2})
+            self.assertEqual(entries["R_00020"], 2)
+            self.assertNotIn("R_00012", entries)
 
     def test_fused_conditional(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,8 +212,8 @@ class SemanticEntries(unittest.TestCase):
     def test_fallthrough_wraps_guest_ip(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "wrap.ir").write_text(
-                "SWOTL.EXE+1FFFF 1000:FFFF 89d8 mov ax, bx\n"
-                "SWOTL.EXE+10001 1000:0001 40 inc ax\n")
+                "WC2.EXE+1FFFF 1000:FFFF 89d8 mov ax, bx\n"
+                "WC2.EXE+10001 1000:0001 40 inc ax\n")
             model = L.EntryMap([(100, "R_1FFFF"), (102, "R_10001")], Path(tmp))
             self.assertEqual(model.next["R_1FFFF"], ["R_10001"])
 
@@ -296,34 +337,34 @@ class ModuleCounts(unittest.TestCase):
                 patch.object(P, "decode", return_value=profile), \
                 patch.object(P, "symbols", return_value=syms), \
                 patch.object(P, "roles", return_value={}), \
-                patch.object(P, "routine_entries", return_value={"FLIGHT.OVL": [0x100]}), \
+                patch.object(P, "routine_entries", return_value={"TM.DRV": [0x100]}), \
                 patch("sys.stdout", output):
             P.main()
         return output.getvalue()
 
     def test_normal_and_bp_entries_add_without_body_or_stub_visits(self):
-        rows = [(0x100, "FLT_00100", 2, 4), (0x104, None, 5, 2),
-                (0x120, "FLT_00102_bp", 3, 6), (0x124, None, 7, 2)]
+        rows = [(0x100, "TM_00100", 2, 4), (0x104, None, 5, 2),
+                (0x120, "TM_00102_bp", 3, 6), (0x124, None, 7, 2)]
         # Prefix matches such as _bp* would count guards and helper entries.
         suffixes = ("_bpg", "_bpr", "_irq", "_bp_irq", "_sx0", "_hk0",
                     "_walk", "_walk_go", "_bp_sx0")
-        rows += [(0x200 + k * 16, "FLT_00102" + suffix, 1, 1)
+        rows += [(0x200 + k * 16, "TM_00102" + suffix, 1, 1)
                  for k, suffix in enumerate(suffixes)]
         rows += [(0x300, "R_00100", 4, 2)]
-        report = self.report(rows, ("--count", "FLT_00102_bp"))
-        self.assertRegex(report, r"FLIGHT\.OVL  5  11\.8\n")
-        self.assertRegex(report, r"SWOTL\.EXE  4  2\.0\n")
+        report = self.report(rows, ("--count", "TM_00102_bp"))
+        self.assertRegex(report, r"TM\.DRV  5  11\.8\n")
+        self.assertRegex(report, r"WC2\.EXE  4  2\.0\n")
         self.assertIn("67 cycle units", report)  # cycles include all helpers
-        self.assertIn("FLT_00102_bp executions per field: [3]  total 3", report)
+        self.assertIn("TM_00102_bp executions per field: [3]  total 3", report)
 
     def test_copy_only_module(self):
-        report = self.report([(0x100, "FLT_00100_bp", 7, 6), (0x104, None, 7, 2)])
-        self.assertRegex(report, r"FLIGHT\.OVL  7  8\.0\n")
+        report = self.report([(0x100, "TM_00100_bp", 7, 6), (0x104, None, 7, 2)])
+        self.assertRegex(report, r"TM\.DRV  7  8\.0\n")
 
     def test_helper_only_module_does_not_invent_guest_entries(self):
-        report = self.report([(0x100, "FLT_00100_bpg", 2, 3),
-                              (0x120, "FLT_00100_bp_irq", 4, 2)])
-        self.assertRegex(report, r"FLIGHT\.OVL  0  14\.0\n")
+        report = self.report([(0x100, "TM_00100_bpg", 2, 3),
+                              (0x120, "TM_00100_bp_irq", 4, 2)])
+        self.assertRegex(report, r"TM\.DRV  0  14\.0\n")
 
 
 def capture(path, fields, base=0):
@@ -346,7 +387,7 @@ def capture(path, fields, base=0):
 class ProfileTree(unittest.TestCase):
     SYMS = [(0x100, "R_00100"), (0x110, "R_00110"), (0x200, "R_00200"),
             (0x300, "R_044E2"), (0x400, "fm_field"), (0x500, "rt_irq")]
-    ENTRIES = {"SWOTL.EXE": [0x100, 0x200, 0x44E2]}
+    ENTRIES = {"WC2.EXE": [0x100, 0x200, 0x44E2]}
     # frame; A; A body; B (called by A); guest IRQ; fm_field inside the IRQ |
     # hardware interrupt record; back in B; back in A; frame (closes A)
     FIRST = [(0x300, 1, 0x1004), (0x100, 10, 0x1000), (0x110, 5, 0x1000),
@@ -368,10 +409,10 @@ class ProfileTree(unittest.TestCase):
         incl, own = dict(d["incl"]), dict(d["own"])
         self.assertEqual(d["total"], 44)
         self.assertEqual(d["frames"], 2)
-        self.assertEqual(incl, {"SWOTL.EXE+00100": 33, "SWOTL.EXE+00200": 13, "fm_field": 4})
-        self.assertEqual(d["edges"], [["SWOTL.EXE+00100", "SWOTL.EXE+00200", 13]])
-        self.assertEqual(own["SWOTL.EXE+00100"], 20)
-        self.assertEqual(own["SWOTL.EXE+00200"], 15)
+        self.assertEqual(incl, {"WC2.EXE+00100": 33, "WC2.EXE+00200": 13, "fm_field": 4})
+        self.assertEqual(d["edges"], [["WC2.EXE+00100", "WC2.EXE+00200", 13]])
+        self.assertEqual(own["WC2.EXE+00100"], 20)
+        self.assertEqual(own["WC2.EXE+00200"], 15)
         self.assertEqual(own["rt_irq"], 3)
         self.assertEqual(d["open_scopes"], [])
 
