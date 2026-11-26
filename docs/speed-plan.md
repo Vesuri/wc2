@@ -76,7 +76,8 @@ two `in 40h`, the elapsed counts summed until CX), and its OPL write (`+0747`) c
 with CX 0Ah. One iteration (two latches, four reads, two `plat_pit_count`) outlasts the
 ten counts, so the reads' cost is the wait: `plat_pit_count` 3.21%, `rt_port_in` 1.96%,
 `rt_port_out` 1.34%, `rt_out8` 0.54%, the loop 0.55% of the fight window, about 6–7%. The
-host meter cannot see it (the host platform's PIT is the harness's).
+host meter cannot see it (the host platform's PIT is the harness's). D18 (owner) skips it on the
+Amiga: step O1 below.
 
 P7.6 steps (open-work 33; MEASURED, the image of each commit):
 
@@ -86,6 +87,7 @@ P7.6 steps (open-work 33; MEASURED, the image of each commit):
 | E2 | an interrupt's handler leaves the frame pages as it found them (`ems.c` `rt_ems_irq_leave`): a correctness fix, as production runs IRQ0 between a guard and its access; host lockstep copies m4 25.36 → 8.65 MB, m5 55.03 → 38.16 MB (the irq monitor's count) | 140 ms, 280 ms (one run: means 150.8, 300.0) | not run: no speed claim |
 | E3 | the guard's table in asm (`rt_entry.s` `EMS_GUARD`, `ems.c` `rt_ems_fast`, X-Wing `5f720a2`): one frame page, or two with one displacement, decided without the C call | 140 ms, 260 ms (one run: means 149.5, 301.4; runtime and platform 49.7% → 44.8% of the profile) | with E2 against E1: m5f 438.25 M → 398.73 M (−9.02%), m4 399.86 M → 376.20 M (−5.92%); runtime only, generated unchanged; lockstep m5f, m4 and m5 0 problems |
 | E4 | the guard's one-entry cache per segment register (`rt_ems_cache_es/ds`, X-Wing `4c50051`), emptied by every refresh, held over an interrupt's handler with the frame pages (`rt_ems_irq_leave`) | 140 → 120 ms, 260 ms (one run: means 134.2, 269.3; runtime and platform 44.8% → 40.6%) | m5f 398.73 M → 389.54 M (−2.30%), m4 376.20 M → 369.44 M (−1.80%); runtime only; lockstep m5f, m4 and m5 0 problems |
+| O1 | STRAX.DRV's OPL write delay skipped (D18, HLE `opl_delay`, `rt_entry.s` `rt_hle_opl_delay`, the Amiga's `rt_opl_delay_skip`): the state of one iteration that saw CX counts, against the original x86 (`tests/test_opl_delay.py`, 3 plants) | A/B, 3 interleaved runs an arm on E4 with the harness's w-step shift (`tools/ab_runs.py`): visit medians 140, 120, 140 → 120, 120, 120 ms (overlapping: no visit claim); drawn medians 280, 260, 260 → 220, 220, 220 ms; the window's fields 436, 394, 413 → 341, 351, 337 (−16%) | not run: the host's PIT is the harness's, so the hook declines there; lockstep m4 and m5 0 problems |
 
 ## 2. Hard rules
 

@@ -1117,6 +1117,9 @@ int amiga_guest_open(void)
     rt_frame_cap = 1;       /* one game frame per field (runtime.h) */
     rt_mouse_scale = 1;     /* flight mouse at a fixed frame time (runtime.h) */
     rt_mickeys_y = 1;       /* vertical counts 1:1, as a real PC mouse (runtime.h) */
+#ifndef WC2_REPLAY
+    rt_opl_delay_skip = 1;  /* STRAX.DRV's OPL settle wait skipped (D18; the replay's PIT reads replay) */
+#endif
 #endif
     /* Guest RAM, the state block below it and the EMS store after it; Fast RAM
      * when present (D15). */

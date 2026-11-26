@@ -6,9 +6,8 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E4 done): STRAX.DRV's
-    OPL write delay (`+0714`, 6–7% of the fight window in PIT counts and port calls; a
-    native wait needs the owner's authorization), the port call path
+33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E4 and O1 done): the
+    port call path
     (`rt_port_in`/`rt_port_out`), then the EMS model's INT 67h copies (`copy` 3–7% of the
     fight profile) and `refresh` (1%). Acceptance: the meter's change for each; the EMS
     test, `ems_guard_problems`, `ems_irq_problems` and their plants; lockstep at m4 and m5.

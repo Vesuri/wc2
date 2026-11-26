@@ -305,6 +305,7 @@ extern uint8_t rt_opl[256];         /* AdLib registers as written (rt_entry.s rt
 extern uint8_t rt_opl_index;
 extern uint8_t rt_opl_keyon[9];     /* per channel: key-on edges, wrapping (FM re-hoster) */
 extern uint8_t rt_music_skip;        /* 1: HLE music_skip skips song starts */
+extern uint8_t rt_opl_delay_skip;    /* 1: HLE opl_delay skips STRAX.DRV's OPL settle wait (D18) */
 extern uint16_t rt_deliver_cs, rt_deliver_ip;
 extern void *rt_deliver_code;
 extern uint8_t rt_sb_playing;       /* ports.c: a DSP block plays; its IRQ 7 clears it */

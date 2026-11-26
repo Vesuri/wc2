@@ -27,6 +27,8 @@ G_DS	equ	1
 	xdef	rt_halt
 	xdef	rt_trap
 	xdef	rt_hle_music_skip
+	xdef	rt_hle_opl_delay
+	xref	rt_opl_delay_skip
 	xdef	rt_guest_call
 	xdef	rt_hle_pointer_tracked
 	xdef	rt_hle_sfx_start,rt_hle_sfx_start_done,rt_hle_sfx_init,rt_hle_sfx_init_done
@@ -478,6 +480,28 @@ rt_halt:
 ; record. Registers preserved.
 rt_hle_music_skip:
 	tst.b	rt_music_skip
+	rts
+
+; HLE opl_delay (annotations/hle.csv, D18): STRAX.DRV's OPL write delay. With
+; rt_opl_delay_skip (the Amiga production build) and CX at most 4DACh, NE with
+; the registers of one iteration that saw CX counts, rounded up to even, pass:
+; DX (d2) = SI (a4) = that, AL = 0; CX and every other register kept. Else EQ:
+; the guest loop runs.
+rt_hle_opl_delay:
+	tst.b	rt_opl_delay_skip
+	beq.s	.run
+	cmp.w	#$4dac,d1
+	bhi.s	.eq
+	move.w	d1,d2
+	addq.w	#1,d2
+	andi.w	#$fffe,d2		; the counts step by two (mode 3)
+	movea.w	d2,a4
+	clr.b	d0
+	andi.b	#$fb,ccr		; NE
+	rts
+.eq:
+	cmp.w	d1,d1			; EQ
+.run:
 	rts
 
 ; A guest far call from C: the translated far entry rt_deliver_code

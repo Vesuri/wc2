@@ -37,6 +37,10 @@ uint8_t rt_opl_keyon[9];
  * of a music record starts no song; 0 runs the guest code. Music stays
  * enabled by default (user 2026-10-15; docs/sound-plan.md). */
 uint8_t rt_music_skip = 0;
+/* OPL write delay (annotations/hle.csv opl_delay, rt_hle_opl_delay, D18): 1,
+ * STRAX.DRV's settle wait is skipped (the Amiga production build sets it);
+ * 0 runs the guest loop (host lockstep, the replay: the PIT reads replay). */
+uint8_t rt_opl_delay_skip = 0;
 
 /* Gameport: with rt_joystick, the trigger latches the axes and each read
  * counts; an axis bit stays 1 for its latched number of reads, so the game's
