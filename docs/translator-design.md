@@ -260,6 +260,17 @@ diffs directly); relocated words in instructions are emitted as
     into a range, a direct near transfer out of one and an indirect near one inside
     one, but in a range that covers its whole module (TM.DRV, SUPERTM.DRV: their near
     transfers stay in their own CS);
+  - a restore row (`ems-ds.csv` kind `restore`: X-Wing `5f720a2`'s kind, with a runtime
+    condition, as WC2's INT 08h handler maps) is a POP DS outside listed code whose
+    straight-line run to its far exit (IRET, JMPF, RETF) or the next DS load accesses
+    nothing through DS (`emit.py ems_restore_problem`, controls in
+    `tests/test_ems_restore_rows.py`); its load of D001h or above calls `rt_ems_restore`,
+    which copies nothing inside an interrupt's handler reloading the DS the handler
+    interrupted (the handler's return then gives the interrupted code its pages, below)
+    and anywhere else copies in as any DS load (counted in `rt_ems_restore_falls`).
+    The rows are the INT 08h chain's restores of the interrupted DS (WC2.EXE+0FD87,
+    STRAX.DRV+1468): with listed code interrupted at DS in the frame they cost 16 page
+    copies an interrupt (MEASURED, P7.6 E5 in speed-plan.md);
   - elsewhere DS and SS accesses are not guarded: a load of D001h or above (`putseg`), a
     service's return (`rt_ems_segments`) copy in the pages their windows meet, and a
     map copies in at once a page DS or SS addresses;

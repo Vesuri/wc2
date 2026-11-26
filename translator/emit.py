@@ -48,7 +48,7 @@ RET, UNKNOWN, SMC = "ret", "unknown", "smc"
 TERMINAL = {"jmp", "jmpf", "ret", "retf", "iret", "hlt"}
 RUNTIME = ("rt_int", "rt_irq", "rt_fault", "rt_halt", "rt_trap", "rt_in8", "rt_in16", "rt_out8", "rt_out16",
            "rt_ret_mismatch", "rt_ret_far_mismatch", "rt_dispatch_near", "rt_dispatch_far", "rt_stop_unknown",
-           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg", "rt_ems_ds", "rt_ems_ds_leave",
+           "rt_vram_mark", "rt_vdrv_depth", "rt_vdrv_return", "rt_irq_pending", "rt_ems_es", "rt_ems_seg", "rt_ems_restore", "rt_ems_ds", "rt_ems_ds_leave",
            "rt_irq_hold")
 # G3 native replacements (annotations/hle.csv): runtime service rt_hle_<service>
 # at a range's first instruction; NE skips the range to the instruction after
@@ -367,6 +367,35 @@ def cell_label(o, k: int | None) -> str:
     return f"R_{o.stub + (0 if k is None else 0x20 + 5 * k):05X}_cell"
 
 
+
+EMS_RESTORE_CONTROL = ("call", "callf", "ret", "int", "int3", "into", "loop", "loope", "loopne", "hlt")
+
+
+def ems_restore_problem(u, off: int) -> str | None:
+    """An ems-ds.csv restore row is a POP DS whose straight-line run to its far
+    exit (IRET, JMPF, RETF) or to the next DS load accesses nothing through DS,
+    so the pages of the DS it loads are not needed before the handler returns
+    (ems.c rt_ems_restore, whose condition is that the POP runs inside IRQ0's
+    handler with the DS the handler interrupted; the exit's target is the
+    row's reason). None, or what fails."""
+    i = u.insns.get(off) if u else None
+    if i is None or i.op != "pop" or getattr(i.operands[0], "name", None) != "ds":
+        return f"is no POP DS: {i}"
+    at = off
+    while True:
+        at += i.size
+        i = u.insns.get(at)
+        if i is None:
+            return f"has no instruction at +{at:05X} before its exit"
+        if i.op in ("movs", "cmps", "lods", "outs", "xlat") and (i.seg or "ds") == "ds" or any(
+                isinstance(o, Mem) and o.seg == "ds" for o in i.operands):
+            return f"accesses DS at +{at:05X} ({i}) before its exit"
+        if i.op in ("iret", "jmpf", "retf") or i.op == "lds" or i.op in ("pop", "mov") and \
+                getattr(i.operands[0], "name", None) == "ds":
+            return None
+        if i.op.startswith("j") or i.op in EMS_RESTORE_CONTROL:
+            return f"transfers at +{at:05X} ({i}) before its exit"
+
 class Program:
     ovls: list = []   # VROOMM overlays (wc2_model.overlays); set in __init__
     hle: dict = {}   # (mod, first) -> ((mod, resume), service); set from hle.csv
@@ -388,13 +417,21 @@ class Program:
         self.align = {r["label"]: int(r["residue"]) for r in image.rows("align.csv")}
         self.outline = {r["label"] for r in image.rows("outline.csv")}
         self.seg_repeat = {r["label"] for r in image.rows("seg-repeat.csv")}
-        # EMS model: code whose DS accesses are guarded (annotations/ems-ds.csv;
-        # lower.py ems_guard, putseg; X-Wing 5f720a2)
+        # EMS model: code whose DS accesses are guarded, and restores of the
+        # interrupted DS (annotations/ems-ds.csv; lower.py ems_guard, putseg;
+        # X-Wing 5f720a2; restores checked in check_ems_restores)
         self.ems_ds: dict[str, list[tuple[int, int]]] = {}
+        self.ems_restores: set[tuple[str, int]] = set()
         for r in image.rows("ems-ds.csv"):
-            if r["kind"] != "guard":
+            first, last = int(r["first"], 16), int(r["last"], 16)
+            if r["kind"] == "restore":
+                if first != last:
+                    raise LowerError(f"ems-ds.csv: {r['module']}+{first:05X} restore is one instruction")
+                self.ems_restores.add((r["module"], first))
+            elif r["kind"] == "guard":
+                self.ems_ds.setdefault(r["module"], []).append((first, last))
+            else:
                 raise LowerError(f"ems-ds.csv: kind {r['kind']!r}")
-            self.ems_ds.setdefault(r["module"], []).append((int(r["first"], 16), int(r["last"], 16)))
         # calls on a deferred interrupt-level path (irq-stops.csv): the call stops
         self.irq_stops = {(r["module"], int(r["offset"], 16)) for r in image.rows("irq-stops.csv")}
         self.outline_sites: dict[str, tuple] = {}  # R27, outline_cold
@@ -449,6 +486,7 @@ class Program:
             if (mod, save) in self.saves:
                 raise LowerError(f"flags.csv: {mod}+{save:05X} has two rows (one restore a save)")
             self.saves[(mod, save)] = (mod, restore)
+        self.check_ems_restores()
         self.hle: dict[tuple[str, int], tuple[tuple[str, int], str]] = {}
         self.hle_args: dict[tuple[str, int], list[str]] = {}
         self.compute_rows: set[tuple[str, int]] = set()
@@ -1073,6 +1111,15 @@ class Program:
         u = self.units[mod]
         return any(lo <= min(u.insns) and max(u.insns) <= hi for lo, hi in self.ems_ds.get(mod, ()))
 
+    def check_ems_restores(self) -> None:
+        """ems-ds.csv restore rows (ems_restore_problem), outside guarded code."""
+        for mod, off in sorted(self.ems_restores):
+            problem = ems_restore_problem(self.units.get(mod), off)
+            if problem is None and self.ems_guarded(mod, off):
+                problem = "lies in guarded code"
+            if problem:
+                raise LowerError(f"ems-ds.csv: {mod}+{off:05X} restore {problem}")
+
     def ems_ctx(self, mod: str, off: int, i, cs: int) -> dict:
         """ems-ds.csv: listed code guards its DS accesses and checks DS at every
         transfer that may leave it (lower.py EMS_EXITS, ems_exit). A near RET in
@@ -1095,7 +1142,8 @@ class Program:
                 and i.operands[0].seg == cs:
             far_inside = self.ems_guarded(mod, u.off_of(cs, i.operands[0].off))
         exit_after = guarded and any(hi == off for lo, hi in self.ems_ds[mod])
-        return dict(ems_ds=guarded, ems_far_inside=far_inside, ems_exit_after=exit_after)
+        return dict(ems_ds=guarded, ems_far_inside=far_inside, ems_exit_after=exit_after,
+                    ems_restore=(mod, off) in self.ems_restores)
 
     def ctx(self, mod: str, off: int, stats: Counter, insn=None) -> Ctx:
         u = self.units[mod]

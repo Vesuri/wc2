@@ -48,6 +48,7 @@ G_DS	equ	1
 	xdef	rt_vram_mark
 	xdef	rt_ems_es
 	xdef	rt_ems_seg
+	xdef	rt_ems_restore
 	xdef	rt_ems_ds
 	xdef	rt_ems_ds_leave
 	xdef	rt_vdrv_return
@@ -79,6 +80,7 @@ G_DS	equ	1
 	xref	rt_vram_rows
 	xref	rt_ems_es_c
 	xref	rt_ems_segments
+	xref	rt_ems_restore_c
 	xref	rt_ems_ds_c
 	xref	rt_ems_ds_left
 	xref	rt_ems_fast
@@ -838,6 +840,15 @@ rt_ems_seg:
 	movem.l	d0-d1/a0-a1,-(a7)
 	addq.b	#1,rt_irq_mask
 	jsr	rt_ems_segments
+	subq.b	#1,rt_irq_mask
+	movem.l	(a7)+,d0-d1/a0-a1
+	rts
+; A restore row's POP DS loaded D001h or above (lower.py putseg, ems-ds.csv
+; restore): ems.c rt_ems_restore_c. Every register kept, as rt_ems_seg.
+rt_ems_restore:
+	movem.l	d0-d1/a0-a1,-(a7)
+	addq.b	#1,rt_irq_mask
+	jsr	rt_ems_restore_c
 	subq.b	#1,rt_irq_mask
 	movem.l	(a7)+,d0-d1/a0-a1
 	rts

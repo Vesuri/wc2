@@ -316,6 +316,8 @@ void rt_ems_segments(void)
  * (rt_ems_segments), counted in rt_ems_irq_remaps. */
 static uint16_t irq_mapped[EMS_PHYS];
 static uint8_t irq_live[EMS_PHYS];
+static uint8_t irq_held;    /* inside the hold: rt_ems_irq_enter to rt_ems_irq_leave */
+static uint16_t irq_ds;     /* the DS the handler interrupted */
 uint32_t rt_ems_irq_remaps;
 /* The guard caches too: the handler may fill them with its own segments
  * between an interrupted guard's reads of them (X-Wing 4c50051), and its maps
@@ -325,6 +327,8 @@ static uint32_t cache_held[6];
 
 void rt_ems_irq_enter(void)
 {
+    irq_held = 1;
+    irq_ds = G_DS;
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         irq_mapped[k] = mapped[k];
         irq_live[k] = live[k];
@@ -347,6 +351,7 @@ void __attribute__((noinline)) rt_ems_cache_restore(void)
 /* Separate and not inlined: host_run.py's sabotage "ems-irq" returns at once. */
 void __attribute__((noinline)) rt_ems_irq_leave(void)
 {
+    irq_held = 0;
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         if (mapped[k] != irq_mapped[k]) {
             ++rt_ems_irq_remaps;
@@ -367,6 +372,26 @@ void __attribute__((noinline)) rt_ems_irq_leave(void)
         }
     }
     rt_ems_cache_restore();
+}
+
+/* A restore row's POP DS (annotations/ems-ds.csv restore, lower.py putseg)
+ * loaded D001h or above: inside an interrupt's handler, reloading the DS it
+ * interrupted, it copies nothing. The run from the POP to the handler's
+ * return accesses nothing through DS (emit.py check_ems_restores, the row's
+ * reason for the exit's target), and rt_ems_irq_leave gives the interrupted
+ * code its pages: as they were, live or in the store for its guards, or with
+ * a mapping the handler changed, DS's and SS's pages live. Anywhere else, the
+ * pages are copied in as at any DS load (rt_ems_segments), counted. Separate
+ * and not inlined: host_run.py's sabotage "ems-restore" returns at once. */
+uint32_t rt_ems_restore_falls;
+
+void __attribute__((noinline)) rt_ems_restore_c(void)
+{
+    if (irq_held && G_DS == irq_ds) {
+        return;
+    }
+    ++rt_ems_restore_falls;
+    rt_ems_segments();
 }
 
 /* Every frame page shows its mapped page (a capture). */

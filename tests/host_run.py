@@ -343,6 +343,7 @@ SABOTAGE = {
     "ems-cache": "the EMS guard caches never emptied (ems.c rt_ems_cache_clear returns at once)",
     "ems-cache-irq": "an interrupt's handler leaves its EMS guard caches (ems.c rt_ems_cache_restore returns at once)",
     "ems-irq": "an interrupt's handler leaves the EMS frame pages as it found them (ems.c rt_ems_irq_leave returns at once)",
+    "ems-restore": "a restore row's POP DS copies nothing anywhere (ems.c rt_ems_restore_c returns at once)",
     "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
              "spins with no service or interrupt (the run's watchdog, at 20 s)",
 }
@@ -553,6 +554,8 @@ class Host:
             e.write(self.syms["rt_ems_cache_restore"], b"\x4e\x75")  # rts
         if sabotage == "ems-irq":
             e.write(self.syms["rt_ems_irq_leave"], b"\x4e\x75")  # rts
+        if sabotage == "ems-restore":
+            e.write(self.syms["rt_ems_restore_c"], b"\x4e\x75")  # rts
         if sabotage == "key-hook":
             e.write(self.syms["rt_key_hook"], bytes.fromhex("4e75"))   # rts
         if sabotage == "idle":   # moveq #0,d0; rts
@@ -2229,7 +2232,11 @@ def ems_irq_problems(elf: Path | None, sabotage: str | None = None) -> list[str]
     the interrupted DS at E030h in listed code (rt_ems_ds: the base on the store
     page) the page is in the store again with the handler's byte; with DS at
     E030h outside listed code (rt_ems_seg: live) the handler remaps the page
-    away and back with its DS elsewhere, and the page is live again."""
+    away and back with its DS elsewhere, and the page is live again. Then a
+    restore row's POP DS (rt_ems_restore, annotations/ems-ds.csv) with the
+    interrupted DS at E030h in listed code: inside the handler it copies
+    nothing and the page is in the store after the return; outside a handler,
+    or inside one with another DS (E010h), it copies the page in."""
     problems = []
     plain = TOP - 0x7FFF - 0xE0300
     frame0 = TOP - (EMS_FRAME + EMS_PAGE) + 1
@@ -2288,6 +2295,52 @@ def ems_irq_problems(elf: Path | None, sabotage: str | None = None) -> list[str]
         if not ok or live() != before or (listed and byte != b"\x5a"):
             problems.append(f"EMS over an interrupt's handler ({'listed' if listed else 'unlisted'} DS E030h): "
                             f"frame page live {live()}, want {before}; store byte {byte.hex()} "
+                            f"(pc={h.r('pc'):x})")
+    for held, seg in ((True, 0xE030), (False, 0xE030), (True, 0xE010)):
+        h = Host(image.M.REF, sabotage, elf=elf)
+        ret = h.syms["plat_exit"]
+        h.e.write(h.syms["rt_guest"], TOP.to_bytes(4, "big"))
+        rr = h.syms["rt_r"]
+
+        def call(fn, d6=0, d7=0):
+            h.e.reg_write(U.M68K["sr"], 0x2700)
+            h.e.reg_write(U.M68K["a7"], STACK_TOP - 8)
+            h.e.write(STACK_TOP - 8, ret.to_bytes(4, "big"))
+            h.e.reg_write(U.M68K["a6"], TOP)
+            h.e.reg_write(U.M68K["d6"], d6)
+            h.e.reg_write(U.M68K["d7"], d7)
+            h.e.start(h.syms[fn], ret, timeout_us=1_000_000)
+            return h.r("pc") == ret
+
+        def int67(ax, bx=0, dx=0):
+            h.e.write(rr, ax.to_bytes(2, "big") + bytes(2) + dx.to_bytes(2, "big") + bx.to_bytes(2, "big"))
+            ok = call("rt_int67")
+            return ok, int.from_bytes(h.mem(rr + 4, 2), "big")
+
+        def ds(v):
+            h.e.write(G_DS, v.to_bytes(2, "big"))
+
+        def live():
+            return h.mem(h.syms["rt_ems_live"], 1)[0]
+
+        ok, handle = int67(0x4300, bx=2)
+        ok = ok and int67(0x4400, bx=0, dx=handle)[0]
+        ds(0xE030)
+        ok = ok and call("rt_ems_ds", 0x40, 0x0100) and not live()
+        h.e.write(TOP - 0x23, IRQ0_HANDLER.to_bytes(4, "big"))
+        if held:
+            ok = ok and call("rt_irq0_enter")
+            ds(0x1000)
+        ds(seg)
+        ok = ok and call("rt_ems_restore")
+        want = 0 if held and seg == 0xE030 else 1
+        got = live()
+        if held:
+            ok = ok and call("rt_irq0_leave")
+        after = live()
+        if not ok or got != want or held and after != 0:
+            problems.append(f"EMS restore of DS {seg:04x} {'inside' if held else 'outside'} an interrupt's "
+                            f"handler: frame page live {got}, want {want}; after the return {after} "
                             f"(pc={h.r('pc'):x})")
     return problems
 

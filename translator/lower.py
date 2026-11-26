@@ -138,6 +138,7 @@ class Ctx:
     vram: bool = False                        # graphics driver: stores to A000h mark rows (D9)
     ems: bool = False                         # EMS model: ES accesses guarded, DS/SS loads checked
     ems_ds: bool = False                      # listed code (ems-ds.csv guard): DS accesses guarded too
+    ems_restore: bool = False                 # ems-ds.csv restore: a POP DS of the interrupted DS (rt_ems_restore)
     ems_far_inside: bool = False              # listed code's far transfer into listed code
     ems_exit_after: bool = False              # a listed range's last instruction: its fall-through leaves
     driver_call: bool = False                 # D9: PLINK thunk jump or far call into the graphics driver
@@ -375,13 +376,17 @@ class Lowering:
         if self.c.ems and s in ("ds", "ss") and not (s == "ds" and self.c.ems_ds):
             # EMS model: DS and SS accesses are not guarded, so a load whose
             # window may meet the frame has its pages copied in (rt_ems_seg);
-            # listed code guards its DS accesses instead (ems-ds.csv)
+            # listed code guards its DS accesses instead (ems-ds.csv); a
+            # restore row's POP DS of the interrupted DS inside IRQ0's handler
+            # copies nothing (rt_ems_restore: the handler's return puts the
+            # interrupted code's pages back, ems.c rt_ems_irq_leave)
             k = sum(1 for x in self.cold if x.startswith(f"{self.c.label}_es"))
             cold, back = f"{self.c.label}_es{k}", f"{self.c.label}_et{k}"
+            entry = "rt_ems_restore" if s == "ds" and self.c.ems_restore else "rt_ems_seg"
             self.e(f"cmp.w #$d001,{src}")
             self.e(f"bcc {cold}")
             self.at(back)
-            self.cold += [f"{cold}:", "\tjsr rt_ems_seg", f"\tbra {back}"]
+            self.cold += [f"{cold}:", f"\tjsr {entry}", f"\tbra {back}"]
             self.stats["EMS segment check"] += 1
         self.e(f"lsl.l #4,{src}")
         self.e(f"lea -$7fff(a6),{SEGBASE[s]}")

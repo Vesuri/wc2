@@ -659,6 +659,7 @@ SABOTAGE = [
      "\tjsr rt_ems_ds\n\tmoveq #0,d7\n\tmove.w G_DS(a6),d7\n\tlsl.l #4,d7\n"
      "\tlea -$7fff(a6),a3\n\tsuba.l d7,a3"), "boundary"),
     ("EMS string guard ignores CX", ems_string_one, "boundary"),
+    ("EMS restore copies in as any DS load", sub(r"^\tjsr rt_ems_restore$", "\tjsr rt_ems_seg"), "boundary"),
     ("TOP off by one", top_off_by_one, "boundary"),
     ("word at its byte address", word_at_byte_address, "boundary"),
     ("adc/rcl ignore CF", drop_after("move.b G_FL+1(a6),d7", "lsr.b #1,d7"), "boundary"),

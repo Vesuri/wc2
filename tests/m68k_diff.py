@@ -60,7 +60,7 @@ PENDING = STATE + 0x800     # rt_irq_pending
 SHADOW = 0xF00000           # EMS store stand-in: guest host byte h's shadow is h + SHADOW
 STUBS = ("T_JUMP", "T_CALL", "T_JUMPF", "T_CALLF", "T_INT", "T_FAULT", "T_HALT", "T_END",
          "rt_in8", "rt_in16", "rt_out8", "rt_out16", "T_RET", "T_TRAP", "rt_ems_es", "rt_ems_seg",
-         "rt_ems_ds", "rt_ems_ds_leave")
+         "rt_ems_ds", "rt_ems_ds_leave", "rt_ems_restore")
 STUB_AT = {n: STUB + 4 * k for k, n in enumerate(STUBS)}
 REGS = ("ax", "bx", "cx", "dx", "sp", "bp", "si", "di")
 MIRROR = {"sp": 0x7FFF, "bp": 0x7FFF}   # held as offset ^ 7FFFh
@@ -195,15 +195,17 @@ def ems_want(i, seg: str, regs: dict, flags: dict) -> tuple[int, int | None]:
     return max(1, m.width // 8), (m.disp + sum(regs[r] for r in (m.base, m.index) if r)) & 0xFFFF
 
 
-def ems_diffs(i, regs: dict, flags: dict, out: dict, calls: list, stop, ds_mode: bool) -> list[str]:
+def ems_diffs(i, regs: dict, flags: dict, out: dict, calls: list, stop, ds_mode: bool,
+              restore: bool = False) -> list[str]:
     """The guards' runtime calls: rt_ems_es before an ES access iff ES >= D001h,
     with the access's offset and size; in listed code (ds_mode, X-Wing's)
     rt_ems_ds the same for DS, no rt_ems_seg at a DS load, and rt_ems_ds_leave
     before an exit iff DS >= D001h; elsewhere rt_ems_seg after a DS or SS load
-    iff the value loaded is D001h or above."""
+    iff the value loaded is D001h or above, but for a restore row's POP DS
+    (restore), which calls rt_ems_restore instead."""
     diffs = []
     by = {n: [c for c in calls if c[0] == n] for n in ("rt_ems_es", "rt_ems_ds", "rt_ems_seg",
-                                                        "rt_ems_ds_leave")}
+                                                        "rt_ems_ds_leave", "rt_ems_restore")}
     for seg, n, has in (("es", "rt_ems_es", ems_es(i)), ("ds", "rt_ems_ds", ds_mode and ems_ds(i))):
         got = by[n]
         if not has:
@@ -225,11 +227,15 @@ def ems_diffs(i, regs: dict, flags: dict, out: dict, calls: list, stop, ds_mode:
         diffs.append(f"rt_ems_ds_leave {'missing' if leave else 'called'} at ds={regs['ds']:04x}")
     loaded = [s for s in ("ds", "ss") if (i.op == "lds" and s == "ds") or
               (loads_segment(i) and getattr(i.operands[0], "name", None) == s)]
+    seg_loads = [s for s in loaded if not (restore and s == "ds")]
     want = any(out[s] >= 0xD001 and stop not in ("T_FAULT", "T_INT") and not (ds_mode and s == "ds")
-               for s in loaded)
+               for s in seg_loads)
     if want != bool(by["rt_ems_seg"]):
         diffs.append(f"rt_ems_seg {'missing' if want else 'called'} at "
                      + " ".join(f"{s}={out[s]:04x}" for s in loaded))
+    want = restore and "ds" in loaded and out["ds"] >= 0xD001 and stop not in ("T_FAULT", "T_INT")
+    if want != bool(by["rt_ems_restore"]):
+        diffs.append(f"rt_ems_restore {'missing' if want else 'called'} at ds={out['ds']:04x}")
     return diffs
 
 
@@ -310,7 +316,7 @@ class M68k:
                 d6 = self.r("d6")
                 self.e.reg_write(U.M68K["d6"], d6 & ~(0xFF if w == 8 else 0xFFFF) | v)
                 self.e.reg_write(U.M68K["pc"], addr + 2)
-            elif n in ("rt_ems_es", "rt_ems_seg", "rt_ems_ds", "rt_ems_ds_leave"):
+            elif n in ("rt_ems_es", "rt_ems_seg", "rt_ems_ds", "rt_ems_ds_leave", "rt_ems_restore"):
                 st = self.e.read(STATE, 16)
                 es, ds = int.from_bytes(st[4:6], "big"), int.from_bytes(st[0:2], "big")
                 self.ems_calls.append((n, self.r("d6"), self.r("d7"), es, ds))
@@ -581,15 +587,19 @@ class Harness(X.Harness):
             self.ems_variant(code, label, n, insns, case, overrides)
         if n == 1 and ems_ds_case(insns[0]):
             self.ems_variant(code, label, n, insns, case, overrides, ds=True)
+        if n == 1 and insns[0].op == "pop" and getattr(insns[0].operands[0], "name", None) == "ds":
+            self.ems_variant(code, label, n, insns, case, overrides, restore=True)
         if len(self.pending) >= BATCH:
             self.flush()
 
-    def ems_variant(self, code, label, n, insns, case, overrides, ds: bool = False) -> None:
+    def ems_variant(self, code, label, n, insns, case, overrides, ds: bool = False,
+                    restore: bool = False) -> None:
         """EMS model: the case lowered with its guards (Ctx.ems), ES (or the value
         a DS/SS load takes from a register) set to one of the guard's edges,
         cycling; compare() checks the semantics and the runtime calls. `ds`: as
         listed code (Ctx.ems_ds), DS at the edge for a DS access or an exit
-        (X-Wing 5f720a2)."""
+        (X-Wing 5f720a2). `restore`: a POP DS as an ems-ds.csv restore row
+        (Ctx.ems_restore)."""
         regs, flags, flagsx, ip, patches = case
         i = insns[0]
         edge = EMS_EDGES[self.lowered["ems case"] % len(EMS_EDGES)]
@@ -613,13 +623,14 @@ class Harness(X.Harness):
         _, undef, (err, out, fl, mem, ints, outs) = side
         tag = f"c{len(self.pending)}"
         try:
-            text, st = lower_case(insns, regs2["cs"], tag, insns[-1].next_ip, ems=True, ems_ds=ds)
+            text, st = lower_case(insns, regs2["cs"], tag, insns[-1].next_ip, ems=True, ems_ds=ds,
+                                  ems_restore=restore)
         except LowerError as e:
             self.bad.append(f"{label} ems {code.hex()}: lowering: {e}")
             return
         self.lowered.update(st)
         self.lowered["ems case"] += 1
-        self.pending.append((label + (" emsds" if ds else " ems"), code, case2, undef, (err, out, fl, unruns(mem), ints, outs),
+        self.pending.append((label + (" emsds" if ds else " emsrestore" if restore else " ems"), code, case2, undef, (err, out, fl, unruns(mem), ints, outs),
                              text, regs2, flags, insns[-1].op))
 
     def side(self, code: bytes, n: int, case) -> tuple:
@@ -781,9 +792,9 @@ class Harness(X.Harness):
             diffs.append(f"out 68k={mouts} x86={outs}")
         if stop in (None,) and not info["err"]:
             diffs.append("no exit (instruction limit)")
-        if label.endswith((" ems", " emsds")):
+        if label.endswith((" ems", " emsds", " emsrestore")):
             diffs += ems_diffs(decode(code, case[3], 0), regs, flags, out, info["ems"], stop,
-                               label.endswith(" emsds"))
+                               label.endswith(" emsds"), label.endswith(" emsrestore"))
         elif info["ems"]:
             diffs.append(f"EMS runtime calls without the model: {info['ems']}")
         self.count[label] += 1
