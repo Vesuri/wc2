@@ -18,13 +18,6 @@ Items are in work order; numbers are identifiers and are not reused.
     block compare inside the marked rows can save conversion; first measure how many written
     32-pixel blocks change. Then the Wing Commander slave's converter inside the marked rows,
     with the owner's OK (it revisits SWOTL's S1). Acceptance: the display checks, frames A/B.
-11. Flag liveness through the dispatcher (P7.8): 59 PUSHF and 2 INT sites read the whole
-    FLAGS word and make every flag live at the dispatcher, so `tests/audit.csv` allows
-    1,931 full-flag materialisations (MEASURED, `make gen`). Proved save/restore pairs in
-    `annotations/flags.csv` (DERIVED by reading) shrink it; start from X-Wing's four
-    overlay-manager rows (the same Borland overlay manager). Acceptance: the
-    pairs listed with their evidence, the audit counts lowered to the new measurement, the
-    68020 block differential passing.
 35. The other translator steps (P7.8): the profile-chosen annotations regenerated from
     the flight windows, then the forms `lowering_cost.py` ranks. Acceptance per step: the
     meter's change; the differentials, guards and sabotages.

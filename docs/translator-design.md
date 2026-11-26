@@ -299,7 +299,10 @@ diffs directly); relocated words in instructions are emitted as
 `tables.csv` (cs: word tables sized by evidence other than an MS C bounds
 check, read by the sweep), `runtime.csv` (runtime entries: name, `seg_ip` the CS a seed without one takes,
 class, evidence), `self-modifying.csv` (D16 regions and cell forms),
-`flags.csv` (PUSHF/POPF pairs that only save and restore FLAGS),
+`flags.csv` (PUSHF/POPF pairs that only save and restore FLAGS: the save keeps the
+status flags live after its POPF; a row whose save is no PUSHF or restore no POPF, or
+a second row for one save, is a translation error; the program block test compares
+the saved word's other status bits as dead, as host lockstep's dead stack),
 `hle.csv` (guest range, service, reason, oracle; below), `align.csv`
 (R8 pads; `tools/align_targets.py`), `bp-regions.csv` (BP writes whose
 component gets a guarded copy; a profile choice, `tools/bp_regions.py`),

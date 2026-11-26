@@ -873,11 +873,21 @@ def main(argv=None, on_batch=None) -> int:
                 h.mem[a:a + len(d)] = d
             took = device = False
             oracle_steps = len(run)
+            # a flags.csv save (translator emit.py saves): the PUSHF's word keeps
+            # the status flags live after its POPF and DF, IF and the rest; the
+            # others are the translation's dead flags, not compared in that word
+            word_mask = {}
             try:
                 for _k in range(len(run)):
                     if len(run) > 1 and retf_on_device(u.insns[run[_k]], s.regs):
                         device = True
                         break
+                    if u.insns[run[_k]].op == "pushf" and (mod, run[_k]) in p.saves:
+                        kept = p.live_out.get(p.saves[(mod, run[_k])], set())
+                        keep = 0xFFFF & ~sum(1 << FLAG_BIT[f] for f in STATUS if f not in kept)
+                        at = s.regs["ss"] * 16 + ((s.regs["sp"] - 2) & 0xFFFF)
+                        word_mask[at] = keep & 0xFF     # the HMA too: no 20-bit wrap
+                        word_mask[at + 1] = keep >> 8
                     ex, _i = step(s)
                     if ex.kind in ("int", "fault"):
                         break
@@ -1028,7 +1038,7 @@ def main(argv=None, on_batch=None) -> int:
             for a in sorted(set(umem) | mwrites):
                 want = umem.get(a, patched.get(a, h.bg[a]))
                 got = mmem.get(a, m.gread(a, 1)[0])
-                if got != want:
+                if (got ^ want) & word_mask.get(a, 0xFF):
                     diffs.append(f"mem {a:05x} 68k={got:02x} x86={want:02x}")
                     break
             if mouts != outs:

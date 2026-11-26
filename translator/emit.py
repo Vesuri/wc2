@@ -439,8 +439,16 @@ class Program:
         self.far_rows = {(m, o) for m, o, why in seeds if not self.near_only(why)}
         # PUSHF ... POPF pairs that only save and restore FLAGS (annotations/flags.csv):
         # the save reads what is live after the restore.
-        self.saves = {(r["module"], int(r["save"], 16)): (r["module"], int(r["restore"], 16))
-                      for r in image.rows("flags.csv")}
+        self.saves = {}
+        for r in image.rows("flags.csv"):
+            mod, save, restore = r["module"], int(r["save"], 16), int(r["restore"], 16)
+            u = self.units.get(mod)
+            si, ri = (u.insns.get(save), u.insns.get(restore)) if u else (None, None)
+            if si is None or si.op != "pushf" or ri is None or ri.op != "popf":
+                raise LowerError(f"flags.csv: {mod}+{save:05X}..{restore:05X} is no PUSHF ... POPF")
+            if (mod, save) in self.saves:
+                raise LowerError(f"flags.csv: {mod}+{save:05X} has two rows (one restore a save)")
+            self.saves[(mod, save)] = (mod, restore)
         self.hle: dict[tuple[str, int], tuple[tuple[str, int], str]] = {}
         self.hle_args: dict[tuple[str, int], list[str]] = {}
         self.compute_rows: set[tuple[str, int]] = set()
