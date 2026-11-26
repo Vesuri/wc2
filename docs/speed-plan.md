@@ -496,6 +496,12 @@ history at `781975e` and §5.)
 - WC2 P7.6 "EMS `copy` writes only the longs that differ": `copy` 21.25% → 31.59% of the
   fight profile, visit 160 → 200 ms, drawn 300 → 340 ms; m5f meter +8.69% (runtime
   +38.7 M). Reading both pages costs more than the writes it saves; reverted.
+- WC2 P7.6 "the EMS guard's cache hit inline in generated code" (X-Wing `b5dda4c`'s hit,
+  without its held guards; on E4): 1,938 ES and 320 DS sites; meter m5f 389.54 M →
+  389.22 M (−0.08%), m4 369.44 M → 369.62 M (+0.05%): the runtime −0.69 M and −0.44 M,
+  the generated code +0.38 M and +0.63 M; fight fixture visit median 120 → 140 ms
+  (one run). E4's runtime hit is a few instructions, so only the call is saved; the
+  differential (0 mismatches) and its three plants (caught) passed; reverted.
 
 - S1 shape "compare each present against a shadow copy to find changed
   rows": rejected by the user before building; every present would read
