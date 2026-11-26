@@ -610,10 +610,12 @@ void plat_sb_block(uint32_t linear, uint32_t length, uint32_t rate)
  * after the previous step (a screen's own data: the reference's open order);
  * uNAME:KEY: KEY now and every SCRIPT_REPEAT frames until the guest opens NAME
  * (Esc through a cinematic's scenes, however long each takes to load);
- * w:KEY: KEY now and every SCRIPT_REPEAT frames until a console read waits for
- * a key (rt_key_waits), each held until the guest has read the mouse twice
- * (a menu whose hotkey takes a press only at some of its input polls, as WC2's
- * personnel screen: docs/amiga-arch.md "Input");
+ * w:KEY: KEY now and then every SCRIPT_REPEAT frames less 0-7 in turn until a
+ * console read waits for a key (rt_key_waits), each held until the guest has
+ * read the mouse twice (a menu whose hotkey takes a press only at some of its
+ * input polls, as WC2's personnel screen: docs/amiga-arch.md "Input"; the shift
+ * keeps a screen whose polls keep pace with the repeat from seeing every press
+ * at the same poll);
  * keys a-z 0-9 enter esc space up down left right or $hex raw codes, mouse
  * buttons lmb rmb, port 2's stick ju jd jl jr (directions) jf jg (buttons 1
  * and 2), alt+KEY, ctrl+KEY or shift+KEY with the left Alt, Ctrl or Shift held around it, a held step name*N (N frames), the proportional stick's pot counts
@@ -644,6 +646,7 @@ static int key_up = -1;         /* the held raw key or SCRIPT_LMB/RMB */
 static int key_mod = -1;        /* the modifier held around it */
 static const char *wait_step = 0;  /* the w step being repeated */
 static ULONG wait_waits = 0;    /* rt_key_waits when it began */
+static ULONG wait_presses = 0;  /* the w step's presses: the repeat's shift */
 #define RAW_LALT 0x64
 #define RAW_CTRL 0x63
 #define RAW_LSHIFT 0x60
@@ -880,7 +883,11 @@ static void key_script_step(void)
             repeat_frame = amiga_frames - SCRIPT_REPEAT;
         }
         if (rt_key_waits == wait_waits) {
+            ULONG last = repeat_frame;
             script_repeat(p, 1);
+            if (repeat_frame != last) {
+                repeat_frame -= wait_presses++ & 7;
+            }
             return;
         }
         wait_step = 0;

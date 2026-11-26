@@ -201,7 +201,9 @@ taken only when the key's first poll is the reader's (in about half the runs), w
 the hold, as measured before (7 of 12, 2 of 4 and 0 of 4 runs at 5, 10 and 20 fields;
 a 5-field press could also fall between two polls). The smoke's `w:shift+c` holds each
 press over two mouse reads and repeats it until the name prompt waits on the console
-(`rt_key_waits`). A click 5 fields
+(`rt_key_waits`). Its repeat is 60 frames less 0–7 in turn: with D18's skip the screen's polls
+kept pace with a fixed 60, and every press met the menu's poll (0 of 44 presses taken in
+one run, 2 runs of 2 stalled; with the shift 3 of 3 passed, MEASURED 2026-11-26). A click 5 fields
 after a move came before the hover highlight; a later one was dropped; the menu snaps the
 pointer to the item under it (an AX=4 of its own, which lost a following move); a held
 button repeats clicks every 5 fields; an Enter there acts as a click and, on no item,
