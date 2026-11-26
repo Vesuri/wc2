@@ -6,12 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-8. WC1 lineage on the Amiga (P7.10; desk work beside items 32–35): P7.3's hot routines
-   (speed-plan §9, their PC WC1 match from `tools/wc1_counterparts.py`) matched to the CD32
-   WC1 ([wc1-wc2-comparison.md](wc1-wc2-comparison.md)), the 3D maths module (R:0E9B, WC1
-   R:077E) and `SUPERTM.DRV` first. Acceptance: `docs/wc1-cross-reference.md` with each hot routine's
-   PC WC1 and CD32 counterparts and their evidence, and the CD32 routine's cost on the
-   68030 model where the Wing Commander project measured it.
 33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E4 done): STRAX.DRV's
     OPL write delay (`+0714`, 6–7% of the fight window in PIT counts and port calls; a
     native wait needs the owner's authorization), the port call path

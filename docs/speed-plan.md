@@ -466,17 +466,17 @@ Inclusive rows overlap; do not add them.
 
 | Routine | Own | Inclusive | Calls a visit | Own a call | Inclusive a call | PC WC1 |
 |---|---:|---:|---:|---:|---:|---|
-| `WC2.EXE+0E9B4` (3D maths module R:0E9B) | 4.00% | 4.00% | 118 | 2,851 | 2,851 | R:077E:0000, 0.930 |
+| `WC2.EXE+0E9B4` (3D maths module R:0E9B) | 4.00% | 4.00% | 118 | 2,851 | 2,851 | R:077E:000C, identical bytes (span; the function-level 0.930 is a split artefact) |
 | `WC2.EXE+0EA42` | 1.81% | 1.81% | 382 | 398 | 398 | R:077E:009A, identical bytes |
-| `WC2.EXE+0ECEE` | 1.41% | 1.41% | 160 | 739 | 739 | R:077E:0330, 0.944 |
-| `WC2.EXE+0EBF8` | 0.77% | 0.77% | 10 | 6,453 | 6,453 | none (best 0.661) |
+| `WC2.EXE+0ECEE` | 1.41% | 1.41% | 160 | 739 | 739 | R:077E:0392, same code (span) |
+| `WC2.EXE+0EBF8` | 0.77% | 0.77% | 10 | 6,453 | 6,453 | R:077E:023A, same code (span) |
 | `WC2.EXE+0EDBD` | 0.53% | 2.37% | 80 | 561 | 2,488 | R:077E:0461, identical bytes |
-| `WC2.EXE+0ED8E` | 0.43% | 0.43% | 160 | 225 | 225 | R:077E:0330, 0.944 |
+| `WC2.EXE+0ED8E` | 0.43% | 0.43% | 160 | 225 | 225 | R:077E:0432, identical bytes (span) |
 | `WC2.EXE+0C5F2` | 0.52% | 1.54% | 73 | 594 | 1,776 | WC1 overlay O:110B+0924, same code |
 | `WC2.EXE+0C35F` | 0.38% | 0.38% | 76 | 422 | 422 | O:110B+0568, 0.923 |
 | `WC2.EXE+0E7E1`, `+0E902` (R:0E78) | 0.46% | 3.25% | 0.5 | 77,377 | 545,795 | R:0758:0041, 0.961 |
 | `WC2.EXE+0DE57` | 0.29% | 4.75% | 0.5 | 48,613 | 798,810 | O:110B+22AB, 0.749 |
-| `SUPERTM.DRV+07460` (scaled sprites) | 2.01% | 2.99% | 0.5 | 337,905 | 501,800 | PC WC1's `SUPERTM.DRV`, identical |
+| `SUPERTM.DRV+07460` (entry 4, span-list copy) | 2.01% | 2.99% | 0.5 | 337,905 | 501,800 | PC WC1's `SUPERTM.DRV`, identical |
 | `SUPERTM.DRV+015F5` | — | 2.88% | 6.5 | — | 37,297 | identical |
 | `TM.DRV+00E93` (sprite blit) | 1.73% | 9.32% | 16.7 | 8,702 | 47,014 | no shared entry |
 | `TM.DRV+02C07` | 0.91% | 1.69% | 13 | 5,861 | 10,950 | no shared entry |
@@ -488,7 +488,7 @@ Inclusive rows overlap; do not add them.
 Quiet flight ranks the same routines (`WC2.EXE+0E9B4` 4.05%, 117 a visit, 2,684 a call;
 `SUPERTM.DRV+01A5B` 1.32%, 78 a visit). The 3D maths module (R:0E9B, WC1 R:077E) is the
 largest guest code, about 8% of a visit, and is WC1's nearly unchanged: the CD32
-counterpart (port-plan P7.10, open-work 8) prices its native version. The frame's own
+counterpart prices its native version ([wc1-cross-reference.md](wc1-cross-reference.md): each routine's PC WC1 and CD32 counterpart; spans from `tools/wc1_span.py`, MEASURED). The frame's own
 routines (R:03CA, R:073C, R:106C) have no WC1 counterpart.
 
 The x86 forms with the most cycles (fight, `lowering_cost.py`): `rep movsw` 1.66% (289
