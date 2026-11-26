@@ -12,8 +12,9 @@ Items are in work order; numbers are identifiers and are not reused.
    R:077E) and `SUPERTM.DRV` first. Acceptance: `docs/wc1-cross-reference.md` with each hot routine's
    PC WC1 and CD32 counterparts and their evidence, and the CD32 routine's cost on the
    68030 model where the Wing Commander project measured it.
-33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E4 done): the PIT
-    counts (`plat_pit_count`, 224 in the fight window, 0.44 ms each), the port call path
+33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E4 done): STRAX.DRV's
+    OPL write delay (`+0714`, 6–7% of the fight window in PIT counts and port calls; a
+    native wait needs the owner's authorization), the port call path
     (`rt_port_in`/`rt_port_out`), then the EMS model's INT 67h copies (`copy` 3–7% of the
     fight profile) and `refresh` (1%). Acceptance: the meter's change for each; the EMS
     test, `ems_guard_problems`, `ems_irq_problems` and their plants; lockstep at m4 and m5.

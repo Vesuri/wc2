@@ -63,12 +63,20 @@ costs unless inclusive is said):
 | generated guest code | 48.8 ms (29.3%) | 48.5 ms (31.5%) | 226 K x86 instructions a visit, 10.8 cycle units each (2.5 68k instructions): `WC2.EXE` 9.0, `STRAX.DRV` 11.7, `TM.DRV` 21.9, `SUPERTM.DRV` 22.6 (`lowering_cost.py`, `profile_report.py`) |
 | present (inclusive) | 23.8 ms (14.3%) | 23.8 ms (15.5%) | the palette 11.6 ms (`plat_palette`: the DAC is written every frame, so every present rebuilds 256 colours and the copper list), the copy and c2p call 9.6 ms (`plat_present`), `present` itself 2.6 ms |
 | other hunks: the c2p | 17.6 ms (10.5%) | 18.7 ms (12.2%) | the c2p (`c2p1x1_8_c5_bm`, the only code in its own section, MEASURED by the map) and OS calls; that it is mostly the c2p is INFERRED. The game writes 178–192 of the 200 rows a frame (m5f census, median 180; 31.6 KB, 88% from `SUPERTM.DRV+074BE`), so the changed-row marks convert about 90% of the screen |
-| PIT and port I/O | 17.4 ms (10.5%) | 11.3 ms (7.4%) | `plat_pit_count` 8.3 ms (224 counts in the window, 0.44 ms each: more than its CIA reads; cause open), `rt_port_in`/`rt_port_out` 9.1 ms |
+| PIT and port I/O | 17.4 ms (10.5%) | 11.3 ms (7.4%) | `plat_pit_count` 8.3 ms (5,053 counts in 99 fields of a later run, about 660 cycle units, 13 µs, each, two thirds its three CIA reads; P7.3's 224 were the call tree's scope count; the counts are STRAX.DRV's OPL write delay, below), `rt_port_in`/`rt_port_out` 9.1 ms |
 | the field wait (`pace`) | 7.7 ms (4.6%) | 8.1 ms (5.3%) | `rt_video_frame`'s spin (`rt_frame_cap`): INT 33h is called twice a visit (24 in 12), and an AX=3 read in the previous one's field waits for the next (that the second call is that read is INFERRED) |
 | marks, FM, effects, IRQ | 16.8 ms | 13.6 ms | `rt_vram_mark` and `vram_span` 4.1 ms, `fm_field` and `render` 5.2 ms (fight), `rt_sfx_read` 2.1 ms, IRQ transitions 3.5 ms |
 
 Not in flight: the 3DAh retrace spin (no `plat_vga_status` in either profile; it was 28.4%
 of the intro, P5.4) and the frame limiter (`WC2.EXE+10636`, 0.38%: it passes at once).
+
+The PIT counts (P7.6, MEASURED: `tools/perf_flight.py --keep-capture` on E4, per-PC
+cycles of the capture): `STRAX.DRV+0714`–`0746` waits CX PIT counts (latch with `out 43h`,
+two `in 40h`, the elapsed counts summed until CX), and its OPL write (`+0747`) calls it
+with CX 0Ah. One iteration (two latches, four reads, two `plat_pit_count`) outlasts the
+ten counts, so the reads' cost is the wait: `plat_pit_count` 3.21%, `rt_port_in` 1.96%,
+`rt_port_out` 1.34%, `rt_out8` 0.54%, the loop 0.55% of the fight window, about 6–7%. The
+host meter cannot see it (the host platform's PIT is the harness's).
 
 P7.6 steps (open-work 33; MEASURED, the image of each commit):
 
