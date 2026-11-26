@@ -344,6 +344,8 @@ SABOTAGE = {
     "ems-cache-irq": "an interrupt's handler leaves its EMS guard caches (ems.c rt_ems_cache_restore returns at once)",
     "ems-irq": "an interrupt's handler leaves the EMS frame pages as it found them (ems.c rt_ems_irq_leave returns at once)",
     "ems-restore": "a restore row's POP DS copies nothing anywhere (ems.c rt_ems_restore_c returns at once)",
+    "ems-alias": "the EMS guard's table ignores live aliases (ems.c refresh's alias loop skipped)",
+    "ems-leave-refresh": "an interrupt's return that hides a page leaves the EMS guard's table as the handler left it (ems.c rt_ems_irq_leave's refresh call dropped)",
     "stall": "the code at R_0FA8F (a poll point m1 reaches) replaced by a 68k bra.s *: the guest "
              "spins with no service or interrupt (the run's watchdog, at 20 s)",
 }
@@ -554,6 +556,25 @@ class Host:
             e.write(self.syms["rt_ems_cache_restore"], b"\x4e\x75")  # rts
         if sabotage == "ems-irq":
             e.write(self.syms["rt_ems_irq_leave"], b"\x4e\x75")  # rts
+        if sabotage == "ems-alias":     # refresh's tst.b dN (any page live); beq.s -> bra.s
+            a = self.syms["refresh"]
+            code = e.read(a, 0x80)
+            k = next(k for k in range(0, len(code) - 3, 2)
+                     if code[k] == 0x4A and code[k + 1] & 0xF8 == 0 and code[k + 2] == 0x67)
+            e.write(a + k + 2, b"\x60")
+        if sabotage == "ems-leave-refresh":    # rt_ems_irq_leave's call of refresh -> nops
+            a, r = self.syms["rt_ems_irq_leave"], self.syms["refresh"]
+            code = e.read(a, 0x200)
+            for k in range(0, len(code) - 4, 2):
+                if code[k:k + 2] == b"\x4e\xb9" and int.from_bytes(code[k + 2:k + 6], "big") == r:
+                    e.write(a + k, b"\x4e\x71" * 3)                       # jsr refresh
+                    break
+                if code[k:k + 2] in (b"\x61\x00", b"\x4e\xba") and \
+                        a + k + 2 + int.from_bytes(code[k + 2:k + 4], "big", signed=True) == r:
+                    e.write(a + k, b"\x4e\x71" * 2)                       # bsr.w, jsr d16(pc)
+                    break
+            else:
+                raise AssertionError("ems-leave-refresh: no call of refresh in rt_ems_irq_leave")
         if sabotage == "ems-restore":
             e.write(self.syms["rt_ems_restore_c"], b"\x4e\x75")  # rts
         if sabotage == "key-hook":
@@ -2219,6 +2240,42 @@ def ems_guard_problems(elf: Path | None, sabotage: str | None = None) -> list[st
             if not ok or back != held or not any(any(b) for b in held):
                 problems.append(f"EMS guard cache {name} around IRQ0's handler: {[b.hex() for b in back]}, "
                                 f"want {[b.hex() for b in held]} (pc={h.r('pc'):x})")
+    # A live alias (ems.c refresh): logical page 0 at frame page 0, live (DS E000h's
+    # load), then at frame page 1 too; an ES access in frame page 1 takes the C path
+    # (rt_ems_fast 1), which copies page 1 in, so the base is the plain one.
+    h = Host(image.M.REF, sabotage, elf=elf)
+    ret = h.syms["plat_exit"]
+    h.e.write(h.syms["rt_guest"], TOP.to_bytes(4, "big"))
+    rr = h.syms["rt_r"]
+
+    def call(fn, d6=0, d7=0):
+        h.e.reg_write(U.M68K["sr"], 0x2700)
+        h.e.reg_write(U.M68K["a7"], STACK_TOP - 8)
+        h.e.write(STACK_TOP - 8, ret.to_bytes(4, "big"))
+        h.e.reg_write(U.M68K["a6"], TOP)
+        h.e.reg_write(U.M68K["d6"], d6)
+        h.e.reg_write(U.M68K["d7"], d7)
+        h.e.start(h.syms[fn], ret, timeout_us=1_000_000)
+        return h.r("pc") == ret
+
+    def int67(ax, bx=0, dx=0):
+        h.e.write(rr, ax.to_bytes(2, "big") + bytes(2) + dx.to_bytes(2, "big") + bx.to_bytes(2, "big"))
+        ok = call("rt_int67")
+        return ok, int.from_bytes(h.mem(rr + 4, 2), "big")
+
+    ok, handle = int67(0x4300, bx=2)
+    ok = ok and int67(0x4400, bx=0, dx=handle)[0]
+    h.e.write(G_DS, (0xE000).to_bytes(2, "big"))
+    ok = ok and call("rt_ems_seg")
+    h.e.write(G_DS, (0x1000).to_bytes(2, "big"))
+    ok = ok and int67(0x4401, bx=0, dx=handle)[0]
+    h.e.write(G_ES, (0xE400).to_bytes(2, "big"))
+    ok = ok and call("rt_ems_es", 2, 0x0100)
+    live = tuple(h.mem(h.syms["rt_ems_live"], 2))
+    want_a = TOP - 0x7FFF - 0xE4000
+    if not ok or live != (1, 1) or h.r("a1") != want_a:
+        problems.append(f"EMS guard with a live alias: frame pages live {live}, want (1, 1); base "
+                        f"{h.r('a1'):x}, want {want_a:x} (pc={h.r('pc'):x})")
     return problems
 
 
@@ -2292,6 +2349,10 @@ def ems_irq_problems(elf: Path | None, sabotage: str | None = None) -> list[str]
         ds(0xE030)
         ok = ok and call("rt_irq0_leave")
         byte = h.mem(store + EMS_PAGE - 1 - 0x0400, 1)
+        if listed:      # the table displaces onto the store page again (refresh at the
+            ds(0xE040)  # return): another segment, which the guard caches do not hold
+            ok = ok and call("rt_ems_ds", 0x40, 0x0100) and h.r("a3") == TOP - 0x7FFF - 0xE0400 + store - frame0
+            ds(0xE030)
         if not ok or live() != before or (listed and byte != b"\x5a"):
             problems.append(f"EMS over an interrupt's handler ({'listed' if listed else 'unlisted'} DS E030h): "
                             f"frame page live {live()}, want {before}; store byte {byte.hex()} "

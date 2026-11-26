@@ -6,10 +6,6 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-33. Runtime access costs (P7.6), the largest first (speed-plan §1, E1–E5, O1 done; P1 measured,
-    not built): the EMS model's `refresh` (1% of the fight profile, MEASURED after E5: 1.06%),
-    run at every map and at every interrupt's return. Acceptance: the meter's change; the EMS
-    test, `ems_guard_problems`, `ems_irq_problems` and their plants; lockstep at m4 and m5.
 32. Waits and the present (P7.5): the field wait in `rt_video_frame` (7.7–8.1 ms a visit),
     the palette rebuilt at every present (11.6 ms: the DAC is written every frame), the
     present's copy and c2p; the 3DAh spin outside flight. Acceptance: frames ranges that do

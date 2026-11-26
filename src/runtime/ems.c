@@ -122,9 +122,11 @@ static void copy(uint8_t *d, const uint8_t *s)
 static void __attribute__((noinline)) refresh(void)
 {
     rt_ems_cache_clear();
+    /* no live frame page, no live alias (the usual case since P7.6 E1, E5) */
+    uint8_t any = live[0] | live[1] | live[2] | live[3];
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         int alias = 0;
-        for (int j = 0; j < EMS_PHYS; ++j) {
+        for (int j = 0; any && j < EMS_PHYS; ++j) {
             alias |= j != k && mapped[j] == mapped[k] && live[j];
         }
         rt_ems_fast[k] = live[k] || !mapped[k] ? 0 : alias ? 1
@@ -359,13 +361,20 @@ void __attribute__((noinline)) rt_ems_irq_leave(void)
             return;
         }
     }
+    int changed = 0;
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
+        changed |= live[k] != irq_live[k];
         if (live[k] && !irq_live[k]) {
             copy(store(mapped[k]), frame_page(k));
             live[k] = 0;
         }
     }
-    refresh();
+    /* rt_ems_fast follows mapped and live alone: with both as at entry the
+     * handler's last refresh (if any) left it right, and the caches it emptied
+     * are put back below */
+    if (changed) {
+        refresh();
+    }
     for (uint8_t k = 0; k < EMS_PHYS; ++k) {
         if (irq_live[k]) {
             expose(k);
