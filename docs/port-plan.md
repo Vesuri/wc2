@@ -525,9 +525,9 @@ fixture cannot resolve a step and the meter decides.
      the intro and menus spin (P5.4: 28.4% of the intro). 3DAh follows the 50 Hz PAL beam,
      so a wait lasts up to 20 ms where the VGA's 70 Hz retrace ends it within 14.3 ms.
    - The field wait in `rt_video_frame` (P7.3: 7.7–8.1 ms a visit, MEASURED): INT 33h is
-     called twice a visit (24 calls in 12), and an AX=3 read in the field of the previous
-     one waits for the next field (`rt_frame_cap`; that the second call is that read is
-     INFERRED).
+     called twice a visit, and the second, the position read `WC2.EXE+108B8` in the field
+     of the pointer hook's poll, waited for the next field (MEASURED, P7.5 W1); since W1 only
+     a poll ending a drawn frame waits (speed-plan §1).
    - The present's waits (the frames fixture's profile). If the present blocks, the Wing Commander slave's
      queued buffers (`release_buffer.s`: the renderer waits only to reuse a buffer not yet
      shown; 6–7 ms a picture there).

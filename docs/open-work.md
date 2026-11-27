@@ -6,10 +6,10 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-32. Waits and the present (P7.5): the field wait in `rt_video_frame` (7.7–8.1 ms a visit),
-    the palette rebuilt at every present (11.6 ms: the DAC is written every frame), the
-    present's copy and c2p; the 3DAh spin outside flight. Acceptance: frames ranges that do
-    not overlap (speed-plan §3), the Amiga replay at m4.
+32. Waits and the present (P7.5; W1 the field wait, speed-plan §1): the palette rebuilt at
+    every present (11.6 ms: the DAC is written every frame), the present's copy and c2p; the
+    3DAh spin outside flight. Acceptance: frames ranges that do not overlap (speed-plan §3),
+    the Amiga replay at m4.
 34. Changed-block c2p (P7.7): flight writes 178–192 of 200 rows a frame (P7.3), so only a
     block compare inside the marked rows can save conversion; first measure how many written
     32-pixel blocks change. Then the Wing Commander slave's converter inside the marked rows,

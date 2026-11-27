@@ -10,8 +10,9 @@
  * second of IRQ0 ticks passes without one, a frame is published when the
  * outermost driver call returns and presented at the first vertical blank
  * after that while no driver call runs. A platform that counts vertical
- * blanks may cap the loop at one pass per field (rt_frame_cap). DAC block
- * sets reach the platform at once, as on the VGA. The vertical blank's work runs at a poll point or in
+ * blanks may cap the loop at one drawn frame per field (rt_frame_cap): a poll
+ * with rows published since the previous poll returns at most once per
+ * field. DAC block sets reach the platform at once, as on the VGA. The vertical blank's work runs at a poll point or in
  * the platform's field task (an interrupt, docs/irq-plan.md I5); `busy`
  * keeps it off the main thread's display path. */
 #include "runtime.h"
@@ -101,13 +102,14 @@ struct vram_row rt_vram_rows[200];
 uint16_t rt_vram_top = 200, rt_vram_bottom = 0;
 uint16_t rt_vdrv_depth;          /* calls into the graphics driver in progress */
 static uint8_t published;        /* a driver call that changed rows has returned */
+static uint8_t drawn;            /* ... since the last poll: the poll ends a drawn frame */
 static uint8_t polled;           /* the game polls the mouse: frames end there */
 static uint8_t ready;            /* rows unchanged since the poll's frame */
 static uint32_t poll_irq0;       /* IRQ0 deliveries at the last poll */
 volatile uint8_t rt_present_due;
 volatile uint32_t rt_fields;
 uint8_t rt_frame_cap;
-static uint32_t frame_field;     /* rt_fields when the last poll returned */
+static uint32_t frame_field;     /* rt_fields when the last drawn frame's poll returned */
 static uint8_t dac_index, dac_component;  /* rt_dac_out, rt_dac_in */
 static uint8_t dac_changed;      /* port writes not yet shown (present) */
 static volatile uint8_t busy;    /* the main thread presents or sets the video mode or DAC */
@@ -238,6 +240,7 @@ void rt_video_publish(void)
 {
     set_busy(1);
     published = 1;
+    drawn = 1;
     ready = 0;
     if (rt_present_due && !framed()) {
         present();
@@ -245,7 +248,9 @@ void rt_video_publish(void)
     set_busy(0);
 }
 
-/* Capped: a poll returns at most once per field. The wait holds no tick: the
+/* Capped: a poll that ends a drawn frame returns at most once per field (a
+ * poll with nothing drawn since the previous one, as the game's second poll
+ * of a flight frame, returns at once; user 2026-11-27). The wait holds no tick: the
  * guest's IRQ0 handler touches no runtime state (docs/irq-plan.md), and its
  * delivery saves the service's registers. */
 static void pace(void)
@@ -262,9 +267,11 @@ static void pace(void)
 /* INT 33h AX=3: the frame the game drew since its last poll is finished. */
 void rt_video_frame(void)
 {
-    if (rt_frame_cap) {
+    uint8_t ends = drawn;
+    if (rt_frame_cap && ends) {
         pace();
     }
+    drawn = 0;
     polled = 1;
     poll_irq0 = rt_irq0_runs + rt_irq0_bios;
     if (published) {
@@ -276,7 +283,9 @@ void rt_video_frame(void)
         }
         set_busy(0);
     }
-    frame_field = rt_fields;
+    if (ends) {
+        frame_field = rt_fields;
+    }
 }
 
 /* VGA DAC ports: 3C8h the write index, 3C7h the read index (component 0),

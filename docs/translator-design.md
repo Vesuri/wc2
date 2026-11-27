@@ -408,8 +408,13 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   and its redraw (PANEL gauges) are never shown apart (user 2026-10-28).
   Before the first poll, or after one second of IRQ0 deliveries without one,
   each publication presents as before. Frame cap (production Amiga,
-  `rt_frame_cap`; user 2026-10-29): a poll returns at most once per field
-  (`rt_fields`), waiting with the service's tick hold lifted so IRQ0 runs; the
+  `rt_frame_cap`; user 2026-10-29): a poll that ends a drawn frame (a
+  publication since the previous poll) returns at most once per field
+  (`rt_fields`), waiting with the service's tick hold lifted so IRQ0 runs; a
+  poll with nothing drawn since the previous one returns at once (user
+  2026-11-27: each flight frame polls twice, the pointer hook `WC2.EXE+10851`
+  ending the frame and the empty event queue's position read `+108B8` in the
+  same field, MEASURED on the 68030 model; capped, the second waited a field); the
   game's loop never reads the retrace, so on a fast CPU it would outpace the
   display, and each frame takes at least a field of mouse motion (AX=0Bh, the
   flight stick). Sync builds and the host leave it off. Flight mouse scaling
@@ -434,7 +439,8 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   (every guest A0000h store lies in the next present's rectangles; sabotage
   `vram`), `tests/test_display_queue.py` (inheritance and queue races; production
   `video.c` with the field task interrupting driver calls, presents and video BIOS
-  calls, the cap's once-per-field return and lifted hold, plants), and
+  calls, the cap's once-per-field return of drawn frames, its lifted hold and
+  undrawn polls' return at once, plants), and
   `amiga/display_audit.sh` (40 handoffs against published guest snapshots
   and DAC, no conversion into the shown bitmap, zero late handoffs).
 - Interrupts (D8; [irq-plan](irq-plan.md)): poll points (`build/gen/poll-points.csv`,
