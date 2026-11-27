@@ -6,9 +6,10 @@ Items are in work order; numbers are identifiers and are not reused.
 
 ## P7: performance (port-plan P7, the CD32 WC1 as the inspiration)
 
-32. Waits and the present (P7.5; W1 the field wait, W2 the palette, speed-plan §1): the
-    present's copy and c2p; the 3DAh spin outside flight. Acceptance: frames ranges that do not overlap (speed-plan §3),
-    the Amiga replay at m4.
+32. Waits and the present (P7.5; W1 the field wait, W2 the palette, W3 the present's
+    compare, speed-plan §1; the 3DAh spin is not in flight, P7.3, so no step): the Amiga
+    replay at m4 on the W3 tree, with `build/host` left alone until its check ends (a run
+    on 2026-11-27 was void: the host build changed under it). Acceptance: the replay ok.
 35. The other translator steps (P7.8): the profile-chosen annotations regenerated from
     the flight windows, then the forms `lowering_cost.py` ranks. Acceptance per step: the
     meter's change; the differentials, guards and sabotages.

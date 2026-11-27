@@ -94,13 +94,13 @@ by `Disable`/`Enable` (L20).
 - **Surfaces.** Translated drawing writes guest VGA memory. The runtime snapshots
   published dirty rectangles into persistent chunky storage with 32 bytes of C2P
   lookahead; the platform alone converts to bitplanes.
-- **Conversion.** Kalms `c2p1x1_8_c5_bm`. Dirty bounds originate in guest painter
-  stores; inside them (D19) only the 32-pixel blocks that differ from the bitmap's
-  history (`DisplayState::history`, the chunky pixels it was last converted from, 64,000
-  bytes of Fast RAM each, cleared like the bitmaps) convert: one call per run of
-  changed blocks in a row, or per band of wholly changed rows. Without Fast RAM for the
-  histories every marked block converts. Plant `PLANT=BLOCK_HISTORY` (one history for
-  both bitmaps) fails `amiga/display_audit.sh`.
+- **Conversion.** Kalms `c2p1x1_8_c5_bm`. The runtime presents only the 32-pixel blocks
+  of the marked rows whose pixels differ from its persistent frame (D19, `video.c`
+  `present`); `DisplayQueue` keeps, per bitmap and row, a mask of the blocks changed
+  since that bitmap's own conversion, so each bitmap converts exactly what it lacks: one
+  call per run of blocks in a row, or per band of wholly changed rows. Plant
+  `PLANT=BLOCK_INHERIT` (a conversion clears both bitmaps' marks) fails
+  `amiga/display_audit.sh`.
 - **Buffering.** Two Chip bitmaps and two complete copper lists. Each bitmap retains
   dirty rows until its own conversion, including updates superseded before a VBI.
   Main withdraws the pending list before writing its bitmap; VERTB publishes only

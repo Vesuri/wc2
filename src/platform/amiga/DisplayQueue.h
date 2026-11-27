@@ -8,7 +8,9 @@
 // Withdrawing pending before conversion lets updates coalesce without ever
 // writing the bitmap DMA is reading, or waiting before a guest poll point.
 struct DisplayQueue {
-    struct Row { uint16_t lo, hi; } rows[2][200] = {};
+    // Per bitmap and row, the 32-pixel blocks (bit k: x 32k) changed since
+    // that bitmap's last conversion.
+    uint16_t rows[2][200] = {};
     volatile uint16_t shown = 0;
     volatile int16_t pending = -1;
 
@@ -16,16 +18,21 @@ struct DisplayQueue {
         pending = -1;
         return shown ^ 1;
     }
+    // x0, x1 multiples of 32
     void mark(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+        uint16_t bits = (uint16_t)(((1u << (x1 / 32)) - 1) & ~((1u << (x0 / 32)) - 1));
         for (unsigned b = 0; b < 2; ++b) {
             for (unsigned y = y0; y < y1; ++y) {
-                Row& r = rows[b][y];
-                if (!r.hi || x0 < r.lo) r.lo = x0;
-                if (x1 > r.hi) r.hi = x1;
+                rows[b][y] |= bits;
             }
         }
     }
-    void clear(uint16_t b, uint16_t y) { rows[b][y].hi = 0; }
+    void clear(uint16_t b, uint16_t y) {
+#ifdef WC2_PLANT_BLOCK_INHERIT  // display audit plant: a conversion clears both bitmaps' marks
+        rows[b ^ 1][y] = 0;
+#endif
+        rows[b][y] = 0;
+    }
     void queue(uint16_t b) { pending = (int16_t)b; }
     int16_t flip() {
         int16_t b = pending;

@@ -509,8 +509,10 @@ class Host:
         self.mouse_dx = self.mouse_dy = self.mouse_buttons = 0
         self.presents = 0
         # D9 display: every byte the guest stores to the frame is inside the
-        # rectangles of the next present (the runtime's marks vs the stores)
+        # rectangles of the next present or holds the value the display shows
+        # (the runtime's marks and block compare vs the stores, D19)
         self.vram_written = bytearray(64000)
+        self.display = bytearray(64000)     # the pixels the presents showed (bitmaps start clear)
         self.display_miss: str | None = None
         # memwatch.c: the memory hooks in C, passing on only the accesses the
         # checks act on (the Python hooks below keep their own tests)
@@ -1074,14 +1076,21 @@ class Host:
         elif n == "plat_present":
             self.presents += 1
             shown = bytearray(64000)
+            frame = self.mem(args[0], 64000)
             for k in range(args[2]):
                 x0, y0, x1, y1 = struct.unpack(">4H", self.mem(args[1] + 8 * k, 8))
                 for y in range(y0, y1):
                     shown[y * 320 + x0:y * 320 + x1] = b"\1" * (x1 - x0)
+                    self.display[y * 320 + x0:y * 320 + x1] = frame[y * 320 + x0:y * 320 + x1]
+            # the runtime presents only blocks whose pixels changed (D19): a pixel
+            # stored outside the rectangles holds the value the display shows
             miss = outside(self.vram_written, shown)
+            if miss:
+                vram = self.gmem(0xA0000, 64000)
+                miss = [o for o in miss if vram[o] != self.display[o]]
             if miss and not self.display_miss:
-                self.display_miss = f"present {self.presents}: {len(miss)} stored pixels outside " \
-                    f"its rectangles, first x={miss[0] % 320} y={miss[0] // 320}"
+                self.display_miss = f"present {self.presents}: {len(miss)} stored pixels changed " \
+                    f"outside its rectangles, first x={miss[0] % 320} y={miss[0] // 320}"
             ctypes.memset(self.watch_bufs[2], 0, 64000)
             self.e.write(self.syms["rt_present_due"], b"\1")
         elif n == "plat_palette":
@@ -2515,6 +2524,8 @@ def check(milestone: str, timeout: int, amiga: Path | None, sabotage: str | None
     for y in range(200):
         lo, hi = struct.unpack_from(">2H", rows, 4 * y)
         marked[y * 320 + lo:y * 320 + hi] = b"\1" * max(0, hi - lo)
+    if not h.presents and any(h.vram_written):
+        problems.append(f"{sum(h.vram_written)} pixels stored to video memory and no frame presented")
     unmarked = outside(h.vram_written, marked)
     if unmarked:
         problems.append(f"{len(unmarked)} pixels stored since the last present and not marked, "

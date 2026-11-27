@@ -114,9 +114,10 @@ static uint32_t frame_field;     /* rt_fields when the last drawn frame's poll r
 static uint8_t dac_index, dac_component;  /* rt_dac_out, rt_dac_in */
 static uint8_t dac_changed;      /* port writes not yet shown (present) */
 static volatile uint8_t busy;    /* the main thread presents or sets the video mode or DAC */
-static struct plat_rect rects[200];
-/* Persistent guest-order pixels, plus 32 bytes of Kalms C2P lookahead. */
-static uint32_t frame[16000 + 8];
+static struct plat_rect rects[1001];   /* up to 5 runs of blocks a row, the pointer's */
+/* Persistent guest-order pixels, plus 32 bytes of Kalms C2P lookahead; raw:
+ * the same longs as guest memory holds them (byte-swapped), for the compare. */
+static uint32_t frame[16000 + 8], raw[16000];
 
 /* The display path's memory accesses stay inside busy (a compiler barrier on
  * each side). */
@@ -146,15 +147,42 @@ static void vram_all(void)
     rt_vram_bottom = 200;
 }
 
-/* The changed rows as rectangles of whole 32-pixel groups (the c2p's
- * unit), rows with equal columns merged; the marks are cleared. */
+/* Row r's 32-pixel blocks in [x0, x1) whose guest pixels differ from the
+ * frame, copied into it, as a mask of the row's blocks (bit k: x 32k). Guest
+ * memory is reversed at a long-aligned TOP + 1 (runtime.h): each long,
+ * byte-swapped, is four pixels in guest order, the span's first long the
+ * row's last four pixels. The comparison is with `raw`, the frame's longs
+ * as guest memory held them, so only changed blocks are swapped. */
+static uint16_t changed_blocks(int r, uint16_t x0, uint16_t x1)
+{
+    uint32_t o = (uint32_t)r * 320u + x0;
+    const uint32_t *s = (const uint32_t *)rt_span(0xa0000 + o, (uint32_t)(x1 - x0));
+    uint32_t *d = frame + (o + x1 - x0) / 4, *h = raw + (o + x1 - x0) / 4;
+    uint16_t mask = 0;
+    for (int k = x1 / 32 - 1; k >= x0 / 32; --k, s += 8, d -= 8, h -= 8) {
+        for (int i = 0; i < 8; ++i) {
+            if (s[i] != h[-1 - i]) {
+                for (; i < 8; ++i) {
+                    h[-1 - i] = s[i];
+                    d[-1 - i] = __builtin_bswap32(s[i]);
+                }
+                mask |= (uint16_t)(1u << k);
+            }
+        }
+    }
+    return mask;
+}
+
+/* The marked rows' blocks that changed since the last present (D19), as
+ * rectangles of runs of changed blocks (the c2p's unit), rows with the same
+ * blocks merged; the marks are cleared. Outside mode 13h nothing is shown. */
 static void present(void)
 {
     if (dac_changed) {
         dac_changed = 0;
         plat_palette(rt_dac);
     }
-    int32_t n = 0;
+    int32_t n = 0, first = 0;
     /* The pointer masked at the last present: from VGA memory again (pointer.c). */
     for (uint16_t y = rt_pointer.masked_y0; y < rt_pointer.masked_y1; ++y) {
         struct vram_row *row = &rt_vram_rows[y];
@@ -167,6 +195,8 @@ static void present(void)
         rt_vram_bottom = rt_vram_bottom > rt_pointer.masked_y1 ? rt_vram_bottom : rt_pointer.masked_y1;
         rt_pointer.masked_y1 = 0;
     }
+    int shown = rd8(BDA_MODE) == 0x13, last = -2, marked = 0;
+    uint16_t last_mask = 0;
     for (int r = rt_vram_top; r < rt_vram_bottom; ++r) {
         RT_FIELD_POINT();
         struct vram_row *row = &rt_vram_rows[r];
@@ -175,33 +205,49 @@ static void present(void)
         }
         uint16_t x0 = row->lo & ~31, x1 = (row->hi + 31) & ~31;
         row->hi = 0;
-        if (n && rects[n - 1].y1 == r && rects[n - 1].x0 == x0 && rects[n - 1].x1 == x1) {
-            rects[n - 1].y1 = (uint16_t)(r + 1);
-        } else {
-            rects[n++] = (struct plat_rect){x0, (uint16_t)r, x1, (uint16_t)(r + 1)};
+        marked = shown;
+        uint16_t mask = shown ? changed_blocks(r, x0, x1) : 0;
+        if (!mask) {
+            continue;
         }
+        if (mask == last_mask && last == r - 1) {
+            for (int32_t k = first; k < n; ++k) {
+                rects[k].y1 = (uint16_t)(r + 1);
+            }
+        } else {
+            first = n;
+            for (uint16_t k = 0; k < 10;) {
+                if (!(mask >> k & 1)) {
+                    ++k;
+                    continue;
+                }
+                uint16_t e = (uint16_t)(k + 1);
+                while (e < 10 && (mask >> e & 1)) {
+                    ++e;
+                }
+                rects[n++] = (struct plat_rect){(uint16_t)(k * 32), (uint16_t)r, (uint16_t)(e * 32), (uint16_t)(r + 1)};
+                k = e;
+            }
+            last_mask = mask;
+        }
+        last = r;
     }
     rt_vram_top = 200;
     rt_vram_bottom = 0;
     published = 0;
     ready = 0;
-    rt_present_due = 0;
-    if (n && rd8(BDA_MODE) == 0x13) {
-        /* Rows are whole 32-pixel groups and guest memory is reversed at a
-         * long-aligned TOP + 1 (runtime.h): each long, byte-swapped, is four
-         * pixels in guest order. */
-        for (int32_t k = 0; k < n; ++k) {
-            uint32_t w = (uint32_t)(rects[k].x1 - rects[k].x0) / 4;
-            for (uint16_t y = rects[k].y0; y < rects[k].y1; ++y) {
-                uint32_t o = y * 320u + rects[k].x0;
-                const uint32_t *s = (const uint32_t *)rt_span(0xa0000 + o, w * 4);
-                uint32_t *d = frame + o / 4 + w;
-                for (uint32_t c = w; c; --c) {
-                    *--d = __builtin_bswap32(*s++);
-                }
-            }
-        }
+    if (marked) {
+        /* The pointer's pixels masked in the frame: shown wherever they are. */
         rt_pointer_mask((uint8_t *)frame);
+        if (rt_pointer.masked_y1) {
+            rects[n++] = (struct plat_rect){(uint16_t)(rt_pointer.masked_x0 & ~31), rt_pointer.masked_y0,
+                                            (uint16_t)((rt_pointer.masked_x1 + 31) & ~31), rt_pointer.masked_y1};
+        }
+    }
+    if (n) {
+        /* the blank is taken only by a frame shown: with no block changed, a
+         * later publication may still show in it */
+        rt_present_due = 0;
         plat_present((const uint8_t *)frame, rects, n);
     }
 }

@@ -48,8 +48,8 @@ int main() {
                 for (unsigned x = x0; x < x1; ++x) want[y][x] = rng();
         }
         for (unsigned y = 0; y < 200; ++y) {
-            const auto r = q.rows[b][y];
-            if (r.hi) std::memcpy(&planes[b][y][r.lo], &want[y][r.lo], r.hi-r.lo);
+            for (unsigned k = 0; k < 10; ++k)
+                if (q.rows[b][y] >> k & 1) std::memcpy(&planes[b][y][k * 32], &want[y][k * 32], 32);
             q.clear(b, y);
             assert(q.flip() == -1);
         }
@@ -124,9 +124,16 @@ uint32_t rt_pit_divisor = 65536;    /* 18 deliveries a second */
 volatile uint8_t rt_irq0_running, rt_irq_mask;
 struct rt_pointer rt_pointer;
 void rt_pointer_mask(uint8_t *frame) {}
-static uint8_t shown[64000];
+static uint8_t shown[64000], stored[64000];   /* stored: by a driver since the last present */
+/* a driver stored pixels the display does not show (stores that rewrite a
+ * pixel's value owe nothing) */
+static int differs(void)
+{
+    for (unsigned k = 0; k < 64000; ++k) if (stored[k] && shown[k] != rd8(0xa0000 + k)) return 1;
+    return 0;
+}
 static unsigned seed = 14, fielding, driving, spanning, display;
-static unsigned fields, raced, presents, owed, polls, framed_presents;
+static unsigned fields, raced, presents, polls, framed_presents;
 static unsigned polled, poll_irq0, since_poll, poll_owed, deferred, blanked;
 static unsigned rate = 3;           /* 1 in rate field points takes a field; 30: the game outpaces fields */
 static unsigned waiting, opened, capped, capped_polls, capped_waits, undrawn_polls, last_return; /* rt_frame_cap: polls ending drawn frames return once per field */
@@ -173,7 +180,8 @@ void plat_present(const uint8_t *frame, const struct plat_rect *r, int32_t n)
         for (unsigned y = r[k].y0; y < r[k].y1; ++y)
             memcpy(shown + y * 320 + r[k].x0, frame + y * 320 + r[k].x0, r[k].x1 - r[k].x0);
     ++presents;
-    owed = poll_owed = blanked = 0;
+    poll_owed = blanked = 0;
+    memset(stored, 0, sizeof stored);
     maybe_field();
     display = 0;
 }
@@ -202,13 +210,16 @@ static void driver(unsigned depth)
     ++driving;
     for (unsigned k = next(4); k--;) {
         unsigned y = next(200), x0 = next(320), x1 = x0 + 1 + next(320 - x0);
-        for (unsigned x = x0; x < x1; ++x) wr8(0xa0000 + y * 320 + x, (uint8_t)next(256));
+        for (unsigned x = x0; x < x1; ++x)   /* a quarter rewrite the pixel's value */
+        {
+            wr8(0xa0000 + y * 320 + x, next(4) ? (uint8_t)next(256) : rd8(0xa0000 + y * 320 + x));
+            stored[y * 320 + x] = 1;
+        }
         struct vram_row *row = &rt_vram_rows[y];
         if (!row->hi || x0 < row->lo) row->lo = (uint16_t)x0;
         if (x1 > row->hi) row->hi = (uint16_t)x1;
         if (y < rt_vram_top) rt_vram_top = (uint16_t)y;
         if (y + 1 > rt_vram_bottom) rt_vram_bottom = (uint16_t)(y + 1);
-        owed = 1;
         maybe_field();
         if (depth < 2 && !next(4)) driver(depth + 1);
     }
@@ -226,10 +237,10 @@ static void poll(void)
     ++polls;
     polled = 1;
     poll_irq0 = rt_irq0_runs;
-    poll_owed = owed;
+    poll_owed = differs();
     unsigned drawn = since_poll;    /* a publication since the last poll: the poll ends a drawn frame */
     since_poll = 0;
-    unsigned before = presents, due = blanked, at = fields, open = opened;
+    unsigned before = presents, due = blanked, at = fields, open = opened, had = poll_owed;
     unsigned wait = rt_frame_cap && drawn && at == last_return;   /* no field since the last drawn frame's return */
     rt_irq_mask = 1;                /* inside the INT 33h service */
     waiting = rt_frame_cap;
@@ -266,11 +277,11 @@ static void poll(void)
     if (drawn) {
         last_return = fields;
     }
-    if (owed && due && presents == before) {
+    if (had && due && presents == before) {
         fprintf(stderr, "a poll after a field held its frame\n");
         exit(1);
     }
-    deferred += owed && presents == before;
+    deferred += had && presents == before;
 }
 int main(void)
 {
@@ -290,7 +301,7 @@ int main(void)
         field();
         /* outside every display path: what was published (or, with frames,
          * ended by a poll) is shown */
-        if (framed() ? poll_owed : owed) {
+        if (framed() ? poll_owed : differs()) {
             fprintf(stderr, "step %u: a %s frame was not shown\n", step, framed() ? "polled" : "published");
             return 1;
         }
@@ -402,6 +413,12 @@ if __name__ == '__main__':
                          ('    if (ends) {\n        frame_field', '    if (1) {\n        frame_field'),
                          # DAC port writes: a change never shown; every write shown
                          ('        dac_changed = 1;\n    }', '    }'),
-                         ('if (*e != (v & 0x3f)) {', 'if (1) {')]:
+                         ('if (*e != (v & 0x3f)) {', 'if (1) {'),
+                         # changed blocks (D19): a change past a block's first long missed; the raw copy stale;
+                         # a merged row not presented; the wrong block presented
+                         ('            if (s[i] != h[-1 - i]) {', '            if (i == 0 && s[i] != h[-1 - i]) {'),
+                         ('                    h[-1 - i] = s[i];\n', ''),
+                         ('                rects[k].y1 = (uint16_t)(r + 1);\n', ''),
+                         ('                mask |= (uint16_t)(1u << k);', '                mask |= (uint16_t)(1u << (k & ~1));')]:
             assert old in video
             run_video(video.replace(old, new, 1), False)

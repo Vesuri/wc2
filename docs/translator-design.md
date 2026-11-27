@@ -427,9 +427,10 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   (host pixels), 1 on the production Amiga, as a real PC mouse's equal counts
   per inch (user 2026-10-29). Mode set marks the whole
   frame; DAC block sets go to `plat_palette` at once, DAC port writes at the
-  next present when they change an entry. No frame is read to
-  find changes; the Amiga converts only the blocks of the presented rows that
-  differ from the bitmap's history (D19, [amiga-arch](amiga-arch.md)). Amiga (machine taken over, `Swotl.cpp`): an 8-plane copper
+  next present when they change an entry. Inside the marked rows the present
+  compares each 32-pixel block with its persistent frame and passes only the
+  changed blocks to `plat_present` (D19, [amiga-arch](amiga-arch.md)); a blank
+  is taken only by a frame passed on. Amiga (machine taken over, `Swotl.cpp`): an 8-plane copper
   display (framework `CopperList`/`Bitmap`), Kalms `c2p1x1_8_c5_bm` per
   run of changed blocks (one call per wholly changed band) into the
   inactive bitmap. Both bitmaps retain dirty rows since their own last
@@ -438,11 +439,13 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   copper list and palette. VERTB switches lists before input, only at beam
   lines below 8; a late VBI defers the handoff. `amiga_bitmap` and
   `amiga_colours` describe the handed-off frame. Checked by the host run
-  (every guest A0000h store lies in the next present's rectangles; sabotage
+  (every guest A0000h store lies in the next present's rectangles or leaves the
+  pixel the presents showed; a run that stores to the frame presents; sabotage
   `vram`), `tests/test_display_queue.py` (inheritance and queue races; production
   `video.c` with the field task interrupting driver calls, presents and video BIOS
   calls, the cap's once-per-field return of drawn frames, its lifted hold and
-  undrawn polls' return at once, plants), and
+  undrawn polls' return at once, DAC port writes, changed blocks with stores
+  that rewrite a pixel's value, plants), and
   `amiga/display_audit.sh` (40 handoffs against published guest snapshots
   and DAC, no conversion into the shown bitmap, zero late handoffs).
 - Interrupts (D8; [irq-plan](irq-plan.md)): poll points (`build/gen/poll-points.csv`,
