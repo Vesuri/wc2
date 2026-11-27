@@ -92,6 +92,7 @@ void rt_pointer_mask(uint8_t *frame);
 void rt_video_refresh(void);
 void rt_video_frame(void);
 void rt_int10(void);
+void rt_dac_out(uint16_t port, uint8_t v);
 void maybe_field(void);
 #define RT_FIELD_POINT() maybe_field()
 '''
@@ -176,8 +177,10 @@ void plat_present(const uint8_t *frame, const struct plat_rect *r, int32_t n)
     maybe_field();
     display = 0;
 }
+static unsigned palettes;           /* plat_palette calls */
 void plat_palette(const uint8_t *dac)
 {
+    ++palettes;
     assert(!display);
     display = 1;
     maybe_field();
@@ -302,6 +305,36 @@ int main(void)
     assert(raced > 1000 && presents > 1000 && framed_presents > 500 && presents - framed_presents > 1000);
     assert(deferred > 100);
     assert(capped_waits > 100 && undrawn_polls > 100);
+    /* DAC port writes: a component that changes an entry reaches plat_palette
+     * once, at the next present; one that rewrites the entry's value does not. */
+    rt_frame_cap = 0;
+    for (unsigned k = 0; k < 64; ++k) {
+        unsigned entry = next(256), comp = next(3), change = k & 1;
+        uint8_t v = (uint8_t)((rt_dac[entry * 3 + comp] + change) & 0x3f);
+        rt_dac_out(0x3c8, (uint8_t)entry);
+        for (unsigned c = 0; c < comp; ++c) rt_dac_out(0x3c9, rt_dac[entry * 3 + c]);
+        rt_dac_out(0x3c9, (uint8_t)(v | 0x40));     /* bits 6-7 ignored, as the DAC */
+        unsigned before = palettes;
+        driver(0);
+        if (!rt_vram_bottom && rt_vdrv_depth == 0) {
+            ++rt_vdrv_depth;                         /* one stored pixel, so a frame publishes */
+            wr8(0xa0000, (uint8_t)k);
+            rt_vram_rows[0].lo = 0;
+            rt_vram_rows[0].hi = 1;
+            rt_vram_top = 0;
+            rt_vram_bottom = rt_vram_bottom > 1 ? rt_vram_bottom : 1;
+            --rt_vdrv_depth;
+            since_poll = 1;
+            rt_video_publish();
+        }
+        poll();
+        field();
+        if (rt_dac[entry * 3 + comp] != v || palettes - before != change) {
+            fprintf(stderr, "DAC write %u (changes %u): entry %u, %u palette calls\n", k, change, entry,
+                    palettes - before);
+            return 1;
+        }
+    }
     return 0;
 }
 '''
@@ -366,6 +399,9 @@ if __name__ == '__main__':
                          # restarts the field for the next drawn frame
                          ('if (rt_frame_cap && ends) {', 'if (rt_frame_cap) {'),
                          ('    drawn = 0;\n', ''),
-                         ('    if (ends) {\n        frame_field', '    if (1) {\n        frame_field')]:
+                         ('    if (ends) {\n        frame_field', '    if (1) {\n        frame_field'),
+                         # DAC port writes: a change never shown; every write shown
+                         ('        dac_changed = 1;\n    }', '    }'),
+                         ('if (*e != (v & 0x3f)) {', 'if (1) {')]:
             assert old in video
             run_video(video.replace(old, new, 1), False)

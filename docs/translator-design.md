@@ -426,7 +426,8 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   film room). Vertical mickeys (`rt_mickeys_y`): 2 per count as DOSBox-X
   (host pixels), 1 on the production Amiga, as a real PC mouse's equal counts
   per inch (user 2026-10-29). Mode set marks the whole
-  frame; DAC block sets go to `plat_palette` at once. No frame is read to
+  frame; DAC block sets go to `plat_palette` at once, DAC port writes at the
+  next present when they change an entry. No frame is read to
   find changes. Amiga (machine taken over, `Swotl.cpp`): an 8-plane copper
   display (framework `CopperList`/`Bitmap`), Kalms `c2p1x1_8_c5_bm` per
   rectangle (one call per full-width band, per row otherwise) into the

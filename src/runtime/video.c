@@ -12,7 +12,8 @@
  * after that while no driver call runs. A platform that counts vertical
  * blanks may cap the loop at one drawn frame per field (rt_frame_cap): a poll
  * with rows published since the previous poll returns at most once per
- * field. DAC block sets reach the platform at once, as on the VGA. The vertical blank's work runs at a poll point or in
+ * field. DAC block sets reach the platform at once, as on the VGA; port
+ * writes only when they change an entry. The vertical blank's work runs at a poll point or in
  * the platform's field task (an interrupt, docs/irq-plan.md I5); `busy`
  * keeps it off the main thread's display path. */
 #include "runtime.h"
@@ -290,8 +291,9 @@ void rt_video_frame(void)
 
 /* VGA DAC ports: 3C8h the write index, 3C7h the read index (component 0),
  * 3C9h the next component written or read, the index advancing after blue.
- * Writes reach the platform at the next present (the driver writes whole
- * palettes component by component). */
+ * Writes that change an entry reach the platform at the next present (the
+ * driver writes whole palettes component by component; in flight it rewrites
+ * entries 249-254 unchanged every frame, MEASURED 2026-11-27). */
 void rt_dac_out(uint16_t port, uint8_t v)
 {
     if (port == 0x3c8 || port == 0x3c7) {
@@ -299,8 +301,11 @@ void rt_dac_out(uint16_t port, uint8_t v)
         dac_component = 0;
         return;
     }
-    rt_dac[dac_index * 3 + dac_component] = v & 0x3f;
-    dac_changed = 1;
+    uint8_t *e = &rt_dac[dac_index * 3 + dac_component];
+    if (*e != (v & 0x3f)) {
+        *e = v & 0x3f;
+        dac_changed = 1;
+    }
     if (++dac_component == 3) {
         dac_component = 0;
         ++dac_index;
