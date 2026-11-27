@@ -551,6 +551,8 @@ fixture cannot resolve a step and the meter decides.
    It revisits SWOTL's S1 (a frame compare, rejected before it was built, speed-plan §10),
    so it needs the owner's OK with the price. The history is 2 × 64,000 bytes of Fast; 0.5 MB
    is free in flight. Kalms 030 or 040 per CPU, as that slave measured (its D5).
+   - Status: done (P7.7 C1, D19, speed-plan §1): 1.7% of the marked blocks change in the
+     fight window (MEASURED), conversion 17.6% → 0.8% of the profile.
 8. **Translator** (the meter accepts, speed-plan §3):
    - flag liveness (open-work 11);
    - the profile-chosen annotations (`align`, `bp-regions`, `outline`, `seg-repeat`)

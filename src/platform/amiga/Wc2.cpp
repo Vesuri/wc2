@@ -76,7 +76,20 @@ struct DisplayState {
     // Main-thread validity belongs to each physical copper list/colour table.
     bool paletteValid[2];
     int16_t paletteStolen[2];   // the colour in entry F9h when built (Pointer::stolen)
+    // The chunky pixels each bitmap was last converted from (Fast RAM, cleared
+    // like the bitmaps; 0: none, every marked block is converted).
+    uint32_t* history[2];
 };
+
+#define HISTORY_BYTES (SCREEN_WIDTH * SCREEN_HEIGHT)
+#define BLOCKS_PER_ROW (SCREEN_WIDTH / 32)
+
+extern "C" {
+// Changed-block conversion (debug fixtures): 32-pixel blocks inside the marked
+// rows, and of those the ones that differed from the bitmap's history.
+volatile uint32_t amiga_c2p_blocks = 0;
+volatile uint32_t amiga_c2p_changed = 0;
+}
 
 extern "C" {
 volatile uint32_t amiga_display_count = 0;
@@ -205,6 +218,8 @@ Wc2::Wc2() :
     for (uint16_t b = 0; b < 2; ++b) {
         display->copper[b] = (uint32_t*)AllocMem(COPPER_LONGS * 4, MEMF_CHIP | MEMF_CLEAR);
         if (!display->copper[b]) return;
+        // Without Fast RAM for it, conversion takes every marked block.
+        display->history[b] = (uint32_t*)AllocMem(HISTORY_BYTES, MEMF_FAST | MEMF_CLEAR);
         display->bitmap[b] = new Bitmap(display->screen[b], SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_PLANES, false);
         display->list[b] = new CopperList(display->copper[b], COPPER_LONGS);
         if (!display->bitmap[b] || !display->list[b]) return;
@@ -258,6 +273,7 @@ Wc2::~Wc2()
             delete display->bitmap[b];
             if (display->copper[b]) FreeMem(display->copper[b], COPPER_LONGS * 4);
             if (display->screen[b]) FreeMem(display->screen[b], SCREEN_BYTES);
+            if (display->history[b]) FreeMem(display->history[b], HISTORY_BYTES);
         }
         delete display;
     }
@@ -550,11 +566,61 @@ static void c2p(const void* chunky, int32_t w, int32_t h, int32_t x, int32_t y, 
                    : "r"(d2), "r"(d3) : "cc", "memory");
 }
 
+// The changed 32-pixel blocks of row y in [lo, hi) (multiples of 32), as a
+// mask of the row's blocks; each is copied into the history.
+static uint16_t changedBlocks(const uint8_t* frame, uint32_t* history, uint16_t y, uint16_t lo, uint16_t hi)
+{
+    uint16_t mask = 0;
+    const uint32_t* f = (const uint32_t*)(frame + y * SCREEN_WIDTH + lo);
+    uint32_t* h = history + (y * SCREEN_WIDTH + lo) / 4;
+    for (uint16_t k = lo / 32; k < hi / 32; ++k, f += 8, h += 8) {
+        if (f[0] != h[0] || f[1] != h[1] || f[2] != h[2] || f[3] != h[3] ||
+            f[4] != h[4] || f[5] != h[5] || f[6] != h[6] || f[7] != h[7]) {
+            for (uint16_t i = 0; i < 8; ++i) h[i] = f[i];
+            mask |= (uint16_t)(1u << k);
+        }
+    }
+    amiga_c2p_blocks += (hi - lo) / 32;
+    return mask;
+}
+
 void Wc2::finishDisplayUpdate(uint16_t back)
 {
     // Each bitmap remembers changes since its own last conversion, including
     // updates that were replaced before a VBI. Bounds originate in guest
-    // painter stores; no framebuffer comparison discovers dirty pixels.
+    // painter stores; inside them, blocks equal to the bitmap's history (the
+    // pixels it was last converted from) are not converted again; one call
+    // per run of changed blocks in a row, or per band of wholly changed rows.
+    uint32_t* history = display->history[back];
+#ifdef WC2_PLANT_BLOCK_HISTORY  // display audit plant: one history for both bitmaps
+    history = display->history[0];
+#endif
+    if (history) {
+        static uint16_t masks[SCREEN_HEIGHT];
+        for (uint16_t y = 0; y < SCREEN_HEIGHT; ++y) {
+            DisplayQueue::Row r = display->queue.rows[back][y];
+            masks[y] = r.hi ? changedBlocks(display->frame, history, y, r.lo, r.hi) : 0;
+            display->queue.clear(back, y);
+        }
+        for (uint16_t y = 0; y < SCREEN_HEIGHT;) {
+            uint16_t mask = masks[y], end = y + 1;
+            if (!mask) { y = end; continue; }
+            // The converter reads contiguous chunky rows: only whole rows merge.
+            if (mask == (1u << BLOCKS_PER_ROW) - 1) {
+                while (end < SCREEN_HEIGHT && masks[end] == mask) ++end;
+            }
+            for (uint16_t k = 0; k < BLOCKS_PER_ROW;) {
+                if (!(mask & (1u << k))) { ++k; continue; }
+                uint16_t e = k + 1;
+                while (e < BLOCKS_PER_ROW && (mask & (1u << e))) ++e;
+                c2p(display->frame + y * SCREEN_WIDTH + k * 32, (e - k) * 32, end - y, k * 32, y,
+                    &display->bm[back]);
+                amiga_c2p_changed += (uint32_t)(e - k) * (end - y);
+                k = e;
+            }
+            y = end;
+        }
+    }
     for (uint16_t y = 0; y < SCREEN_HEIGHT;) {
         DisplayQueue::Row r = display->queue.rows[back][y];
         if (!r.hi) { ++y; continue; }

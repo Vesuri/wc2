@@ -61,13 +61,14 @@ ifneq ($(RELEASE),)
 CCFLAGS += -DWC2_RELEASE
 endif
 
-# Diagnostic image is built in a separate working directory by the replay test.
-ifneq ($(REPLAY),)
-CCFLAGS += -DWC2_REPLAY -I"$(REPLAY)"
-# A planted display fault the replay's real-video check must catch.
+# A planted display fault (the replay's real-video check, or amiga/display_audit.sh).
 ifneq ($(PLANT),)
 CCFLAGS += -DWC2_PLANT_$(PLANT)
 endif
+
+# Diagnostic image is built in a separate working directory by the replay test.
+ifneq ($(REPLAY),)
+CCFLAGS += -DWC2_REPLAY -I"$(REPLAY)"
 VASMFLAGS += -DWC2_REPLAY=1
 OBJECTS += obj/replay_c.o obj/replay_s.o
 ifneq ($(wildcard $(REPLAY)/joystick_data.h),)

@@ -9,10 +9,6 @@ Items are in work order; numbers are identifiers and are not reused.
 32. Waits and the present (P7.5; W1 the field wait, W2 the palette, speed-plan §1): the
     present's copy and c2p; the 3DAh spin outside flight. Acceptance: frames ranges that do not overlap (speed-plan §3),
     the Amiga replay at m4.
-34. Changed-block c2p (P7.7): flight writes 178–192 of 200 rows a frame (P7.3), so only a
-    block compare inside the marked rows can save conversion; first measure how many written
-    32-pixel blocks change. Then the Wing Commander slave's converter inside the marked rows,
-    with the owner's OK (it revisits SWOTL's S1). Acceptance: the display checks, frames A/B.
 35. The other translator steps (P7.8): the profile-chosen annotations regenerated from
     the flight windows, then the forms `lowering_cost.py` ranks. Acceptance per step: the
     meter's change; the differentials, guards and sabotages.

@@ -428,9 +428,10 @@ caller's DS where the I2 analysis cannot see it; host runs check, I3) and `irq-s
   per inch (user 2026-10-29). Mode set marks the whole
   frame; DAC block sets go to `plat_palette` at once, DAC port writes at the
   next present when they change an entry. No frame is read to
-  find changes. Amiga (machine taken over, `Swotl.cpp`): an 8-plane copper
+  find changes; the Amiga converts only the blocks of the presented rows that
+  differ from the bitmap's history (D19, [amiga-arch](amiga-arch.md)). Amiga (machine taken over, `Swotl.cpp`): an 8-plane copper
   display (framework `CopperList`/`Bitmap`), Kalms `c2p1x1_8_c5_bm` per
-  rectangle (one call per full-width band, per row otherwise) into the
+  run of changed blocks (one call per wholly changed band) into the
   inactive bitmap. Both bitmaps retain dirty rows since their own last
   conversion. A pending frame is withdrawn before reuse; updates can
   coalesce without waiting. Each bitmap has a complete
